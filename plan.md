@@ -834,9 +834,20 @@ scan-worker:
   keda: { minReplicaCount: 1, maxReplicaCount: 2 }
 ```
 
-Keep the *shape* identical to prod — same chart, same manifests, same drain and
-scaling behaviour, only the numbers differ. A dev environment that skips KEDA or
-PodDisruptionBudgets stops testing the things most likely to break in prod.
+Keep the *shape* identical to prod — same chart, same probes, same drain path,
+same KEDA scalers — and change only the numbers. A dev environment that stubs out
+autoscaling stops testing the thing most likely to break in prod.
+
+Two objects legitimately do not render in dev, and it is worth knowing why rather
+than discovering it during an incident:
+
+- **PodDisruptionBudgets** are skipped at `replicas: 1`. A PDB with
+  `maxUnavailable: 1` over a single replica blocks node drains outright, so the
+  chart emits them only above one replica. Dev therefore does not exercise them.
+- **NetworkPolicies** are gated on `env: prod`. Default-deny egress against a
+  cluster whose dependencies live on the Docker host makes local debugging
+  considerably worse. The cost is that §13.8 is only ever verified in staging —
+  so staging must run with `env: prod` values, not dev ones.
 
 ### 14.6 Pipeline stages
 

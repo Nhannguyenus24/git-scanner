@@ -1,0 +1,94 @@
+{{- if .Values.keda.enabled }}
+{{- range $name, $svc := .Values.services }}
+{{- $a := $svc.autoscale }}
+
+{{- if eq $a.kind "hpa" }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $a.minReplicas }}
+  maxReplicas: {{ $a.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $a.targetCPU }}
+{{- end }}
+
+{{- if eq $a.kind "keda-rabbitmq" }}
+---
+# Queue depth, not CPU. A worker blocked on a slow clone looks idle to an HPA,
+# and a backlog of ten thousand repositories produces no CPU pressure at all
+# until the work is already late (plan.md §13.4).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+  minReplicaCount: {{ $a.minReplicas }}
+  maxReplicaCount: {{ $a.maxReplicas }}
+  cooldownPeriod: {{ $a.cooldownPeriod | default 300 }}
+  pollingInterval: 15
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ $a.queue }}
+        mode: QueueLength
+        value: {{ $a.queueLength | quote }}
+      authenticationRef:
+        name: rabbitmq-auth
+{{- end }}
+
+{{- if eq $a.kind "keda-kafka" }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ $name }}
+  minReplicaCount: {{ $a.minReplicas }}
+  maxReplicaCount: {{ $a.maxReplicas }}
+  pollingInterval: 15
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: "kafka:{{ $.Values.infra.kafka.port }}"
+        consumerGroup: {{ $a.consumerGroup }}
+        topic: {{ $a.topic }}
+        lagThreshold: {{ $a.lagThreshold | quote }}
+{{- end }}
+
+{{- end }}
+---
+# KEDA reads the broker URL from the same Secret the workloads use, so there is
+# one place to rotate it.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-auth
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Values.secretName }}
+      key: RABBITMQ_URL
+{{- end }}

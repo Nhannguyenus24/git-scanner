@@ -1,0 +1,116 @@
+# Defaults are production-shaped. deploy/values/dev.yaml shrinks the numbers but
+# keeps the shape identical (plan.md §14.5).
+
+image:
+  registry: localhost:5050
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# External infrastructure (plan.md §13.2). Pods always address these by Service
+# name, so application config never carries an environment-specific host.
+infra:
+  postgres:
+    host: pg.infra.internal
+    port: 5432
+  rabbitmq:
+    host: rabbitmq.infra.internal
+    port: 5672
+  redis:
+    host: redis.infra.internal
+    port: 6379
+  kafka:
+    host: kafka.infra.internal
+    port: 9092
+
+# Name of the Secret holding connection URLs and crypto keys. Created by External
+# Secrets or Sealed Secrets, never committed (plan.md §13.7).
+secretName: gitscanner-secrets
+
+env: prod
+logLevel: info
+
+keda:
+  enabled: true
+
+services:
+  api:
+    replicas: 3
+    port: 8080
+    expose: true
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: "1",  memory: 512Mi }
+    autoscale:
+      kind: hpa
+      minReplicas: 3
+      maxReplicas: 10
+      targetCPU: 70
+
+  discovery-worker:
+    replicas: 1
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    autoscale:
+      kind: keda-rabbitmq
+      queue: discovery.tasks
+      queueLength: "10"
+      minReplicas: 1
+      maxReplicas: 10
+
+  scan-worker:
+    replicas: 2
+    # Guaranteed QoS: requests equal limits, so a worker is not evicted eight
+    # minutes into a large repository (plan.md §13.3).
+    resources:
+      requests: { cpu: "2", memory: 2Gi }
+      limits:   { cpu: "2", memory: 2Gi }
+    scratch:
+      sizeLimit: 20Gi
+    terminationGracePeriodSeconds: 300
+    needsGit: true
+    autoscale:
+      kind: keda-rabbitmq
+      queue: scan.tasks
+      queueLength: "5"
+      minReplicas: 1
+      maxReplicas: 40
+      # Must exceed a typical scan or KEDA scales down mid-task and forces the
+      # requeue path constantly (plan.md §13.4).
+      cooldownPeriod: 600
+
+  enricher:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    autoscale:
+      kind: keda-rabbitmq
+      queue: enrich.tasks
+      queueLength: "50"
+      minReplicas: 1
+      maxReplicas: 10
+
+  notifier:
+    # Deliberately not autoscaled. The send cap is a shared Redis bucket
+    # (plan.md §13.5) and this workload is not throughput-bound, so extra
+    # replicas buy nothing and raise the blast radius of a bug.
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+    autoscale:
+      kind: none
+
+  analytics:
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits:   { cpu: "1",  memory: 1Gi }
+    autoscale:
+      kind: keda-kafka
+      topic: findings.v1
+      consumerGroup: analytics
+      lagThreshold: "1000"
+      minReplicas: 1
+      maxReplicas: 6

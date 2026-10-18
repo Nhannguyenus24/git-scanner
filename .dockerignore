@@ -1,0 +1,14 @@
+.git
+.github
+bin/
+out/
+tmp/
+deploy/
+*.md
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
+tilt_modules/
+.tiltbuild/

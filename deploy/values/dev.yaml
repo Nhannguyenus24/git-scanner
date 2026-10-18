@@ -1,0 +1,79 @@
+# Local k3d overrides (plan.md §14.5).
+#
+# Only the numbers change. KEDA, PodDisruptionBudgets, probes and the drain path
+# stay exactly as in production — a dev environment that skips them stops
+# testing the things most likely to break in production.
+
+env: dev
+logLevel: debug
+
+image:
+  registry: localhost:5050
+  tag: dev
+  pullPolicy: Always
+
+# k3d joins the cluster to the Docker network the infra containers already run
+# on, so they resolve by container name (plan.md §14.1). Adjust these to match
+# `docker ps --format '{{.Names}}'`. If the containers are not on a shared
+# network, use host.k3d.internal instead.
+infra:
+  postgres:  { host: host.k3d.internal, port: 5432 }
+  rabbitmq:  { host: host.k3d.internal, port: 5672 }
+  redis:     { host: host.k3d.internal, port: 6379 }
+  kafka:     { host: host.k3d.internal, port: 9092 }
+
+services:
+  api:
+    replicas: 1
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits:   { cpu: 500m, memory: 256Mi }
+    autoscale:
+      minReplicas: 1
+      maxReplicas: 2
+
+  discovery-worker:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+    autoscale:
+      minReplicas: 1
+      maxReplicas: 2
+
+  scan-worker:
+    replicas: 1
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits:   { cpu: 500m, memory: 1Gi }
+    scratch:
+      sizeLimit: 5Gi
+    terminationGracePeriodSeconds: 120
+    autoscale:
+      minReplicas: 1
+      maxReplicas: 2
+      cooldownPeriod: 120
+
+  enricher:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+    autoscale:
+      minReplicas: 1
+      maxReplicas: 2
+
+  notifier:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 200m, memory: 128Mi }
+
+  analytics:
+    replicas: 1
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits:   { cpu: 300m, memory: 512Mi }
+    autoscale:
+      minReplicas: 1
+      maxReplicas: 2

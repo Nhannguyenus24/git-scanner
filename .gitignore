@@ -1,0 +1,18 @@
+/bin/
+/out/
+/tmp/
+*.test
+*.out
+coverage.*
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+/tilt_modules/
+.tiltbuild/
+
+# Generated code under libs/proto/gen and internal/store/sqlc IS committed, so a
+# plain `go build` works without buf or sqlc installed. Only `make proto` and
+# `make sqlc` need those tools.

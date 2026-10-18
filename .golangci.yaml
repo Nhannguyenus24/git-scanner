@@ -1,0 +1,40 @@
+version: "2"
+
+linters:
+  enable:
+    - depguard
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+
+  settings:
+    depguard:
+      rules:
+        # plan.md §3.2: shared libraries must not depend on service-private code,
+        # or the "libs/ splits out cleanly later" property is lost silently.
+        libs-cannot-import-internal:
+          files:
+            - "**/libs/**"
+          deny:
+            - pkg: github.com/mservice/gitscanner/internal
+              desc: "libs/ must not import internal/ (plan.md §3.2)"
+            - pkg: github.com/mservice/gitscanner/cmd
+              desc: "libs/ must not import cmd/ (plan.md §3.2)"
+
+        # libs/entity is standard library only, so it never becomes the module
+        # that drags a driver into every build.
+        entity-is-stdlib-only:
+          files:
+            - "**/libs/entity/**"
+          allow:
+            - $gostd
+            - github.com/mservice/gitscanner/libs/entity
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

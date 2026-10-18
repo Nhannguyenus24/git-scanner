@@ -1,0 +1,20 @@
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.expose }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "gitscanner.selectorLabels" (dict "root" $ "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+{{- end }}
+{{- end }}

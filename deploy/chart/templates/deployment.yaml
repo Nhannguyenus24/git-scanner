@@ -1,0 +1,93 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gitscanner.selectorLabels" (dict "root" $ "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gitscanner.selectorLabels" (dict "root" $ "name" $name) | nindent 8 }}
+    spec:
+      # Long enough for a worker to finish or hand back the task it holds
+      # (plan.md §13.3). Work not yet started is covered by cancelling the
+      # consumer, so this does not need to cover the slowest possible scan.
+      terminationGracePeriodSeconds: {{ $svc.terminationGracePeriodSeconds | default 60 }}
+
+      # A scanner does not call the Kubernetes API; mounting a token only gives
+      # an exploit against the git parser something to steal.
+      automountServiceAccountToken: false
+
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.image.registry }}/{{ $name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            {{- include "gitscanner.env" (dict "root" $) | nindent 12 }}
+            - name: SERVICE_NAME
+              value: {{ $name | quote }}
+
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+
+          # Readiness is separate from liveness on purpose: a worker that has not
+          # loaded the provider registry is alive but must not take traffic, or
+          # it silently reports zero findings (plan.md §13.9).
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3
+
+          volumeMounts:
+            # readOnlyRootFilesystem is on, so even services without scratch need
+            # a writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+            {{- if $svc.scratch }}
+            - name: scratch
+              mountPath: /scratch
+            {{- end }}
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if $svc.scratch }}
+        # Disk-backed, not medium: Memory — a mirror clone of a large repository
+        # in RAM would take the node down. sizeLimit makes an oversized repo
+        # evict its own pod instead of filling the node (plan.md §13.3).
+        - name: scratch
+          emptyDir:
+            sizeLimit: {{ $svc.scratch.sizeLimit }}
+        {{- end }}
+{{- end }}

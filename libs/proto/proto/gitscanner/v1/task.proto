@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+// Task messages carried on RabbitMQ (plan.md §1).
+package gitscanner.v1;
+
+option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
+
+import "google/protobuf/timestamp.proto";
+
+// DiscoveryTask expands a target into repositories.
+message DiscoveryTask {
+  string job_id = 1;
+  string target_id = 2;
+  // One of: repo, user, org, allowlist. Always a bounded, authorized set
+  // (plan.md §0.1).
+  string kind = 3;
+  string value = 4;
+  repeated string allowlist = 5;
+  bool include_forks = 6;
+  // Pagination cursor to resume from; empty starts at the beginning.
+  string cursor = 7;
+}
+
+// ScanTask scans one repository's full history.
+message ScanTask {
+  string job_id = 1;
+  string repository_id = 2;
+  string clone_url = 3;
+  string default_branch = 4;
+  // Blob OIDs already scanned in a previous run are skipped; this is the commit
+  // the last run finished at, enabling the incremental path in plan.md §4.1.
+  string since_sha = 5;
+  // Registry version to scan with, so a job's results are attributable to one
+  // ruleset even if a publish happens mid-run (plan.md §5.6).
+  int64 registry_version = 6;
+  // True only when the requester proved ownership, which is the gate on probe
+  // execution (plan.md §0.2).
+  bool ownership_verified = 7;
+}
+
+// EnrichTask resolves a raw match against the provider registry.
+message EnrichTask {
+  string finding_id = 1;
+  string job_id = 2;
+  string rule_id = 3;
+  // Context needed to classify without re-reading the blob.
+  string file_path = 4;
+  string nearby_env_var = 5;
+  string nearby_host = 6;
+  string charset_class = 7;
+  int32 secret_length = 8;
+}
+
+// NotifyTask asks the notifier to send one disclosure mail.
+//
+// There is no secret in this message and no payment link anywhere in the flow
+// (plan.md §0.3).
+message NotifyTask {
+  string repository_id = 1;
+  string recipient = 2;
+  repeated string finding_ids = 3;
+  google.protobuf.Timestamp requested_at = 4;
+}

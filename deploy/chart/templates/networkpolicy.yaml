@@ -1,0 +1,46 @@
+{{- if eq .Values.env "prod" }}
+# Default deny egress, then open only what each workload needs (plan.md §13.8).
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-infra-and-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Link-local first: a registry definition pointing at the cloud
+              # metadata endpoint would otherwise hand out node credentials.
+              # The dialer controls in §5.8 are the primary defence; this is the
+              # layer that holds when application code has a bug.
+              - 169.254.0.0/16
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 5432 }
+        - { protocol: TCP, port: 5672 }
+        - { protocol: TCP, port: 6379 }
+        - { protocol: TCP, port: 9092 }
+        - { protocol: TCP, port: 587 }
+{{- end }}

@@ -1,0 +1,21 @@
+# Postgres, RabbitMQ, Redis and Kafka run outside the cluster (plan.md §13.2).
+# Mapping them to in-cluster Service names means application config says
+# "postgres:5432" in every environment, and moving them into the cluster later
+# changes nothing in the application.
+#
+# ExternalName resolves DNS names only. For a bare IP, replace the entry with a
+# headless Service plus a hand-written EndpointSlice.
+{{- range $key, $cfg := .Values.infra }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $key }}
+  labels:
+    {{- include "gitscanner.labels" $ | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ $cfg.host }}
+  ports:
+    - port: {{ $cfg.port }}
+{{- end }}

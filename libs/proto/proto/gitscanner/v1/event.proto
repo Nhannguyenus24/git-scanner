@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+// Events carried on Kafka: the durable log analytics consumes and can replay
+// (plan.md §10).
+package gitscanner.v1;
+
+option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
+
+import "google/protobuf/timestamp.proto";
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_LOW = 2;
+  SEVERITY_MEDIUM = 3;
+  SEVERITY_HIGH = 4;
+  SEVERITY_CRITICAL = 5;
+}
+
+// FindingDetected is emitted once per detected credential.
+//
+// Note what is absent: the credential. The event carries the HMAC fingerprint
+// and a masked preview only (plan.md §6). A Kafka topic is retained for days and
+// replicated across brokers, so putting a live secret in one would create copies
+// outside the database's access controls.
+message FindingDetected {
+  string finding_id = 1;
+  string job_id = 2;
+  string repository_id = 3;
+  string repository_full_name = 4;
+
+  string rule_id = 5;
+  string provider_slug = 6;
+  string fingerprint = 7;
+  string masked_preview = 8;
+
+  string blob_oid = 9;
+  string commit_sha = 10;
+  string file_path = 11;
+  int32 line_number = 12;
+
+  string author_email = 13;
+  google.protobuf.Timestamp committed_at = 14;
+  bool reachable_from_head = 15;
+
+  Severity severity = 16;
+  string app_type = 17;
+  google.protobuf.Timestamp detected_at = 18;
+}
+
+// ScanStateChanged tracks job lifecycle for dashboards and for detecting jobs
+// stuck in running.
+message ScanStateChanged {
+  string job_id = 1;
+  string from_state = 2;
+  string to_state = 3;
+  int32 repos_total = 4;
+  int32 repos_scanned = 5;
+  int32 blobs_scanned = 6;
+  int32 findings_count = 7;
+  string error = 8;
+  google.protobuf.Timestamp at = 9;
+}
+
+// RegistryPublished announces a new provider definition version.
+//
+// requires_rescan is computed from the detect-hash comparison in plan.md §5.7 and
+// tells consumers whether this change only reclassifies stored findings or needs
+// blobs walked again.
+message RegistryPublished {
+  int64 registry_version = 1;
+  string provider_slug = 2;
+  int32 provider_version = 3;
+  bool requires_rescan = 4;
+  string author = 5;
+  google.protobuf.Timestamp at = 6;
+}
+
+// UnmappedCandidateSeen feeds the backlog in plan.md §5.4.
+message UnmappedCandidateSeen {
+  string signature = 1;
+  string guessed_name = 2;
+  string env_var_name = 3;
+  string nearby_host = 4;
+  string charset_class = 5;
+  int32 secret_length = 6;
+  string repository_id = 7;
+  string sample_masked = 8;
+  google.protobuf.Timestamp at = 9;
+}

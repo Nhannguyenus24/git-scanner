@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS registry_state;
+DROP TABLE IF EXISTS analytics_rollups;
+DROP TABLE IF EXISTS suppressions;
+DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS provider_candidates;
+DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS provider_fixtures;
+DROP TABLE IF EXISTS provider_versions;
+DROP TABLE IF EXISTS providers;
+DROP TABLE IF EXISTS repositories;
+DROP TABLE IF EXISTS scan_jobs;
+DROP TABLE IF EXISTS targets;
