@@ -13,15 +13,68 @@ serve probes and drain cleanly. No scanning yet; that is Phase 1.
 ## Layout
 
 ```
-cmd/        six service binaries
-libs/       shared libraries (entity, proto, kafka, rabbit, redis, …)
-internal/   service-private code
-deploy/     Helm chart and per-environment values
-build/      Dockerfile
+cmd/<service>/main.go   one per service — a declaration, ~15 lines, no logic
+internal/
+  app/                  the one bootstrap: config → connect → build → serve → drain
+  api/                  REST handlers
+  scan/                 scan engine and its Redis state (blob index, pause/cursor)
+  store/                Postgres pool and migrations
+libs/                   shared, importable conventions
+  entity/               domain types + validation, stdlib only
+  proto/                wire format for queue and stream messages (buf)
+  rabbit/ kafka/ redis/ transport conventions over the drivers
+  config/               environment loading and validation
+  observability/        logger and /healthz, /readyz
+  lifecycle/            signal handling and ordered shutdown
+  buildinfo/            version and commit stamped at link time
+  id/                   UUIDv7
+test/                   all tests, mirroring the source tree (test/README.md)
+  unit/                 no backends — make test
+  integration/          real backends — make test-integration
+deploy/                 Helm chart and per-environment values
+build/                  the single Dockerfile
 ```
 
-`libs/` must not import `internal/`, and `libs/entity` is standard library only.
-Both rules are enforced by `depguard` in CI — see [plan.md](plan.md) §3.2.
+Each package's `doc.go` or package comment lists its files and what each holds.
+
+### Where to find things
+
+| Looking for | Go to |
+|---|---|
+| What a service connects to and runs | `cmd/<service>/main.go` |
+| Startup and shutdown order | `internal/app/app.go`, `internal/app/deps.go` |
+| HTTP routes | `internal/api` |
+| Queue names, retry and dead-letter topology | `libs/rabbit/conn.go` |
+| Kafka topics | `libs/kafka/producer.go` |
+| Table definitions | `internal/store/migrations` |
+| Message schemas | `libs/proto/proto/gitscanner/v1` |
+| Per-service replicas, resources, scaling | `deploy/chart/values.yaml` |
+| Tests for `libs/x` or `internal/x` | `test/unit/libs/x`, `test/unit/internal/x` |
+
+### Dependency rules
+
+Enforced by `depguard` in `make lint` — see [plan.md](plan.md) §3.2.
+
+- `libs/` never imports `internal/` or `cmd/`.
+- `libs/entity` imports the standard library only.
+- `cmd/` never imports a database or broker driver; it declares a service and
+  `internal/app` wires it.
+
+Domain code depends on the narrowest interface it needs, defined where it is
+used (for example `internal/scan` takes `goredis.Cmdable`, not a concrete
+client), so it can be tested without the real backend.
+
+### Adding a service
+
+1. Create `cmd/<name>/main.go` calling `app.Main(app.Spec{...})` with the
+   backends it needs and a `Build` function returning its `Worker` and/or
+   HTTP handler. Put the logic itself in `internal/<domain>`.
+2. Add a `services.<name>` block to `deploy/chart/values.yaml` (and
+   `deploy/values/dev.yaml`).
+
+The Makefile and Tiltfile discover services from `cmd/`, so nothing else
+changes. If it shells out to `git`, add it to `GIT_SERVICES` in the Makefile
+and `git_services` in the Tiltfile.
 
 ## Getting started
 
@@ -31,6 +84,7 @@ brew install k3d helm tilt-dev/tap/tilt
 
 make check         # vet, lint, test
 make build         # binaries into ./bin
+make help          # every target
 ```
 
 ### Running against local infrastructure

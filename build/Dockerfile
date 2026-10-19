@@ -11,8 +11,14 @@ RUN go mod download
 
 COPY . .
 ARG SERVICE
+ARG VERSION=dev
+ARG COMMIT=
 RUN test -n "$SERVICE" || (echo "SERVICE build-arg is required" && exit 1)
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/app ./cmd/${SERVICE}
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-s -w \
+        -X github.com/mservice/gitscanner/libs/buildinfo.version=${VERSION} \
+        -X github.com/mservice/gitscanner/libs/buildinfo.commit=${COMMIT}" \
+      -o /out/app ./cmd/${SERVICE}
 
 # Default runtime: five of the six services need nothing but the binary.
 FROM gcr.io/distroless/static:nonroot AS runtime

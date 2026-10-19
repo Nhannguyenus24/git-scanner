@@ -1,43 +1,52 @@
-// Command scan-worker clones a repository and walks its history for secrets (plan.md §4).
+// Command scan-worker clones a repository and walks its history for secrets
+// (plan.md §4).
 package main
 
 import (
-	"os"
+	"context"
+	"fmt"
 
-	"github.com/mservice/gitscanner/internal/service"
-	"github.com/mservice/gitscanner/libs/runtime"
+	"github.com/mservice/gitscanner/internal/app"
+	"github.com/mservice/gitscanner/internal/scan"
+	"github.com/mservice/gitscanner/internal/scanworker"
+	"github.com/mservice/gitscanner/internal/secrets"
+	"github.com/mservice/gitscanner/libs/rabbit"
+)
+
+// scanPrefetch bounds how many repositories one worker holds at once. It is the
+// backpressure that lets KEDA scale on queue depth (plan.md §13.4); a repo scan
+// is heavy, so this is deliberately small.
+const (
+	scanPrefetch = 2
+	scanMaxRetry = 3
 )
 
 func main() {
-	if err := run(); err != nil {
-		println("fatal:", err.Error())
-		os.Exit(1)
-	}
+	app.Main(app.Spec{
+		Name:  "scan-worker",
+		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true, Kafka: true},
+		Build: build,
+	})
 }
 
-func run() error {
-	ctx, stop := runtime.SignalContext()
-	defer stop()
-
-	svc, err := service.New(ctx, "scan-worker", service.Deps{
-		Postgres: true,
-		Rabbit:   true,
-		Redis:    true,
-		Kafka:    true,
-	})
+func build(_ context.Context, d *app.Deps) (app.Parts, error) {
+	hasher, err := secrets.NewHasher(d.Cfg.FingerprintKey)
 	if err != nil {
-		return err
+		return app.Parts{}, fmt.Errorf("scan-worker: %w", err)
 	}
 
-	svc.StartProbes(nil)
-	svc.Ready()
-	svc.Log.Info("scan-worker started", "addr", svc.Cfg.HTTPAddr)
+	// Phase 1 scans with the built-in bootstrap ruleset. Phase 3 replaces this
+	// with a registry-backed, hot-reloadable detector.
+	det := scan.NewDetector(scan.BootstrapRuleset())
+	engine := scan.NewEngine(scan.NewGitCLI(d.Cfg.ScratchDir), det, hasher)
 
-	// Phase 1 replaces this with the consumer loop. Until then the process
-	// exists so the chart, the probes and the drain path are exercised end to end.
-	<-ctx.Done()
-	svc.Log.Info("shutdown signal received")
+	worker := scanworker.New(engine, d.DB, d.Kafka)
 
-	runtime.Shutdown(svc.Log, svc.Cfg.ShutdownTimeout, svc.Close()...)
-	return nil
+	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueScan, scanPrefetch, scanMaxRetry)
+	if err != nil {
+		return app.Parts{}, fmt.Errorf("scan-worker: consumer: %w", err)
+	}
+	d.Log.Info("scan-worker ready", "ruleset_version", det.Ruleset().Version())
+
+	return app.Parts{Worker: app.NewConsumerWorker(consumer, worker.Handle)}, nil
 }

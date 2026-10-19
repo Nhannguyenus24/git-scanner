@@ -111,12 +111,16 @@ gitscanner/                      module github.com/mservice/gitscanner
     proto/         buf workspace: proto/ definitions, gen/ generated Go
     kafka/         franz-go conventions: topics, proto codec, groups, DLQ
     rabbit/        reconnect, confirms, prefetch, DLX backoff, cancellable consumer
-    redis/         token bucket, locks, dedupe sets, cursors, pub/sub
-    observability/ slog + OTel wiring
+    redis/         connection, distributed token bucket, pub/sub
+    observability/ slog + OTel wiring, health probes
     config/        env loading and validation
+    lifecycle/     signal handling, ordered shutdown
+    buildinfo/     version and commit stamped at link time
+    id/            UUIDv7
   internal/                      # service-private, not importable outside
+    app/           shared bootstrap: config, connect, build, serve, drain
     api/           http handlers, middleware, openapi
-    scan/          engine: clone, blob walk, detect, entropy
+    scan/          engine: clone, blob walk, detect, entropy; blob index, pause/cursor
     rules/         embedded gitleaks-compatible TOML (bootstrap ruleset)
     registry/      provider catalog, versioned definitions, candidates, probes
     classify/      severity scoring, app-type detection

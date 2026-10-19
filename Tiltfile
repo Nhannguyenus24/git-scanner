@@ -2,9 +2,16 @@
 
 registry = 'localhost:5050'
 
-# Five services share the default runtime stage; scan-worker needs the image
-# with the git binary.
-plain_services = ['api', 'discovery-worker', 'enricher', 'notifier', 'analytics']
+# Every directory under cmd/ is a service, same rule as the Makefile, so adding
+# a service never means editing this file.
+services = [
+    os.path.basename(os.path.dirname(f))
+    for f in listdir('cmd', recursive=True)
+    if os.path.basename(f) == 'main.go'
+]
+
+# Services that shell out to git and need the runtime-git image (plan.md §13.3).
+git_services = ['scan-worker']
 
 def service_deps(name):
     # The `only` list is what makes a monorepo tolerable locally: editing
@@ -19,24 +26,15 @@ def service_deps(name):
         'internal',
     ]
 
-for name in plain_services:
+for name in services:
     docker_build(
         registry + '/' + name,
         context='.',
         dockerfile='build/Dockerfile',
-        target='runtime',
+        target='runtime-git' if name in git_services else 'runtime',
         build_args={'SERVICE': name},
         only=service_deps(name),
     )
-
-docker_build(
-    registry + '/scan-worker',
-    context='.',
-    dockerfile='build/Dockerfile',
-    target='runtime-git',
-    build_args={'SERVICE': 'scan-worker'},
-    only=service_deps('scan-worker'),
-)
 
 k8s_yaml(helm(
     'deploy/chart',
@@ -45,6 +43,8 @@ k8s_yaml(helm(
     values=['deploy/values/dev.yaml'],
 ))
 
-k8s_resource('api', port_forwards=['8080:8080'])
-for name in ['discovery-worker', 'scan-worker', 'enricher', 'notifier', 'analytics']:
-    k8s_resource(name)
+for name in services:
+    if name == 'api':
+        k8s_resource(name, port_forwards=['8080:8080'])
+    else:
+        k8s_resource(name)

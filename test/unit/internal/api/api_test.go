@@ -1,0 +1,202 @@
+package api_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/mservice/gitscanner/internal/api"
+	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/store"
+	"github.com/mservice/gitscanner/libs/entity"
+	"github.com/mservice/gitscanner/libs/id"
+)
+
+// fakeStore is an in-memory Store for the handler tests.
+type fakeStore struct {
+	jobs     map[entity.ID]entity.ScanJob
+	findings map[entity.ID][]entity.Finding
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{jobs: map[entity.ID]entity.ScanJob{}, findings: map[entity.ID][]entity.Finding{}}
+}
+
+func (s *fakeStore) CreateTarget(_ context.Context, t entity.Target) (entity.Target, error) {
+	t.ID = id.New()
+	return t, nil
+}
+func (s *fakeStore) CreateScanJob(_ context.Context, targetID entity.ID) (entity.ScanJob, error) {
+	j := entity.ScanJob{ID: id.New(), TargetID: targetID, State: entity.ScanQueued}
+	s.jobs[j.ID] = j
+	return j, nil
+}
+func (s *fakeStore) UpsertRepository(_ context.Context, r entity.Repository) (entity.Repository, error) {
+	r.ID = id.New()
+	return r, nil
+}
+func (s *fakeStore) GetScanJob(_ context.Context, jobID entity.ID) (entity.ScanJob, error) {
+	j, ok := s.jobs[jobID]
+	if !ok {
+		return entity.ScanJob{}, store.ErrNotFound
+	}
+	return j, nil
+}
+func (s *fakeStore) ListFindings(_ context.Context, jobID entity.ID) ([]entity.Finding, error) {
+	return s.findings[jobID], nil
+}
+func (s *fakeStore) SetReposTotal(_ context.Context, jobID entity.ID, n int) error {
+	j := s.jobs[jobID]
+	j.ReposTotal = n
+	s.jobs[jobID] = j
+	return nil
+}
+func (s *fakeStore) SetScanState(_ context.Context, jobID entity.ID, to entity.ScanState, _ string) error {
+	j, ok := s.jobs[jobID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	j.State = to
+	s.jobs[jobID] = j
+	return nil
+}
+
+type fakeQueue struct{ scans, discoveries int }
+
+func (q *fakeQueue) EnqueueScan(context.Context, entity.ScanJob, entity.Repository) error {
+	q.scans++
+	return nil
+}
+func (q *fakeQueue) EnqueueDiscovery(context.Context, dispatch.DiscoveryRequest) error {
+	q.discoveries++
+	return nil
+}
+
+type fakeControl struct{ paused, cleared int }
+
+func (c *fakeControl) RequestPause(context.Context, string) error { c.paused++; return nil }
+func (c *fakeControl) ClearPause(context.Context, string) error   { c.cleared++; return nil }
+
+func newServer(t *testing.T) (*api.Server, *fakeStore, *fakeQueue) {
+	t.Helper()
+	st, q := newFakeStore(), &fakeQueue{}
+	srv := api.NewServer(st, q, &fakeControl{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return srv, st, q
+}
+
+func do(srv *api.Server, method, path, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	srv.Routes().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestVersion(t *testing.T) {
+	srv, _, _ := newServer(t)
+	rec := do(srv, http.MethodGet, "/v1/version", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["service"] != "api" || body["version"] == "" {
+		t.Errorf("body = %v", body)
+	}
+}
+
+func TestScanRepoAcceptsAndEnqueues(t *testing.T) {
+	srv, _, q := newServer(t)
+	rec := do(srv, http.MethodPost, "/v1/scans/repo", `{"url":"https://github.com/owner/repo.git"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if q.scans != 1 {
+		t.Errorf("scans = %d, want 1", q.scans)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["state"] != "queued" {
+		t.Errorf("state = %v, want queued", resp["state"])
+	}
+}
+
+func TestScanRepoRejectsBadInput(t *testing.T) {
+	srv, _, q := newServer(t)
+	cases := []string{
+		`{"url":"ssh://git@github.com/a/b.git"}`,      // dangerous transport
+		`{"url":"https://gitlab.com/a/b.git"}`,        // not github
+		`{"url":"https://github.com/onlyowner"}`,      // no repo
+		`{"url":"https://user:x@github.com/a/b.git"}`, // embedded credentials
+		`{"nope":"x"}`, // unknown field
+		`not json`,
+	}
+	for _, c := range cases {
+		rec := do(srv, http.MethodPost, "/v1/scans/repo", c)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("input %q: status = %d, want 400", c, rec.Code)
+		}
+	}
+	if q.scans != 0 {
+		t.Errorf("a bad request was enqueued (%d)", q.scans)
+	}
+}
+
+func TestGetScanNotFound(t *testing.T) {
+	srv, _, _ := newServer(t)
+	rec := do(srv, http.MethodGet, "/v1/scans/"+id.New().String(), "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestScanUserEnqueuesDiscovery(t *testing.T) {
+	srv, _, q := newServer(t)
+	rec := do(srv, http.MethodPost, "/v1/scans/user", `{"name":"octocat"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if q.discoveries != 1 {
+		t.Errorf("discoveries = %d, want 1", q.discoveries)
+	}
+}
+
+func TestScanUserRejectsBadLogin(t *testing.T) {
+	srv, _, _ := newServer(t)
+	rec := do(srv, http.MethodPost, "/v1/scans/user", `{"name":"-bad-"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestPauseResumeCancel(t *testing.T) {
+	srv, st, q := newServer(t)
+	// seed a running job
+	tgt, _ := st.CreateTarget(context.Background(), entity.Target{Kind: entity.TargetUser, Value: "octocat"})
+	job, _ := st.CreateScanJob(context.Background(), tgt.ID)
+	_ = st.SetScanState(context.Background(), job.ID, entity.ScanRunning, "")
+
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/pause", ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("pause status = %d", rec.Code)
+	}
+	// resume requires paused state
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/resume", ""); rec.Code != http.StatusConflict {
+		t.Errorf("resume while running = %d, want 409", rec.Code)
+	}
+	_ = st.SetScanState(context.Background(), job.ID, entity.ScanPaused, "")
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/resume", ""); rec.Code != http.StatusAccepted {
+		t.Errorf("resume status = %d", rec.Code)
+	}
+	if q.discoveries != 1 {
+		t.Errorf("resume did not re-enqueue discovery (%d)", q.discoveries)
+	}
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/cancel", ""); rec.Code != http.StatusAccepted {
+		t.Errorf("cancel status = %d", rec.Code)
+	}
+}

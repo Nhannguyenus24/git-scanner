@@ -3,66 +3,63 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"net/http"
-	"os"
+	"fmt"
 
-	"github.com/mservice/gitscanner/internal/service"
-	"github.com/mservice/gitscanner/libs/runtime"
+	"github.com/mservice/gitscanner/internal/api"
+	"github.com/mservice/gitscanner/internal/app"
+	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/scan"
 )
 
 func main() {
 	// The Helm pre-upgrade hook runs this same image with -migrate-only
 	// (plan.md §13.6), which avoids shipping a second image whose only job is to
 	// hold a copy of the migrations that could drift from the application's.
-	migrateOnly := flag.Bool("migrate-only", false,
-		"apply database migrations and exit")
+	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	flag.Parse()
 
-	if err := run(*migrateOnly); err != nil {
-		// The logger may not exist yet when configuration fails, so this path
-		// writes to stderr directly.
-		println("fatal:", err.Error())
-		os.Exit(1)
+	if *migrateOnly {
+		app.Main(migrateSpec)
+		return
 	}
+	app.Main(serveSpec)
 }
 
-func run(migrateOnly bool) error {
-	ctx, stop := runtime.SignalContext()
-	defer stop()
+var serveSpec = app.Spec{
+	Name:  "api",
+	Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
+	Build: func(ctx context.Context, d *app.Deps) (app.Parts, error) {
+		// In Kubernetes the hook has already migrated and this is a no-op under
+		// the advisory lock; running directly, it saves a separate step.
+		if err := d.DB.Migrate(ctx); err != nil {
+			return app.Parts{}, err
+		}
 
-	deps := service.Deps{Postgres: true, Rabbit: true, Redis: true}
-	if migrateOnly {
-		deps = service.Deps{Postgres: true}
-	}
+		publisher, err := d.Rabbit.NewPublisher()
+		if err != nil {
+			return app.Parts{}, fmt.Errorf("api: publisher: %w", err)
+		}
+		queue := dispatch.New(publisher)
+		control := scan.NewControl(d.Redis.Raw())
+		srv := api.NewServer(d.DB, queue, control, d.Log)
 
-	svc, err := service.New(ctx, "api", deps)
-	if err != nil {
-		return err
-	}
+		return app.Parts{HTTP: srv.Routes()}, nil
+	},
+}
 
-	if err := svc.DB.Migrate(ctx); err != nil {
-		return err
-	}
-	if migrateOnly {
-		svc.Log.Info("migrations applied")
-		runtime.Shutdown(svc.Log, svc.Cfg.ShutdownTimeout, svc.Close()...)
-		return nil
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/version", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"service":"api","phase":"0"}`))
-	})
-
-	svc.StartProbes(mux)
-	svc.Ready()
-	svc.Log.Info("api started", "addr", svc.Cfg.HTTPAddr)
-
-	<-ctx.Done()
-	svc.Log.Info("shutdown signal received")
-
-	runtime.Shutdown(svc.Log, svc.Cfg.ShutdownTimeout, svc.Close()...)
-	return nil
+var migrateSpec = app.Spec{
+	Name:    "api",
+	Needs:   app.Needs{Postgres: true},
+	OneShot: true,
+	Build: func(_ context.Context, d *app.Deps) (app.Parts, error) {
+		return app.Parts{Worker: app.WorkerFunc(func(ctx context.Context) error {
+			if err := d.DB.Migrate(ctx); err != nil {
+				return err
+			}
+			d.Log.Info("migrations applied")
+			return nil
+		})}, nil
+	},
 }
