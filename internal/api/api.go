@@ -3,23 +3,62 @@
 //
 // Handlers live here, not in cmd/api, so they can be tested with httptest and
 // so cmd/api stays a declaration of what the binary is.
+//
+// Files:
+//
+//	api.go     Server, routing, JSON helpers
+//	scans.go   scan submission, status, findings
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/mservice/gitscanner/libs/buildinfo"
+	"github.com/mservice/gitscanner/libs/entity"
 )
 
-// NewRouter returns every route the api serves besides the probes.
-func NewRouter() http.Handler {
+// Store is the database surface the API depends on, named here so the handlers
+// are testable against a fake without pulling in pgx.
+type Store interface {
+	CreateTarget(ctx context.Context, t entity.Target) (entity.Target, error)
+	CreateScanJob(ctx context.Context, targetID entity.ID) (entity.ScanJob, error)
+	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
+	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
+	ListFindings(ctx context.Context, jobID entity.ID) ([]entity.Finding, error)
+}
+
+// TaskQueue dispatches scan work. Satisfied by the rabbit-backed dispatcher.
+type TaskQueue interface {
+	EnqueueScan(ctx context.Context, job entity.ScanJob, repo entity.Repository) error
+}
+
+// Server holds the API dependencies and builds the router.
+type Server struct {
+	store Store
+	queue TaskQueue
+	log   *slog.Logger
+}
+
+// NewServer wires the API. Either dependency may be nil in a degraded mode, but
+// the scan routes require both.
+func NewServer(store Store, queue TaskQueue, log *slog.Logger) *Server {
+	return &Server{store: store, queue: queue, log: log}
+}
+
+// Routes returns every route the api serves besides the probes.
+func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/version", handleVersion)
+	mux.HandleFunc("GET /v1/version", s.handleVersion)
+	mux.HandleFunc("POST /v1/scans/repo", s.handleScanRepo)
+	mux.HandleFunc("GET /v1/scans/{id}", s.handleGetScan)
+	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)
 	return mux
 }
 
-func handleVersion(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Service string `json:"service"`
 		buildinfo.Info
@@ -30,4 +69,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeError returns a JSON error body. Client mistakes (4xx) are returned
+// verbatim; a 5xx is logged and replaced with a generic message so an internal
+// detail does not leak to the caller.
+func (s *Server) writeError(w http.ResponseWriter, status int, err error) {
+	msg := err.Error()
+	if status >= 500 {
+		if s.log != nil {
+			s.log.Error("request failed", "status", status, "error", err)
+		}
+		msg = "internal error"
+	}
+	writeJSON(w, status, map[string]string{"error": msg})
 }

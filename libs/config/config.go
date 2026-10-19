@@ -28,6 +28,14 @@ type Common struct {
 
 	OTLPEndpoint    string // empty disables tracing export
 	ShutdownTimeout time.Duration
+
+	// FingerprintKey is the HMAC key for secret fingerprints (plan.md §6). Only
+	// the workers that handle raw secrets (scan-worker, enricher) require it; it
+	// is read here so a single place validates its length.
+	FingerprintKey []byte
+	// ScratchDir is where scan-worker clones repositories; empty uses the OS
+	// temp dir. In Kubernetes it is the size-limited /scratch volume.
+	ScratchDir string
 }
 
 // LoadCommon reads Common from the environment.

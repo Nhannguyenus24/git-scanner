@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 
 	"github.com/mservice/gitscanner/internal/api"
 	"github.com/mservice/gitscanner/internal/app"
+	"github.com/mservice/gitscanner/internal/dispatch"
 )
 
 func main() {
@@ -33,7 +35,15 @@ var serveSpec = app.Spec{
 		if err := d.DB.Migrate(ctx); err != nil {
 			return app.Parts{}, err
 		}
-		return app.Parts{HTTP: api.NewRouter()}, nil
+
+		publisher, err := d.Rabbit.NewPublisher()
+		if err != nil {
+			return app.Parts{}, fmt.Errorf("api: publisher: %w", err)
+		}
+		queue := dispatch.New(publisher)
+		srv := api.NewServer(d.DB, queue, d.Log)
+
+		return app.Parts{HTTP: srv.Routes()}, nil
 	},
 }
 
