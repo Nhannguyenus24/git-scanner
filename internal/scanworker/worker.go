@@ -69,6 +69,13 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	if err := w.db.RecordScanResult(ctx, jobID, res.BlobsScanned, sink.inserted); err != nil {
 		return err
 	}
+
+	// A single-repo job, or the last repo of a bulk job, completes here. The
+	// check is transactional and no-ops when more repos are still pending
+	// (plan.md §8), so concurrent workers finishing different repos race safely.
+	if _, err := w.db.CompleteIfAllScanned(ctx, jobID); err != nil {
+		return err
+	}
 	return nil
 }
 

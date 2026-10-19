@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/libs/buildinfo"
 	"github.com/mservice/gitscanner/libs/entity"
 )
@@ -28,24 +29,34 @@ type Store interface {
 	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
 	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
 	ListFindings(ctx context.Context, jobID entity.ID) ([]entity.Finding, error)
+	SetReposTotal(ctx context.Context, jobID entity.ID, n int) error
+	SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanState, errMsg string) error
 }
 
 // TaskQueue dispatches scan work. Satisfied by the rabbit-backed dispatcher.
 type TaskQueue interface {
 	EnqueueScan(ctx context.Context, job entity.ScanJob, repo entity.Repository) error
+	EnqueueDiscovery(ctx context.Context, req dispatch.DiscoveryRequest) error
+}
+
+// Control is the pause/resume flag surface, backed by Redis (plan.md §8).
+type Control interface {
+	RequestPause(ctx context.Context, jobID string) error
+	ClearPause(ctx context.Context, jobID string) error
 }
 
 // Server holds the API dependencies and builds the router.
 type Server struct {
-	store Store
-	queue TaskQueue
-	log   *slog.Logger
+	store   Store
+	queue   TaskQueue
+	control Control
+	log     *slog.Logger
 }
 
 // NewServer wires the API. Either dependency may be nil in a degraded mode, but
 // the scan routes require both.
-func NewServer(store Store, queue TaskQueue, log *slog.Logger) *Server {
-	return &Server{store: store, queue: queue, log: log}
+func NewServer(store Store, queue TaskQueue, control Control, log *slog.Logger) *Server {
+	return &Server{store: store, queue: queue, control: control, log: log}
 }
 
 // Routes returns every route the api serves besides the probes.
@@ -53,8 +64,13 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
 	mux.HandleFunc("POST /v1/scans/repo", s.handleScanRepo)
+	mux.HandleFunc("POST /v1/scans/user", s.handleScanUser)
+	mux.HandleFunc("POST /v1/scans/org", s.handleScanOrg)
 	mux.HandleFunc("GET /v1/scans/{id}", s.handleGetScan)
 	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)
+	mux.HandleFunc("POST /v1/scans/{id}/pause", s.handlePause)
+	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
+	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)
 	return mux
 }
 

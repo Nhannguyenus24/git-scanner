@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
+	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 )
@@ -45,7 +45,7 @@ func (s *Server) handleScanRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owner, name, err := parseGitHubRepo(req.URL)
+	owner, name, err := github.ParseRepoURL(req.URL)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, err)
 		return
@@ -70,11 +70,18 @@ func (s *Server) handleScanRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A single repo means the job's total is known up front, so completion can
+	// fire when this one repo finishes (plan.md §8).
+	if err := s.store.SetReposTotal(ctx, job.ID, 1); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	if err := s.queue.EnqueueScan(ctx, job, repo); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
+	job.ReposTotal = 1
 	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
@@ -135,20 +142,4 @@ func decodeJSON(r *http.Request, v any) error {
 		return fmt.Errorf("invalid JSON body: %w", err)
 	}
 	return nil
-}
-
-// parseGitHubRepo extracts owner and name from a GitHub clone URL. The URL has
-// already passed entity.Target validation (https, no credentials), so this only
-// needs the path shape.
-func parseGitHubRepo(raw string) (owner, name string, err error) {
-	trimmed := strings.TrimSuffix(raw, ".git")
-	i := strings.Index(trimmed, "github.com/")
-	if i < 0 {
-		return "", "", errors.New("only github.com repositories are supported")
-	}
-	parts := strings.Split(strings.Trim(trimmed[i+len("github.com/"):], "/"), "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", errors.New("URL must be https://github.com/<owner>/<repo>")
-	}
-	return parts[0], parts[1], nil
 }

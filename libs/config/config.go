@@ -145,3 +145,6 @@ func splitList(v string) []string {
 	}
 	return out
 }
+
+// GetOr returns the environment variable or fallback when it is unset or empty.
+func GetOr(key, fallback string) string { return getDefault(key, fallback) }

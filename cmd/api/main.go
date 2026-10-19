@@ -10,6 +10,7 @@ import (
 	"github.com/mservice/gitscanner/internal/api"
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/scan"
 )
 
 func main() {
@@ -41,7 +42,8 @@ var serveSpec = app.Spec{
 			return app.Parts{}, fmt.Errorf("api: publisher: %w", err)
 		}
 		queue := dispatch.New(publisher)
-		srv := api.NewServer(d.DB, queue, d.Log)
+		control := scan.NewControl(d.Redis.Raw())
+		srv := api.NewServer(d.DB, queue, control, d.Log)
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},
