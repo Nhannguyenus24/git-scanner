@@ -1,16 +1,30 @@
 SHELL := /bin/bash
 
 MODULE   := github.com/mservice/gitscanner
-SERVICES := api discovery-worker scan-worker enricher notifier analytics
+# Every directory under cmd/ is a service. Adding one there is the only step
+# needed for build, images and push to pick it up.
+SERVICES := $(notdir $(wildcard cmd/*))
+# Services that shell out to git and need the runtime-git image (plan.md §13.3).
+GIT_SERVICES := scan-worker
 REGISTRY ?= localhost:5050
 TAG      ?= dev
 GOBIN    := $(shell go env GOPATH)/bin
+
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null)
+LDFLAGS := -s -w \
+	-X $(MODULE)/libs/buildinfo.version=$(VERSION) \
+	-X $(MODULE)/libs/buildinfo.commit=$(COMMIT)
 
 BUF_VERSION           := v1.58.0
 SQLC_VERSION          := v1.30.0
 GOLANGCI_LINT_VERSION := v2.6.2
 
 export PATH := $(GOBIN):$(PATH)
+
+.PHONY: services
+services: ## List the services found under cmd/
+	@echo $(SERVICES)
 
 .PHONY: help
 help: ## Show available targets
@@ -58,13 +72,29 @@ vet: ## Run go vet
 lint: ## Run golangci-lint, including the §3.2 import rules
 	golangci-lint run ./...
 
+# Tests live under test/, not beside the code (test/README.md). Because they are
+# in other packages, coverage must be attributed with -coverpkg.
+COVERPKG := ./internal/...,./libs/...
+
 .PHONY: test
 test: ## Run unit tests with the race detector
-	go test -race -count=1 ./...
+	go test -race -count=1 ./test/unit/...
 
 .PHONY: test-integration
-test-integration: ## Run integration tests against real backends
-	go test -race -count=1 -tags=integration ./...
+test-integration: ## Run integration tests against real backends (needs REDIS_URL, ...)
+	go test -race -count=1 -tags=integration ./test/integration/...
+
+.PHONY: cover
+cover: ## Unit test coverage of internal/ and libs/, report in coverage.html
+	go test -count=1 -coverpkg=$(COVERPKG) -coverprofile=coverage.out ./test/unit/...
+	go tool cover -func=coverage.out | tail -1
+	go tool cover -html=coverage.out -o coverage.html
+
+.PHONY: chart-lint
+chart-lint: ## Lint the Helm chart and render it for dev and prod
+	helm lint deploy/chart -f deploy/values/dev.yaml
+	helm template gitscanner deploy/chart -f deploy/values/dev.yaml >/dev/null
+	helm template gitscanner deploy/chart --set env=prod >/dev/null
 
 .PHONY: check
 check: vet lint test ## Everything CI runs
@@ -76,17 +106,18 @@ build: ## Compile all services to ./bin
 	@mkdir -p bin
 	@for s in $(SERVICES); do \
 		echo "building $$s"; \
-		CGO_ENABLED=0 go build -trimpath -o bin/$$s ./cmd/$$s || exit 1; \
+		CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$$s ./cmd/$$s || exit 1; \
 	done
 
 .PHONY: images
 images: ## Build container images for the local registry
 	@for s in $(SERVICES); do \
 		target=runtime; \
-		if [ "$$s" = "scan-worker" ]; then target=runtime-git; fi; \
+		case " $(GIT_SERVICES) " in *" $$s "*) target=runtime-git;; esac; \
 		echo "building image $$s (target $$target)"; \
 		docker build -f build/Dockerfile \
 			--build-arg SERVICE=$$s --target $$target \
+			--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) \
 			-t $(REGISTRY)/$$s:$(TAG) . || exit 1; \
 	done
 

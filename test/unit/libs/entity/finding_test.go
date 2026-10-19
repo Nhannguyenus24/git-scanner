@@ -1,11 +1,14 @@
-package entity
+package entity_test
 
-import "testing"
+import (
+	"github.com/mservice/gitscanner/libs/entity"
+	"testing"
+)
 
 // The masked-preview guard exists to catch a masking bug writing plaintext into
 // a column that gets displayed, logged and emailed.
 func TestFindingRejectsUnmaskedPreview(t *testing.T) {
-	base := Finding{
+	base := entity.Finding{
 		RuleID:      "stripe-secret-key",
 		Fingerprint: "deadbeef",
 		BlobOID:     "abc123",
@@ -31,15 +34,15 @@ func TestFindingRejectsUnmaskedPreview(t *testing.T) {
 }
 
 func TestFindingRequiresFingerprint(t *testing.T) {
-	f := Finding{RuleID: "r", BlobOID: "b"}
+	f := entity.Finding{RuleID: "r", BlobOID: "b"}
 	if err := f.Validate(); err == nil {
 		t.Error("fingerprint is the dedupe and idempotency key; it cannot be empty")
 	}
 }
 
 func TestSeverityRoundTrip(t *testing.T) {
-	for _, s := range []Severity{SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical} {
-		parsed, err := ParseSeverity(s.String())
+	for _, s := range []entity.Severity{entity.SeverityInfo, entity.SeverityLow, entity.SeverityMedium, entity.SeverityHigh, entity.SeverityCritical} {
+		parsed, err := entity.ParseSeverity(s.String())
 		if err != nil {
 			t.Fatalf("ParseSeverity(%q): %v", s.String(), err)
 		}
@@ -48,14 +51,14 @@ func TestSeverityRoundTrip(t *testing.T) {
 		}
 	}
 
-	if _, err := ParseSeverity("catastrophic"); err == nil {
+	if _, err := entity.ParseSeverity("catastrophic"); err == nil {
 		t.Error("unknown severity must error rather than default silently")
 	}
 }
 
 // Ordering is relied on when picking the worst finding in a repository.
 func TestSeverityOrdering(t *testing.T) {
-	ordered := []Severity{SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical}
+	ordered := []entity.Severity{entity.SeverityInfo, entity.SeverityLow, entity.SeverityMedium, entity.SeverityHigh, entity.SeverityCritical}
 	for i := 1; i < len(ordered); i++ {
 		if ordered[i-1] >= ordered[i] {
 			t.Errorf("severity constants must be ordered ascending: %v >= %v", ordered[i-1], ordered[i])

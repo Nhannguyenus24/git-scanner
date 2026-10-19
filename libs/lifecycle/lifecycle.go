@@ -1,10 +1,13 @@
-// Package runtime holds the process lifecycle convention every service follows.
+// Package lifecycle holds the process lifecycle convention every service follows.
 //
 // The shape matters for Kubernetes: on SIGTERM a service must stop accepting new
 // work, finish or hand back what it holds, and exit before
 // terminationGracePeriodSeconds expires (plan.md §13.3). Getting this wrong in a
 // queue consumer means lost or duplicated work on every rollout.
-package runtime
+//
+// Named lifecycle rather than runtime so it never shadows the standard library
+// package of that name in an import block.
+package lifecycle
 
 import (
 	"context"
@@ -31,27 +34,33 @@ type Component struct {
 // intake first (queue consumers, HTTP listeners), then flush state, then close
 // the connections that flushing needs. Closing the database first would discard
 // the cursor the drain is trying to save.
-func Shutdown(log *slog.Logger, timeout time.Duration, components ...Component) {
+//
+// It returns the number of components that failed to stop, so a caller can turn
+// an unclean shutdown into a non-zero exit code.
+func Shutdown(log *slog.Logger, timeout time.Duration, components ...Component) (failed int) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	for _, c := range components {
+	for i, c := range components {
 		if c.Stop == nil {
 			continue
 		}
 
 		start := time.Now()
 		if err := c.Stop(ctx); err != nil {
+			failed++
 			log.Error("shutdown step failed", "component", c.Name, "error", err,
 				"elapsed", time.Since(start))
-			continue
+		} else {
+			log.Info("shutdown step done", "component", c.Name, "elapsed", time.Since(start))
 		}
-		log.Info("shutdown step done", "component", c.Name, "elapsed", time.Since(start))
 
 		if ctx.Err() != nil {
+			remaining := len(components) - i - 1
 			log.Error("shutdown deadline exceeded; remaining components skipped",
-				"after", c.Name)
-			return
+				"after", c.Name, "skipped", remaining)
+			return failed + remaining
 		}
 	}
+	return failed
 }

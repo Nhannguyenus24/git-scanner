@@ -1,0 +1,75 @@
+# One definition of "builds and passes" (plan.md §14.6): CI runs the same make
+# targets a developer runs locally.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Built from source with the module's toolchain on purpose: prebuilt
+      # golangci-lint releases are compiled with an older Go and refuse to lint
+      # a module that targets a newer one.
+      - name: Install tools
+        run: make bootstrap
+
+      - run: make vet
+      - run: make lint
+      - run: make test
+      - run: make build
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test-integration
+
+  proto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # buf breaking compares against main
+      - uses: bufbuild/buf-action@v1
+        with:
+          input: libs/proto
+          breaking_against: "${{ github.event.repository.clone_url }}#branch=main,subdir=libs/proto"
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: make chart-lint
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [go]
+    steps:
+      - uses: actions/checkout@v4
+      - run: make images REGISTRY=ci.local TAG=${{ github.sha }}

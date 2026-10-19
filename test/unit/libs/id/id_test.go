@@ -1,12 +1,14 @@
-package id
+package id_test
 
 import (
+	"github.com/mservice/gitscanner/libs/id"
+
 	"testing"
 	"time"
 )
 
 func TestNewFormat(t *testing.T) {
-	v := New().String()
+	v := id.New().String()
 
 	if len(v) != 36 {
 		t.Fatalf("length = %d, want 36: %q", len(v), v)
@@ -28,7 +30,7 @@ func TestUniqueness(t *testing.T) {
 	const n = 10000
 	seen := make(map[string]struct{}, n)
 	for range n {
-		v := New().String()
+		v := id.New().String()
 		if _, dup := seen[v]; dup {
 			t.Fatalf("duplicate id generated: %s", v)
 		}
@@ -39,9 +41,9 @@ func TestUniqueness(t *testing.T) {
 // The whole reason for v7 over v4 is that ids sort by creation time, which keeps
 // the findings primary-key index append-mostly instead of scattering writes.
 func TestTimeOrdered(t *testing.T) {
-	first := New().String()
+	first := id.New().String()
 	time.Sleep(2 * time.Millisecond)
-	second := New().String()
+	second := id.New().String()
 
 	if first >= second {
 		t.Errorf("ids must sort by creation time: %s >= %s", first, second)
