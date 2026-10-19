@@ -28,6 +28,10 @@ func New(ctx context.Context, url string) (*Client, error) {
 		return nil, fmt.Errorf("redis: parse url: %w", err)
 	}
 
+	// Without this go-redis ignores context deadlines and falls back to its own
+	// socket timeouts, so callers' deadlines (readiness, drain) would not hold.
+	opt.ContextTimeoutEnabled = true
+
 	rdb := goredis.NewClient(opt)
 
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

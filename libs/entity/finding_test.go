@@ -55,10 +55,10 @@ func TestSeverityRoundTrip(t *testing.T) {
 
 // Ordering is relied on when picking the worst finding in a repository.
 func TestSeverityOrdering(t *testing.T) {
-	if !(SeverityInfo < SeverityLow &&
-		SeverityLow < SeverityMedium &&
-		SeverityMedium < SeverityHigh &&
-		SeverityHigh < SeverityCritical) {
-		t.Error("severity constants must be ordered ascending")
+	ordered := []Severity{SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical}
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i-1] >= ordered[i] {
+			t.Errorf("severity constants must be ordered ascending: %v >= %v", ordered[i-1], ordered[i])
+		}
 	}
 }

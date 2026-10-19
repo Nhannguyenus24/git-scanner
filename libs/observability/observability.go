@@ -56,6 +56,21 @@ func (h *Health) AddCheck(name string, fn func(context.Context) error) {
 // SetReady marks the service as having finished startup.
 func (h *Health) SetReady(v bool) { h.ready.Store(v) }
 
+// runCheck enforces the deadline even when a driver ignores ctx during dial
+// (franz-go uses its own dial timeout). A probe that hangs past the kubelet's
+// timeout reads as a failure anyway, but without the reason in the log.
+func runCheck(ctx context.Context, check func(context.Context) error) error {
+	done := make(chan error, 1)
+	go func() { done <- check(ctx) }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // Server is the health and metrics listener.
 type Server struct {
 	srv    *http.Server
@@ -82,7 +97,7 @@ func NewServer(addr string, log *slog.Logger, health *Health, extra http.Handler
 		defer cancel()
 
 		for name, check := range health.checks {
-			if err := check(ctx); err != nil {
+			if err := runCheck(ctx, check); err != nil {
 				log.Warn("readiness check failed", "check", name, "error", err)
 				http.Error(w, name+": "+err.Error(), http.StatusServiceUnavailable)
 				return
