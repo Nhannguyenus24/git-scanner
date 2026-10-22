@@ -32,10 +32,27 @@ func NewServer(addr string, log *slog.Logger, health *Health, extra http.Handler
 
 	s.srv = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           corsMiddleware(mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	return s
+}
+
+// corsMiddleware adds permissive CORS headers so browser-based API explorers
+// (e.g. the GitScanner API artifact on claude.ai) can reach a locally running
+// service without a proxy. All origins are allowed because this server is
+// expected to run on localhost during development only.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // handleLive answers liveness. It checks nothing on purpose: a dependency

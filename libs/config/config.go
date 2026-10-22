@@ -54,6 +54,13 @@ func LoadCommon(serviceName string) (Common, error) {
 		RedisURL:     os.Getenv("REDIS_URL"),
 		KafkaBroker:  splitList(getDefault("KAFKA_BOOTSTRAP_SERVERS", "")),
 		OTLPEndpoint: os.Getenv("OTLP_ENDPOINT"),
+		ScratchDir:   os.Getenv("SCRATCH_DIR"),
+	}
+
+	if raw := os.Getenv("FINGERPRINT_KEY"); raw != "" {
+		c.FingerprintKey = []byte(raw)
+	} else if c.Env == "dev" {
+		c.FingerprintKey = []byte("dev-insecure-fingerprint-key-32bytes")
 	}
 
 	timeout, err := GetDuration("SHUTDOWN_TIMEOUT", 30*time.Second)

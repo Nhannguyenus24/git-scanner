@@ -163,3 +163,62 @@ up: ## Start the Tilt inner loop
 .PHONY: down
 down: ## Stop Tilt and remove its resources
 	tilt down
+
+## ---------------------------------------------------------------- frontend
+
+.PHONY: frontend-install
+frontend-install: ## Install frontend npm dependencies
+	cd frontend && npm install
+
+.PHONY: frontend-dev
+frontend-dev: ## Start Vite dev server on :3000 (proxies /v1 to :8080)
+	cd frontend && npm run dev
+
+.PHONY: frontend-build
+frontend-build: ## Build frontend for production into frontend/dist
+	cd frontend && npm run build
+
+## ---------------------------------------------------------------- local run (no k8s)
+
+INFRA_POSTGRES  ?= postgresql://postgres:postgres123@localhost:5432/app_db
+INFRA_RABBIT    ?= amqp://admin:admin123@localhost:5672/
+INFRA_REDIS     ?= redis://:redis123@localhost:6379/0
+INFRA_KAFKA     ?= localhost:9092
+RUN_LOG_DIR     ?= /tmp/gitscanner-logs
+
+.PHONY: run-local
+run-local: build ## Build and start all six services locally (no k8s). Logs → RUN_LOG_DIR.
+	@mkdir -p $(RUN_LOG_DIR)
+	@export POSTGRES_URL='$(INFRA_POSTGRES)' RABBITMQ_URL='$(INFRA_RABBIT)' \
+	        REDIS_URL='$(INFRA_REDIS)' KAFKA_BOOTSTRAP_SERVERS='$(INFRA_KAFKA)' \
+	        LOG_LEVEL=debug ENV=dev; \
+	port=8080; \
+	for svc in api discovery-worker scan-worker enricher notifier analytics; do \
+	    echo "starting $$svc on :$$port"; \
+	    HTTP_ADDR=":$$port" ./bin/$$svc >$(RUN_LOG_DIR)/$$svc.log 2>&1 & \
+	    echo $$! >$(RUN_LOG_DIR)/$$svc.pid; \
+	    [ "$$svc" = "api" ] && sleep 2; \
+	    port=$$((port+1)); \
+	done; \
+	sleep 1; \
+	echo ""; \
+	echo "PIDs:"; \
+	for f in $(RUN_LOG_DIR)/*.pid; do \
+	    s=$$(basename $$f .pid); p=$$(cat $$f); \
+	    kill -0 $$p 2>/dev/null && echo "  $$s pid=$$p RUNNING" || echo "  $$s pid=$$p DEAD"; \
+	done; \
+	echo ""; \
+	echo "Health:"; \
+	for port in 8080 8081 8082 8083 8084 8085; do \
+	    r=$$(curl -sf http://localhost:$$port/readyz 2>/dev/null && echo OK || echo FAIL); \
+	    echo "  :$$port /readyz -> $$r"; \
+	done
+
+.PHONY: stop-local
+stop-local: ## Stop all services started by run-local
+	@for f in $(RUN_LOG_DIR)/*.pid; do \
+	    [ -f "$$f" ] || continue; \
+	    s=$$(basename $$f .pid); p=$$(cat $$f); \
+	    kill "$$p" 2>/dev/null && echo "stopped $$s ($$p)" || echo "$$s already gone"; \
+	    rm -f "$$f"; \
+	done

@@ -1,0 +1,465 @@
+openapi: 3.1.0
+
+info:
+  title: GitScanner API
+  version: "1.0"
+  description: |
+    Scan GitHub repositories, users, and organisations for leaked credentials.
+    All scan work is async — submit a target, then poll `/v1/scans/{id}` until
+    `state` reaches a terminal value (`completed`, `failed`, or `cancelled`).
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+tags:
+  - name: meta
+    description: Service identity and health
+  - name: scans
+    description: Submit and manage scan jobs
+  - name: findings
+    description: Detected credentials
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      description: Returns 200 when the process is alive. Never fails unless the process is dead.
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "ok"
+
+  /readyz:
+    get:
+      tags: [meta]
+      summary: Readiness probe
+      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ, Redis, Kafka) are reachable.
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "readyOK"
+        "503":
+          description: Not ready — dependency check failed
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "postgres: connection refused"
+
+  /v1/version:
+    get:
+      tags: [meta]
+      summary: Build info
+      description: Returns the service name plus the version, commit and Go version stamped at build time.
+      operationId: getVersion
+      responses:
+        "200":
+          description: Build identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+              example:
+                service: api
+                version: dev
+                commit: abc1234
+                go_version: go1.24.0
+
+  /v1/scans/repo:
+    post:
+      tags: [scans]
+      summary: Scan a single repository
+      description: |
+        Validates the HTTPS clone URL, creates a scan job, and enqueues one
+        scan task. The `repos_total` is set to 1 immediately, so `progress`
+        goes 0 → 1 when the repo finishes.
+      operationId: scanRepo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRepoRequest"
+            example:
+              url: "https://github.com/owner/repo"
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/user:
+    post:
+      tags: [scans]
+      summary: Scan all repositories of a GitHub user
+      description: |
+        Starts a discovery job that paginates the user's public repositories and
+        enqueues each one for scanning. `repos_total` grows as discovery
+        paginates; `progress` is 0 until the total is known.
+      operationId: scanUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanTargetRequest"
+            example:
+              name: octocat
+              include_forks: false
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/org:
+    post:
+      tags: [scans]
+      summary: Scan all repositories of a GitHub organisation
+      description: |
+        Same as `/v1/scans/user` but for an organisation login. Requires the
+        GitHub token used by the discovery-worker to have `read:org` scope.
+      operationId: scanOrg
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanTargetRequest"
+            example:
+              name: my-org
+              include_forks: true
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/{id}:
+    get:
+      tags: [scans]
+      summary: Get scan job status
+      description: Poll this until `state` is `completed`, `failed`, or `cancelled`.
+      operationId: getScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/{id}/findings:
+    get:
+      tags: [findings]
+      summary: List findings for a scan job
+      description: |
+        Returns all credentials detected so far. Results grow while the job
+        is still `running`. Each finding exposes a masked preview
+        (e.g. `sk_live_4f2a…9c1d`) — the plaintext secret is never stored.
+      operationId: listFindings
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "200":
+          description: Findings list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindingsResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/{id}/pause:
+    post:
+      tags: [scans]
+      summary: Request pause
+      description: |
+        Sets a Redis flag the workers poll. The job's `state` flips to `paused`
+        when a worker observes the flag at its next checkpoint — it is not
+        immediate. Only valid for a `running` job.
+      operationId: pauseScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "202":
+          description: Pause requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  pause:
+                    type: string
+                    example: requested
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/{id}/resume:
+    post:
+      tags: [scans]
+      summary: Resume a paused job
+      description: |
+        Clears the pause flag, moves the job back to `running`, and re-enqueues
+        discovery from the stored cursor so enumeration picks up where it left
+        off. In-flight scan tasks for already-discovered repos were never
+        cancelled, so they continue normally. Only valid for a `paused` job.
+      operationId: resumeScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "202":
+          description: Resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Job is not paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans/{id}/cancel:
+    post:
+      tags: [scans]
+      summary: Cancel a scan job
+      description: |
+        Moves the job to the terminal `cancelled` state. Workers that see the
+        terminal state stop enqueuing new tasks; in-flight tasks finish or
+        dead-letter harmlessly. Valid from `queued`, `running`, or `paused`.
+      operationId: cancelScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "202":
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  state:
+                    type: string
+                    example: cancelled
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Job is already in a terminal state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    JobID:
+      name: id
+      in: path
+      required: true
+      description: UUIDv7 scan job ID returned when the job was created
+      schema:
+        type: string
+        format: uuid
+        example: "0195f3e2-1234-7abc-8def-000000000001"
+
+  schemas:
+    ScanRepoRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: HTTPS clone URL. Must start with `https://`; SSH and file URLs are rejected.
+          example: "https://github.com/owner/repo"
+
+    ScanTargetRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: GitHub username or organisation login (1–39 chars, alphanumeric + hyphens).
+          example: octocat
+        include_forks:
+          type: boolean
+          default: false
+          description: When true, forked repositories are included in the scan.
+
+    ScanJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUIDv7 job identifier. Use this to poll status and retrieve findings.
+        state:
+          type: string
+          enum: [queued, running, paused, completed, failed, cancelled]
+          description: |
+            State machine:
+            - `queued` → `running` or `cancelled`
+            - `running` → `paused`, `completed`, `failed`, or `cancelled`
+            - `paused` → `running` or `cancelled`
+            - `failed` → `queued` (retry)
+            - `completed`, `cancelled` — terminal
+        progress:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Fraction of repositories scanned. 0 while discovery is still paginating.
+        repos_total:
+          type: integer
+          description: Total repos to scan. 0 while discovery is still paginating.
+        repos_scanned:
+          type: integer
+          description: Repos fully scanned so far.
+        blobs_scanned:
+          type: integer
+          description: Git blobs (file-at-revision) inspected across all repos.
+        findings_count:
+          type: integer
+          description: Credentials detected so far.
+        error:
+          type: string
+          description: Human-readable error message when `state` is `failed`. Empty otherwise.
+
+    Finding:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+          description: Identifier of the detection rule that fired (e.g. `aws-access-key`).
+        provider:
+          type: string
+          description: Resolved provider slug from the registry (e.g. `aws`). Empty until enriched.
+        severity:
+          type: string
+          enum: [info, low, medium, high, critical]
+        masked_preview:
+          type: string
+          description: |
+            Safe-to-display preview of the secret, e.g. `sk_live_4f2a…9c1d`.
+            Always contains the `…` separator. The plaintext is never stored.
+        file_path:
+          type: string
+          description: Path inside the repository where the credential was found.
+        line_number:
+          type: integer
+        blob_oid:
+          type: string
+          description: Git blob SHA where the credential was found.
+        reachable_from_head:
+          type: boolean
+          description: |
+            True when the blob is reachable from the default branch HEAD.
+            A credential in history only still needs rotating — history is public.
+        status:
+          type: string
+          enum: [open, rotated, false_positive, ignored]
+
+    FindingsResponse:
+      type: object
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+
+    VersionResponse:
+      type: object
+      properties:
+        service:
+          type: string
+          example: api
+        version:
+          type: string
+          example: dev
+        commit:
+          type: string
+          example: abc1234
+        go_version:
+          type: string
+          example: go1.24.0
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          example: "scan not found"
+
+  responses:
+    BadRequest:
+      description: Invalid request body or parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
