@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -86,7 +87,15 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 // finding builds the storable finding from a match. The raw secret is consumed
 // here into a fingerprint and a masked preview and is not retained.
 func (e *Engine) finding(jobID, repoID string, b Blob, m Match, reachable bool) entity.Finding {
-	meta := map[string]string{}
+	// The shape fields are derived here because this is the last place the secret
+	// is in scope. A length and a character class describe the format a provider
+	// issues rather than the value, so unlike the secret they are safe to carry
+	// forward — and without them the enricher's candidate clustering has only the
+	// nearby variable name to go on (plan.md §5.4).
+	meta := map[string]string{
+		"secret_length": strconv.Itoa(len(m.Secret)),
+		"charset_class": charsetClass(m.Secret),
+	}
 	if m.NearbyEnvVar != "" {
 		meta["env_var"] = m.NearbyEnvVar
 	}

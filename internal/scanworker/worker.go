@@ -9,10 +9,14 @@ package scanworker
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strconv"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -27,16 +31,24 @@ type Publisher interface {
 	Publish(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
 }
 
+// Enqueuer is the dispatch surface the worker needs, narrowed for the same
+// reason as Publisher.
+type Enqueuer interface {
+	EnqueueEnrich(ctx context.Context, req dispatch.EnrichRequest) error
+}
+
 // Worker handles one scan task at a time within a RabbitMQ consumer.
 type Worker struct {
 	engine *scan.Engine
 	db     *store.DB
 	pub    Publisher
+	disp   Enqueuer
+	log    *slog.Logger
 }
 
 // New builds a worker.
-func New(engine *scan.Engine, db *store.DB, pub Publisher) *Worker {
-	return &Worker{engine: engine, db: db, pub: pub}
+func New(engine *scan.Engine, db *store.DB, pub Publisher, disp Enqueuer, log *slog.Logger) *Worker {
+	return &Worker{engine: engine, db: db, pub: pub, disp: disp, log: log}
 }
 
 // Handle processes one ScanTask delivery. It is the rabbit.Handler for
@@ -55,6 +67,11 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	jobID := entity.ID(task.JobId)
 
+	// Identify the repository in human terms. A log line carrying only ids is
+	// unreadable while a scan is in flight, which is exactly when it is read.
+	meta := w.repoLogFields(ctx, task)
+	w.log.Info("scan started", append([]any{"job", task.JobId}, meta...)...)
+
 	// A single-repo job starts running on its first (only) task. For a bulk job
 	// the discovery worker has already moved it to running, and SetScanState is
 	// a no-op when the state is unchanged.
@@ -63,8 +80,15 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	sink := &storeSink{w: w, task: task}
 	res, err := w.engine.Scan(ctx, task.JobId, task.RepositoryId, task.CloneUrl, sink)
 	if err != nil {
+		w.log.Error("scan failed", append([]any{"job", task.JobId, "error", err}, meta...)...)
 		return fmt.Errorf("scan repository %s: %w", task.RepositoryId, err)
 	}
+
+	w.log.Info("scan done", append([]any{
+		"job", task.JobId, "blobs", res.BlobsScanned,
+		"findings", sink.inserted, "reclassified", sink.reclassified,
+		"app_type", res.AppType,
+	}, meta...)...)
 
 	if err := w.db.RecordScanResult(ctx, jobID, res.BlobsScanned, sink.inserted); err != nil {
 		return err
@@ -79,24 +103,92 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	return nil
 }
 
-// storeSink persists each finding and mirrors it to Kafka. It counts only the
-// rows it actually inserted, so a redelivered task does not inflate the total.
+// storeSink persists each finding, mirrors it to Kafka and queues it for
+// enrichment. It counts only the rows it actually inserted, so a redelivered
+// task does not inflate the total — and, because the Kafka publish hangs off
+// that same check, does not emit a duplicate event for a finding already seen.
 type storeSink struct {
-	w        *Worker
-	task     *gpb.ScanTask
-	inserted int
+	w            *Worker
+	task         *gpb.ScanTask
+	inserted     int
+	reclassified int
 }
 
 func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
-	inserted, err := s.w.db.InsertFinding(ctx, f)
+	write, err := s.w.db.InsertFinding(ctx, f)
 	if err != nil {
 		return err
 	}
-	if !inserted {
-		return nil // already recorded by an earlier delivery
+
+	switch write {
+	case store.FindingUnchanged:
+		return nil
+
+	case store.FindingReclassified:
+		// The row existed but has just been attributed to a named rule, so its
+		// severity needs recomputing against the provider it now names. It is
+		// not a new finding and must not be counted or re-published as one:
+		// analytics has already counted this finding id and would reject the
+		// replay anyway.
+		s.reclassified++
+		return s.w.enqueueEnrich(ctx, s.task, f)
 	}
+
 	s.inserted++
-	return s.w.publish(ctx, s.task, f)
+	if err := s.w.publish(ctx, s.task, f); err != nil {
+		return err
+	}
+	return s.w.enqueueEnrich(ctx, s.task, f)
+}
+
+// repoLogFields describes the repository being scanned, for the log lines that
+// bracket the scan.
+//
+// A lookup failure degrades to the ids and the URL the task already carries
+// rather than failing: this is context for a human reading the log, and losing
+// it is never a reason to abandon a scan that would otherwise succeed.
+func (w *Worker) repoLogFields(ctx context.Context, task *gpb.ScanTask) []any {
+	fields := []any{"repo_id", task.RepositoryId, "url", task.CloneUrl}
+
+	r, err := w.db.GetRepository(ctx, entity.ID(task.RepositoryId))
+	if err != nil {
+		w.log.Debug("repository metadata unavailable", "repo_id", task.RepositoryId, "error", err)
+		return fields
+	}
+
+	fields = append(fields,
+		"repo", r.FullName(),
+		"branch", r.DefaultBranch,
+		"stars", r.Stars,
+		"fork", r.IsFork,
+		"private", r.IsPrivate,
+		"discovered_at", r.CreatedAt.UTC().Format(time.RFC3339),
+	)
+	if r.RemoteCreatedAt != nil {
+		fields = append(fields, "repo_created_at", r.RemoteCreatedAt.UTC().Format(time.RFC3339))
+	}
+	return fields
+}
+
+// enqueueEnrich hands the finding to the enricher for registry resolution
+// (plan.md §5). The detection context enrichment clusters on does not have
+// columns of its own on the findings row; the engine records it in the
+// finding's metadata, which is where these fields are read back from.
+func (w *Worker) enqueueEnrich(ctx context.Context, task *gpb.ScanTask, f entity.Finding) error {
+	// A missing or malformed length is simply unknown; it weakens the clustering
+	// signature but is not a reason to fail the scan that produced the finding.
+	length, _ := strconv.Atoi(f.Metadata["secret_length"])
+
+	return w.disp.EnqueueEnrich(ctx, dispatch.EnrichRequest{
+		FindingID:    f.ID,
+		JobID:        entity.ID(task.JobId),
+		RuleID:       f.RuleID,
+		FilePath:     f.FilePath,
+		NearbyEnvVar: f.Metadata["env_var"],
+		NearbyHost:   f.Metadata["host"],
+		CharsetClass: f.Metadata["charset_class"],
+		SecretLength: length,
+	})
 }
 
 // publish mirrors a finding onto the Kafka finding stream. The repository id is

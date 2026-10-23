@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"google.golang.org/protobuf/proto"
 
@@ -48,11 +49,12 @@ type Worker struct {
 	store Store
 	disp  Dispatcher
 	pause Pauser
+	log   *slog.Logger
 }
 
 // New builds a discovery worker.
-func New(gh github.Lister, st Store, disp Dispatcher, pause Pauser) *Worker {
-	return &Worker{gh: gh, store: st, disp: disp, pause: pause}
+func New(gh github.Lister, st Store, disp Dispatcher, pause Pauser, log *slog.Logger) *Worker {
+	return &Worker{gh: gh, store: st, disp: disp, pause: pause, log: log}
 }
 
 // Handle processes one DiscoveryTask delivery (the rabbit.Handler for
@@ -64,6 +66,8 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	}
 
 	jobID := entity.ID(task.JobId)
+	w.log.Info("discovery task received", "job", task.JobId, "kind", task.Kind, "target", task.Value, "cursor", task.Cursor)
+
 	_ = w.store.SetScanState(ctx, jobID, entity.ScanRunning, "")
 
 	// An operator may pause between pages; honour it before doing more work.
@@ -72,6 +76,7 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 		return err
 	}
 	if paused {
+		w.log.Info("discovery paused", "job", task.JobId)
 		if err := w.store.SetScanCursor(ctx, jobID, task.Cursor); err != nil {
 			return err
 		}
@@ -103,6 +108,7 @@ func (w *Worker) expandPage(ctx context.Context, task *gpb.DiscoveryTask) error 
 	if err != nil {
 		return err
 	}
+	w.log.Info("discovery page done", "job", task.JobId, "target", task.Value, "enqueued", enqueued, "has_more", page.NextCursor != "")
 	if err := w.store.AddReposTotal(ctx, jobID, enqueued); err != nil {
 		return err
 	}
@@ -111,12 +117,16 @@ func (w *Worker) expandPage(ctx context.Context, task *gpb.DiscoveryTask) error 
 	}
 
 	if page.NextCursor == "" {
+		w.log.Info("discovery complete", "job", task.JobId, "target", task.Value)
 		return nil // target fully expanded; completion follows when scans finish
 	}
-	// Continue from the next page in a fresh delivery.
-	next := *task
+	// Continue from the next page in a fresh delivery. The request is built from
+	// the task rather than copying the task itself: a generated protobuf message
+	// carries an internal mutex, so assigning one by value is a data race vet
+	// rightly rejects.
+	next := requestFromTask(task)
 	next.Cursor = page.NextCursor
-	return w.disp.EnqueueDiscovery(ctx, requestFromTask(&next))
+	return w.disp.EnqueueDiscovery(ctx, next)
 }
 
 // expandAllowlist enqueues a scan for each explicitly listed repository. The
@@ -149,11 +159,17 @@ func (w *Worker) enqueueRepos(ctx context.Context, task *gpb.DiscoveryTask, repo
 		if r.IsFork && !task.IncludeForks {
 			continue
 		}
-		stored, err := w.store.UpsertRepository(ctx, entity.Repository{
+		repo := entity.Repository{
 			TargetID: entity.ID(task.TargetId), Owner: r.Owner, Name: r.Name,
 			CloneURL: r.CloneURL, DefaultBranch: r.DefaultBranch,
 			IsFork: r.IsFork, IsPrivate: r.IsPrivate, Stars: r.Stars,
-		})
+		}
+		if !r.CreatedAt.IsZero() {
+			created := r.CreatedAt
+			repo.RemoteCreatedAt = &created
+		}
+
+		stored, err := w.store.UpsertRepository(ctx, repo)
 		if err != nil {
 			return n, err
 		}

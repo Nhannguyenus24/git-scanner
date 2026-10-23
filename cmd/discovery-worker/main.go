@@ -43,7 +43,7 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	disp := dispatch.New(publisher)
 	control := scan.NewControl(d.Redis.Raw())
 
-	worker := discovery.New(gh, d.DB, disp, control)
+	worker := discovery.New(gh, d.DB, disp, control, d.Log)
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueDiscovery, discoveryPrefetch, discoveryMaxRetry)
 	if err != nil {

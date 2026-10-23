@@ -55,18 +55,21 @@ func (db *DB) UpsertRepository(ctx context.Context, r entity.Repository) (entity
 		r.ID = id.New()
 	}
 	const q = `
-		INSERT INTO repositories (id, target_id, owner, name, clone_url, default_branch, is_fork, is_private, stars, app_type)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO repositories (id, target_id, owner, name, clone_url, default_branch, is_fork, is_private, stars, app_type, remote_created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		ON CONFLICT (owner, name) DO UPDATE SET
 			clone_url = EXCLUDED.clone_url,
 			default_branch = EXCLUDED.default_branch,
 			is_fork = EXCLUDED.is_fork,
 			is_private = EXCLUDED.is_private,
-			stars = EXCLUDED.stars
+			stars = EXCLUDED.stars,
+			-- COALESCE so a caller that does not carry the remote date, such as a
+			-- direct single-repo scan, cannot blank one discovery already stored.
+			remote_created_at = COALESCE(EXCLUDED.remote_created_at, repositories.remote_created_at)
 		RETURNING id`
 	err := db.pool.QueryRow(ctx, q,
 		r.ID, r.TargetID, r.Owner, r.Name, r.CloneURL, orDefault(r.DefaultBranch, "main"),
-		r.IsFork, r.IsPrivate, r.Stars, r.AppType).Scan(&r.ID)
+		r.IsFork, r.IsPrivate, r.Stars, r.AppType, r.RemoteCreatedAt).Scan(&r.ID)
 	if err != nil {
 		return entity.Repository{}, fmt.Errorf("store: upsert repository: %w", err)
 	}

@@ -87,15 +87,25 @@ func NewGitCLI(scratchDir string) *GitCLI {
 	return &GitCLI{ScratchDir: scratchDir, MaxBlobBytes: 10 << 20}
 }
 
-// Clone makes a bare mirror clone. --mirror fetches all refs in one pass, which
-// is what lets the blob walk see the whole history rather than one branch.
+// Clone makes a bare clone carrying every branch and tag, which is what lets
+// the blob walk see the whole history rather than one branch.
+//
+// Deliberately --bare and not --mirror. A mirror clone fetches refs/*, and on
+// GitHub that includes refs/pull/* — one ref per pull request ever opened. On a
+// widely forked repository that is the overwhelming majority of its refs
+// (octocat/Spoon-Knife advertises 63,775, of which 3 are branches), so a mirror
+// pulls gigabytes of commits belonging to other people's forks. That is slow
+// enough to look like a hang, it can exhaust the scratch volume, and the
+// commits are not the target's history at all: scanning them would attribute
+// another repository's secrets to this one, over a ref nobody authorized as a
+// target (plan.md §0.1). --bare fetches branches and tags only.
 func (g *GitCLI) Clone(ctx context.Context, cloneURL string) (Repo, error) {
 	dir, err := os.MkdirTemp(g.ScratchDir, "scan-*")
 	if err != nil {
 		return nil, fmt.Errorf("scan: scratch dir: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--mirror", "--quiet",
+	cmd := exec.CommandContext(ctx, "git", "clone", "--bare", "--quiet",
 		"--no-recurse-submodules", cloneURL, dir)
 	cmd.Env = gitEnv(g.AllowProtocols)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -134,19 +144,35 @@ func (r *gitRepo) Blobs(ctx context.Context, fn func(Blob) error) error {
 		return err
 	}
 
-	batch := r.git(ctx, "cat-file", "--batch")
+	// cat-file gets its own cancellable context so that leaving this function
+	// early can kill it.
+	//
+	// Without that, every early return below deadlocks. Once this loop stops
+	// reading, git blocks writing into a stdout nobody drains; because git has
+	// stopped reading, the feeder goroutine blocks writing into a full stdin;
+	// and Wait then waits forever on a process that can never exit. Cancelling
+	// first is what makes the exit path terminate.
+	batchCtx, cancelBatch := context.WithCancel(ctx)
+
+	batch := r.git(batchCtx, "cat-file", "--batch")
 	stdin, err := batch.StdinPipe()
 	if err != nil {
+		cancelBatch()
 		return fmt.Errorf("scan: cat-file stdin: %w", err)
 	}
 	stdout, err := batch.StdoutPipe()
 	if err != nil {
+		cancelBatch()
 		return fmt.Errorf("scan: cat-file stdout: %w", err)
 	}
 	if err := batch.Start(); err != nil {
+		cancelBatch()
 		return fmt.Errorf("scan: start cat-file: %w", err)
 	}
-	defer func() { _ = batch.Wait() }()
+	defer func() {
+		cancelBatch()
+		_ = batch.Wait()
+	}()
 
 	out := bufio.NewReaderSize(stdout, 1<<16)
 	// Feed requests from a goroutine so writing to stdin and reading stdout do

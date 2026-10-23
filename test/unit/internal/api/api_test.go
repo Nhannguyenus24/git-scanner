@@ -21,10 +21,18 @@ import (
 type fakeStore struct {
 	jobs     map[entity.ID]entity.ScanJob
 	findings map[entity.ID][]entity.Finding
+	repos    map[entity.ID]entity.Repository
+	// openFindings is keyed by repository id, for the disclosure handler.
+	openFindings map[entity.ID][]entity.Finding
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{jobs: map[entity.ID]entity.ScanJob{}, findings: map[entity.ID][]entity.Finding{}}
+	return &fakeStore{
+		jobs:         map[entity.ID]entity.ScanJob{},
+		findings:     map[entity.ID][]entity.Finding{},
+		repos:        map[entity.ID]entity.Repository{},
+		openFindings: map[entity.ID][]entity.Finding{},
+	}
 }
 
 func (s *fakeStore) CreateTarget(_ context.Context, t entity.Target) (entity.Target, error) {
@@ -50,6 +58,16 @@ func (s *fakeStore) GetScanJob(_ context.Context, jobID entity.ID) (entity.ScanJ
 func (s *fakeStore) ListFindings(_ context.Context, jobID entity.ID) ([]entity.Finding, error) {
 	return s.findings[jobID], nil
 }
+func (s *fakeStore) GetRepository(_ context.Context, repoID entity.ID) (entity.Repository, error) {
+	r, ok := s.repos[repoID]
+	if !ok {
+		return entity.Repository{}, store.ErrNotFound
+	}
+	return r, nil
+}
+func (s *fakeStore) ListOpenFindingsByRepository(_ context.Context, repoID entity.ID) ([]entity.Finding, error) {
+	return s.openFindings[repoID], nil
+}
 func (s *fakeStore) SetReposTotal(_ context.Context, jobID entity.ID, n int) error {
 	j := s.jobs[jobID]
 	j.ReposTotal = n
@@ -66,7 +84,7 @@ func (s *fakeStore) SetScanState(_ context.Context, jobID entity.ID, to entity.S
 	return nil
 }
 
-type fakeQueue struct{ scans, discoveries int }
+type fakeQueue struct{ scans, discoveries, notifies int }
 
 func (q *fakeQueue) EnqueueScan(context.Context, entity.ScanJob, entity.Repository) error {
 	q.scans++
@@ -74,6 +92,10 @@ func (q *fakeQueue) EnqueueScan(context.Context, entity.ScanJob, entity.Reposito
 }
 func (q *fakeQueue) EnqueueDiscovery(context.Context, dispatch.DiscoveryRequest) error {
 	q.discoveries++
+	return nil
+}
+func (q *fakeQueue) EnqueueNotify(context.Context, dispatch.NotifyRequest) error {
+	q.notifies++
 	return nil
 }
 

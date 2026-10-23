@@ -99,7 +99,7 @@ func connect(ctx context.Context, cfg config.Common, log *slog.Logger, needs Nee
 	}
 
 	if needs.Kafka {
-		kp, err := kafka.NewProducer(cfg.KafkaBroker, log)
+		kp, err := kafka.NewProducer(ctx, cfg.KafkaBroker, log)
 		if err != nil {
 			return fail(err)
 		}

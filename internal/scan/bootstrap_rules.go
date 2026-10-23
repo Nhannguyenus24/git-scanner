@@ -37,6 +37,19 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"sk_live_"},
 	},
 	{
+		// A test key moves no money, so it is reported at low severity rather
+		// than not at all: it still identifies the account and tends to sit in
+		// the same file as the live one.
+		id: "stripe-test-key", provider: "stripe", severity: "low",
+		pattern:  `(?P<secret>sk_test_[0-9A-Za-z]{24,})`,
+		literals: []string{"sk_test_"},
+	},
+	{
+		id: "google-oauth-client-secret", provider: "google", severity: "high",
+		pattern:  `(?P<secret>GOCSPX-[0-9A-Za-z_-]{28})`,
+		literals: []string{"GOCSPX-"},
+	},
+	{
 		id: "slack-bot-token", provider: "slack", severity: "high",
 		pattern:  `(?P<secret>xox[baprs]-[0-9A-Za-z-]{10,})`,
 		literals: []string{"xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"},
@@ -56,6 +69,29 @@ var bootstrapRuleDefs = []struct {
 		id: "cloudinary-url", provider: "cloudinary", severity: "high",
 		pattern:  `(?P<secret>cloudinary://[0-9]{15}:[0-9A-Za-z_-]{20,}@[0-9A-Za-z_-]+)`,
 		literals: []string{"cloudinary://"},
+	},
+	{
+		// The same credentials are just as often carried as three separate
+		// settings — Spring's cloudinary.api-secret, or a CLOUDINARY_API_SECRET
+		// environment variable — which the URL rule above cannot see.
+		//
+		// The 27-character value has no distinctive prefix, so the pattern
+		// anchors on the setting name instead. That context is what separates it
+		// from any other base64 token of the same length, and it is why this
+		// rule can be specific without the value itself being recognisable.
+		id: "cloudinary-api-secret", provider: "cloudinary", severity: "critical",
+		pattern: `(?i)cloudinary[._-]?api[._-]?secret\s*[:=]\s*["']?(?P<secret>[0-9A-Za-z_-]{27})`,
+		// The prefilter is case-sensitive, so both spellings must be listed or
+		// the uppercase environment-variable form never reaches the regex.
+		literals: []string{"cloudinary", "CLOUDINARY", "Cloudinary"},
+	},
+	{
+		// The API key is 15 digits and nothing else. Matched on its own it would
+		// fire on every timestamp and identifier in a codebase, so the setting
+		// name is not an optimisation here — it is the whole signal.
+		id: "cloudinary-api-key", provider: "cloudinary", severity: "high",
+		pattern:  `(?i)cloudinary[._-]?api[._-]?key\s*[:=]\s*["']?(?P<secret>[0-9]{15})`,
+		literals: []string{"cloudinary", "CLOUDINARY", "Cloudinary"},
 	},
 	{
 		// SMTP credentials embedded in a URL (smtp://user:pass@host). The host

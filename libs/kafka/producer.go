@@ -19,7 +19,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/kmsg"
 )
 
 // Topics. Declared here so producer and consumer cannot disagree.
@@ -29,14 +31,25 @@ const (
 	TopicScans    = "scans.v1"
 )
 
+// Topics is every topic this system publishes. Adding one here is the only
+// step needed for NewProducer to declare it.
+var Topics = []string{TopicFindings, TopicRegistry, TopicScans}
+
 // Producer publishes events.
 type Producer struct {
 	cl  *kgo.Client
 	log *slog.Logger
 }
 
-// NewProducer connects to the brokers.
-func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
+// NewProducer connects to the brokers and declares the topics this system
+// publishes, the way rabbit.Connect declares its queue topology.
+//
+// Declaring them here rather than relying on auto-creation is deliberate.
+// auto.create.topics.enable is off in most production clusters, and when it is
+// on the first produce can still race topic creation and fail with
+// UNKNOWN_TOPIC_OR_PARTITION. Either way the failure surfaces as a publish
+// error deep inside a scan, far from the real cause.
+func NewProducer(ctx context.Context, brokers []string, log *slog.Logger) (*Producer, error) {
 	if len(brokers) == 0 {
 		return nil, errors.New("kafka: no brokers configured")
 	}
@@ -53,7 +66,48 @@ func NewProducer(brokers []string, log *slog.Logger) (*Producer, error) {
 		return nil, fmt.Errorf("kafka: new producer: %w", err)
 	}
 
-	return &Producer{cl: cl, log: log}, nil
+	p := &Producer{cl: cl, log: log}
+	if err := p.EnsureTopics(ctx, Topics...); err != nil {
+		cl.Close()
+		return nil, err
+	}
+	return p, nil
+}
+
+// EnsureTopics creates any of topics that do not exist yet. It is idempotent:
+// a topic another replica just created comes back as TOPIC_ALREADY_EXISTS,
+// which is success here.
+//
+// Partition count and replication factor are left to the broker (-1 means "use
+// the cluster default"), so dev and production each get what their own
+// configuration says rather than a number hard-coded in application code.
+func (p *Producer) EnsureTopics(ctx context.Context, topics ...string) error {
+	if len(topics) == 0 {
+		return nil
+	}
+
+	req := kmsg.NewPtrCreateTopicsRequest()
+	for _, t := range topics {
+		rt := kmsg.NewCreateTopicsRequestTopic()
+		rt.Topic = t
+		rt.NumPartitions = -1
+		rt.ReplicationFactor = -1
+		req.Topics = append(req.Topics, rt)
+	}
+
+	resp, err := req.RequestWith(ctx, p.cl)
+	if err != nil {
+		return fmt.Errorf("kafka: create topics: %w", err)
+	}
+
+	for _, t := range resp.Topics {
+		switch err := kerr.ErrorForCode(t.ErrorCode); {
+		case err == nil, errors.Is(err, kerr.TopicAlreadyExists):
+		default:
+			return fmt.Errorf("kafka: create topic %s: %w", t.Topic, err)
+		}
+	}
+	return nil
 }
 
 // Publish writes one record synchronously.

@@ -19,6 +19,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
@@ -81,7 +82,7 @@ func TestWorkerStoresAndPublishes(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	brokers := strings.Split(env(t, "KAFKA_BOOTSTRAP_SERVERS"), ",")
-	prod, err := kafka.NewProducer(brokers, log)
+	prod, err := kafka.NewProducer(t.Context(), brokers, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +110,11 @@ func TestWorkerStoresAndPublishes(t *testing.T) {
 	engine := scan.NewEngine(
 		&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
 		scan.NewDetector(scan.BootstrapRuleset()), hasher)
-	worker := scanworker.New(engine, db, prod)
+	enrichPub, err := conn.NewPublisher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := scanworker.New(engine, db, prod, dispatch.New(enrichPub), log)
 
 	consumer, err := conn.NewConsumer(rabbit.QueueScan, 1, 3)
 	if err != nil {

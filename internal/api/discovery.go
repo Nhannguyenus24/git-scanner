@@ -57,6 +57,7 @@ func (s *Server) startDiscovery(w http.ResponseWriter, r *http.Request, kind ent
 		return
 	}
 
+	s.log.Info("discovery queued", "job", job.ID.String(), "kind", string(kind), "target", req.Name)
 	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
@@ -69,6 +70,7 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.log.Info("pause requested", "job", id)
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "pause": "requested"})
 }
 
@@ -107,6 +109,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.log.Info("scan resumed", "job", id.String())
 	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
@@ -122,5 +125,6 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusConflict, err)
 		return
 	}
+	s.log.Info("scan cancelled", "job", id.String())
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id.String(), "state": "cancelled"})
 }

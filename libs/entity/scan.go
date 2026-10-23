@@ -140,6 +140,10 @@ type Repository struct {
 	IsFork        bool
 	IsPrivate     bool
 	Stars         int
+	// RemoteCreatedAt is when the repository was created on its host. CreatedAt
+	// below is when this system first discovered it; the two answer different
+	// questions and a finding's age is judged against this one.
+	RemoteCreatedAt *time.Time
 	// AppType is the detected stack (plan.md §4.3), feeding severity scoring.
 	AppType       string
 	LastScannedAt *time.Time

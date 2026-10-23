@@ -82,6 +82,7 @@ func (s *Server) handleScanRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job.ReposTotal = 1
+	s.log.Info("scan queued", "job", job.ID.String(), "url", req.URL)
 	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 

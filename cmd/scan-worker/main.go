@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/mservice/gitscanner/internal/app"
+	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
@@ -40,7 +41,12 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	det := scan.NewDetector(scan.BootstrapRuleset())
 	engine := scan.NewEngine(scan.NewGitCLI(d.Cfg.ScratchDir), det, hasher)
 
-	worker := scanworker.New(engine, d.DB, d.Kafka)
+	publisher, err := d.Rabbit.NewPublisher()
+	if err != nil {
+		return app.Parts{}, fmt.Errorf("scan-worker: publisher: %w", err)
+	}
+
+	worker := scanworker.New(engine, d.DB, d.Kafka, dispatch.New(publisher), d.Log)
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueScan, scanPrefetch, scanMaxRetry)
 	if err != nil {

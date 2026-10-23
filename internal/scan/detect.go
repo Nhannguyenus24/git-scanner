@@ -160,6 +160,51 @@ func lineNumber(blob []byte, off int) int {
 	return 1 + bytes.Count(blob[:off], []byte{'\n'})
 }
 
+// charsetClass names the alphabet a secret is drawn from. Together with its
+// length it is the shape the enricher clusters unmapped credentials on
+// (plan.md §5.4): two AWS keys differ in value but share a shape.
+//
+// It is derived from the secret and is safe to persist. A class and a length
+// describe the format a provider issues, not the value — nothing about the
+// credential can be reconstructed from them.
+func charsetClass(secret string) string {
+	if secret == "" {
+		return ""
+	}
+
+	var hasLetter, hasDigit, hasB64Sym, hasOther bool
+	hex := true
+	for _, r := range secret {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+			hasLetter = true
+		case r >= 'g' && r <= 'z', r >= 'G' && r <= 'Z':
+			hasLetter, hex = true, false
+		case r == '+', r == '/', r == '_', r == '-', r == '=':
+			hasB64Sym, hex = true, false
+		default:
+			hasOther, hex = true, false
+		}
+	}
+
+	switch {
+	case hasOther:
+		return "mixed"
+	case hex && hasDigit:
+		return "hex"
+	case hasB64Sym:
+		return "base64"
+	case hasLetter && hasDigit:
+		return "alnum"
+	case hasLetter:
+		return "alpha"
+	default:
+		return "numeric"
+	}
+}
+
 func envVarIn(line string) string {
 	if m := envAssign.FindStringSubmatch(line); m != nil {
 		return m[1]
@@ -184,7 +229,11 @@ func isBinary(blob []byte) bool {
 
 // placeholder matches the decoys that make up most false positives: example
 // values, obvious repeats, and the classic "your key here" fillers.
-var placeholder = regexp.MustCompile(`(?i)(example|changeme|your[-_]?(key|token|secret)|xxxx+|0000+|placeholder|dummy|sample|<[^>]+>)`)
+// The "your…" arm allows words in between on purpose. Config templates spell
+// the filler out in full — your-cloudinary-api-secret, YOUR_32_CHARACTER_KEY —
+// and an arm that only accepted "your" immediately before the noun matched none
+// of them, so those templates were reported as findings.
+var placeholder = regexp.MustCompile(`(?i)(example|changeme|your[-_a-z0-9]*[-_](key|token|secret|password|pass)|xxxx+|0000+|placeholder|dummy|sample|<[^>]+>)`)
 
 func isPlaceholder(secret string) bool {
 	if placeholder.MatchString(secret) {

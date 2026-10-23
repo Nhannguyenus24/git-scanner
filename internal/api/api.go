@@ -8,6 +8,7 @@
 //
 //	api.go     Server, routing, JSON helpers
 //	scans.go   scan submission, status, findings
+//	notify.go  responsible-disclosure requests
 package api
 
 import (
@@ -28,7 +29,9 @@ type Store interface {
 	CreateScanJob(ctx context.Context, targetID entity.ID) (entity.ScanJob, error)
 	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
 	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
+	GetRepository(ctx context.Context, repoID entity.ID) (entity.Repository, error)
 	ListFindings(ctx context.Context, jobID entity.ID) ([]entity.Finding, error)
+	ListOpenFindingsByRepository(ctx context.Context, repoID entity.ID) ([]entity.Finding, error)
 	SetReposTotal(ctx context.Context, jobID entity.ID, n int) error
 	SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanState, errMsg string) error
 }
@@ -37,6 +40,7 @@ type Store interface {
 type TaskQueue interface {
 	EnqueueScan(ctx context.Context, job entity.ScanJob, repo entity.Repository) error
 	EnqueueDiscovery(ctx context.Context, req dispatch.DiscoveryRequest) error
+	EnqueueNotify(ctx context.Context, req dispatch.NotifyRequest) error
 }
 
 // Control is the pause/resume flag surface, backed by Redis (plan.md §8).
@@ -71,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/scans/{id}/pause", s.handlePause)
 	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /v1/repositories/{id}/disclose", s.handleDisclose)
 	return mux
 }
 

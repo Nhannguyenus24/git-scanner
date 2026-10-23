@@ -26,6 +26,9 @@ type Repo struct {
 	IsFork        bool
 	IsPrivate     bool
 	Stars         int
+	// CreatedAt is when the repository was created on GitHub, which is not the
+	// same as when this system first discovered it.
+	CreatedAt time.Time
 }
 
 // Page is one page of repositories plus the cursor to fetch the next one.
@@ -95,7 +98,8 @@ type apiRepo struct {
 	DefaultBranch string `json:"default_branch"`
 	Fork          bool   `json:"fork"`
 	Private       bool   `json:"private"`
-	Stargazers    int    `json:"stargazers_count"`
+	Stargazers    int       `json:"stargazers_count"`
+	CreatedAt     time.Time `json:"created_at"`
 	Owner         struct {
 		Login string `json:"login"`
 	} `json:"owner"`
@@ -149,7 +153,7 @@ func (c *Client) listRepos(ctx context.Context, path, cursor string) (Page, erro
 		out.Repos = append(out.Repos, Repo{
 			Owner: owner, Name: r.Name, CloneURL: r.CloneURL,
 			DefaultBranch: r.DefaultBranch, IsFork: r.Fork,
-			IsPrivate: r.Private, Stars: r.Stargazers,
+			IsPrivate: r.Private, Stars: r.Stargazers, CreatedAt: r.CreatedAt,
 		})
 	}
 

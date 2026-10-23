@@ -88,6 +88,7 @@ func (c *Consumer) Run(ctx context.Context, h Handler) error {
 
 func (c *Consumer) handle(ctx context.Context, h Handler, msg amqp.Delivery) {
 	attempt := AttemptCount(msg.Headers)
+	c.log.Debug("delivery received", "queue", c.queue, "attempt", attempt, "size", len(msg.Body))
 
 	err := h(ctx, Delivery{
 		Body:    msg.Body,
@@ -99,6 +100,8 @@ func (c *Consumer) handle(ctx context.Context, h Handler, msg amqp.Delivery) {
 	case err == nil:
 		if ackErr := msg.Ack(false); ackErr != nil {
 			c.log.Error("ack failed", "queue", c.queue, "error", ackErr)
+		} else {
+			c.log.Debug("delivery acked", "queue", c.queue)
 		}
 
 	case errors.Is(err, ErrDrop), attempt >= c.maxRetry:

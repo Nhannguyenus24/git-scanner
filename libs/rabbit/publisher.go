@@ -59,6 +59,7 @@ func (p *Publisher) Publish(ctx context.Context, queue string, body []byte, head
 	if !ok {
 		return fmt.Errorf("rabbit: broker rejected publish to %s", queue)
 	}
+	p.log.Debug("published", "queue", queue, "bytes", len(body))
 	return nil
 }
 

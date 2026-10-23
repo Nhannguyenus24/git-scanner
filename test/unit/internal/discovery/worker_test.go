@@ -2,6 +2,7 @@ package discovery_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -92,7 +93,7 @@ func deliver(t *testing.T, task *gpb.DiscoveryTask) rabbit.Delivery {
 
 func TestDiscoverFirstPageEnqueuesAndContinues(t *testing.T) {
 	gh, st, disp, pause := &fakeLister{}, &fakeStore{}, &fakeDisp{}, &fakePause{}
-	w := discovery.New(gh, st, disp, pause)
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
 
 	err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
 		JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat"}))
@@ -118,7 +119,7 @@ func TestDiscoverFirstPageEnqueuesAndContinues(t *testing.T) {
 
 func TestDiscoverLastPageStops(t *testing.T) {
 	gh, st, disp, pause := &fakeLister{}, &fakeStore{}, &fakeDisp{}, &fakePause{}
-	w := discovery.New(gh, st, disp, pause)
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
 
 	err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
 		JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat", Cursor: "2"}))
@@ -135,7 +136,7 @@ func TestDiscoverLastPageStops(t *testing.T) {
 
 func TestDiscoverPausesBeforeWork(t *testing.T) {
 	gh, st, disp, pause := &fakeLister{}, &fakeStore{}, &fakeDisp{}, &fakePause{paused: true}
-	w := discovery.New(gh, st, disp, pause)
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
 
 	err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
 		JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat", Cursor: "3"}))
@@ -155,7 +156,7 @@ func TestDiscoverPausesBeforeWork(t *testing.T) {
 
 func TestDiscoverAllowlist(t *testing.T) {
 	gh, st, disp, pause := &fakeLister{}, &fakeStore{}, &fakeDisp{}, &fakePause{}
-	w := discovery.New(gh, st, disp, pause)
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
 
 	err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
 		JobId: "job", TargetId: "tgt", Kind: "allowlist",
