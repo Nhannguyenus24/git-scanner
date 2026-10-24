@@ -359,3 +359,57 @@ func clampLimit(n, def, maxN int) int {
 	}
 	return min(n, maxN)
 }
+
+// TimePoint is one period of the leak timeline.
+type TimePoint struct {
+	Period   string // YYYY-MM
+	Findings int
+}
+
+// FindingsTimeline buckets findings by the month the credential was committed,
+// which answers "when were these secrets introduced" — the question a team
+// actually asks. Findings with no commit date (not yet attributed) are grouped
+// under an empty period and the caller can drop them.
+func (db *DB) FindingsTimeline(ctx context.Context) ([]TimePoint, error) {
+	const q = `
+		SELECT to_char(date_trunc('month', committed_at), 'YYYY-MM') AS period, count(*)
+		FROM findings
+		WHERE committed_at IS NOT NULL
+		GROUP BY 1 ORDER BY 1`
+	rows, err := db.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("store: findings timeline: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (TimePoint, error) {
+		var p TimePoint
+		err := r.Scan(&p.Period, &p.Findings)
+		return p, err
+	})
+}
+
+// FindingsByAppType breaks open findings down by the kind of application the
+// repository was detected to be.
+func (db *DB) FindingsByAppType(ctx context.Context) ([]Count, error) {
+	return db.counts(ctx, `
+		SELECT CASE r.app_type WHEN '' THEN 'unknown' ELSE r.app_type END, count(f.id)
+		FROM findings f JOIN repositories r ON r.id = f.repository_id
+		WHERE f.status = 'open'
+		GROUP BY 1 ORDER BY 2 DESC`)
+}
+
+// FindingsByRule is the most-triggered detection rules, a read on what the
+// engine actually catches.
+func (db *DB) FindingsByRule(ctx context.Context, limit int) ([]Count, error) {
+	return db.counts(ctx, `
+		SELECT rule_id, count(*) FROM findings
+		GROUP BY 1 ORDER BY 2 DESC LIMIT `+strconv.Itoa(clampLimit(limit, 12, 50)))
+}
+
+// LiveProbeCounts summarises what live validation found, for the analytics view.
+// Keyed by probe_status in metadata; absent when probing was never run.
+func (db *DB) LiveProbeCounts(ctx context.Context) ([]Count, error) {
+	return db.counts(ctx, `
+		SELECT metadata->>'probe_status', count(*) FROM findings
+		WHERE metadata ? 'probe_status'
+		GROUP BY 1 ORDER BY 2 DESC`)
+}

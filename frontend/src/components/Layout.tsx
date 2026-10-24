@@ -6,6 +6,7 @@ import ListItemButton from '@mui/material/ListItemButton'
 import ListItemIcon from '@mui/material/ListItemIcon'
 import ListItemText from '@mui/material/ListItemText'
 import DashboardIcon from '@mui/icons-material/SpaceDashboardOutlined'
+import InsightsIcon from '@mui/icons-material/InsightsOutlined'
 import RadarIcon from '@mui/icons-material/RadarOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import FolderIcon from '@mui/icons-material/FolderOutlined'
@@ -16,6 +17,7 @@ import { href } from '../hooks/useRoute'
 
 const NAV = [
   { page: 'overview',     label: 'Overview',     icon: <DashboardIcon fontSize="small" /> },
+  { page: 'analytics',    label: 'Analytics',    icon: <InsightsIcon fontSize="small" /> },
   { page: 'scans',        label: 'Scans',        icon: <RadarIcon fontSize="small" /> },
   { page: 'findings',     label: 'Findings',     icon: <KeyIcon fontSize="small" /> },
   { page: 'repositories', label: 'Repositories', icon: <FolderIcon fontSize="small" /> },

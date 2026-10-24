@@ -76,6 +76,14 @@ export interface Repository {
 }
 
 export interface Count { key: string; count: number }
+export interface TimePoint { period: string; findings: number }
+
+export interface Analytics {
+  timeline:     TimePoint[]
+  by_app_type:  Count[]
+  by_rule:      Count[]
+  live_probes:  Count[]
+}
 
 export interface Overview {
   findings:            number

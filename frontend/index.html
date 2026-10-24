@@ -3,8 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='18' fill='%23f5a623'/><text y='.9em' font-size='72' font-weight='900' x='12' fill='black'>GS</text></svg>" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='10' fill='%23f3efe3'/><rect x='6' y='6' width='88' height='88' rx='6' fill='none' stroke='%231f6f66' stroke-width='4'/><text y='.92em' font-size='58' font-family='monospace' font-weight='700' x='22' fill='%231f6f66'>GS</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,500;0,600;1,400&display=swap" rel="stylesheet" />
     <title>GitScanner</title>
+    <style>
+      /* Aged-paper base. The grain is a faint fractal-noise overlay so the
+         background reads as stock, not a flat fill; it sits under everything and
+         never touches text legibility. */
+      :root { color-scheme: light; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background-color: #f3efe3;
+        background-image:
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      }
+      /* A hairline registration tick in the corner — a letterpress touch. */
+      ::selection { background: #d8cfae; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

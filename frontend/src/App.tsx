@@ -5,6 +5,7 @@ import { useResource } from './hooks/useResource'
 import { href, navigate, useRoute } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
 import FindingsPage from './pages/FindingsPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
@@ -37,6 +38,7 @@ export default function App() {
     case 'scans':        body = route.id ? <ScanDetailPage key={route.id} id={route.id} /> : <ScansPage onNewScan={open} />; break
     case 'findings':     body = <FindingsPage route={route.id && route.page === 'repositories'
                             ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
+    case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
     default:             body = <OverviewPage onNewScan={open} />

@@ -1,11 +1,29 @@
 import type { FindingStatus, Severity } from './types'
 
+// Severity is a status ramp — a single meaning per step — chosen to read on aged
+// paper: deep oxblood for critical down to a quiet grey for info. Distinct from
+// the categorical palette below, which carries identity, not rank.
 export const SEV_COLOR: Record<Severity, string> = {
-  critical: '#f05252',
-  high:     '#f59e0b',
-  medium:   '#facc15',
-  low:      '#56b6f7',
-  info:     '#6b789a',
+  critical: '#9c3b2e',
+  high:     '#c2622a',
+  medium:   '#a9781a',
+  low:      '#2f4ba8',
+  info:     '#8a8372',
+}
+
+// Validated categorical palette (light/paper surface): teal, brick, indigo,
+// ochre, plum, olive. Passes the dataviz checks — lightness band, chroma floor,
+// CVD and normal-vision separation, contrast. Assigned in this fixed order and
+// never cycled; a 7th series folds into "other" (the last, grey).
+export const CATEGORICAL = ['#0a8a70', '#c0392b', '#2f4ba8', '#a9781a', '#8e3b6b', '#5f7a1f']
+export const OTHER_COLOR = '#8a8372'
+
+// paletteFor assigns each key a stable colour by its position in the given order,
+// so a filter that drops a series never repaints the survivors.
+export function paletteFor(keys: string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  keys.forEach((k, i) => { out[k] = i < CATEGORICAL.length ? CATEGORICAL[i] : OTHER_COLOR })
+  return out
 }
 
 export const STATUS_LABEL: Record<FindingStatus, string> = {
@@ -39,8 +57,6 @@ export const num = (n: number) => n.toLocaleString()
 export function fileLink(repoUrl: string, path: string, line: number, sha: string, atHead: boolean): string | undefined {
   const base = repoUrl.replace(/\.git$/, '')
   if (!base.startsWith('https://github.com/')) return undefined
-  // Without a commit the only safe ref is HEAD, and only while the file is
-  // still there; a history-only finding would link to a 404.
   const ref = sha || (atHead ? 'HEAD' : '')
   if (!ref) return undefined
   return `${base}/blob/${ref}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}`
@@ -50,4 +66,12 @@ export function fileLink(repoUrl: string, path: string, line: number, sha: strin
 export function commitLink(repoUrl: string, sha: string): string | undefined {
   const base = repoUrl.replace(/\.git$/, '')
   return sha && base.startsWith('https://github.com/') ? `${base}/commit/${sha}` : undefined
+}
+
+/** YYYY-MM → "Mon 'YY", for timeline axes. */
+export function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number)
+  if (!y || !m) return period
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]
+  return `${mon} '${String(y).slice(2)}`
 }

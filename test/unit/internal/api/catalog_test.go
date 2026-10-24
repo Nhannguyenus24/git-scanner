@@ -49,6 +49,19 @@ func (c *fakeCatalog) ListProviderCandidates(context.Context) ([]entity.Provider
 	return []entity.ProviderCandidate{{ID: "c1"}}, nil
 }
 
+func (c *fakeCatalog) FindingsTimeline(context.Context) ([]store.TimePoint, error) {
+	return []store.TimePoint{{Period: "2025-01", Findings: 2}}, nil
+}
+func (c *fakeCatalog) FindingsByAppType(context.Context) ([]store.Count, error) {
+	return []store.Count{{Key: "node", Count: 3}}, nil
+}
+func (c *fakeCatalog) FindingsByRule(_ context.Context, _ int) ([]store.Count, error) {
+	return []store.Count{{Key: "aws-access-key-id", Count: 1}}, nil
+}
+func (c *fakeCatalog) LiveProbeCounts(context.Context) ([]store.Count, error) {
+	return []store.Count{{Key: "live", Count: 1}}, nil
+}
+
 const knownFinding = entity.ID("01a16d46-dc0a-7979-899f-fae3af3961b2")
 
 func newCatalogServer(t *testing.T) (*api.Server, *fakeCatalog) {
@@ -157,5 +170,21 @@ func TestCatalogRoutesNeedACatalog(t *testing.T) {
 		if rec := do(srv, http.MethodGet, p, ""); rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d", p, rec.Code)
 		}
+	}
+}
+
+func TestAnalyticsRoute(t *testing.T) {
+	srv, _ := newCatalogServer(t)
+	rec := do(srv, http.MethodGet, "/v1/analytics", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		Timeline  []struct{ Period string; Findings int }
+		ByAppType []struct{ Key string; Count int } `json:"by_app_type"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(resp.Timeline) != 1 || resp.Timeline[0].Period != "2025-01" || len(resp.ByAppType) != 1 {
+		t.Errorf("analytics response = %+v", resp)
 	}
 }
