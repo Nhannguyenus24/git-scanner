@@ -6,6 +6,7 @@ import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import DarkIcon from '@mui/icons-material/DarkModeOutlined'
+import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import LightIcon from '@mui/icons-material/LightModeOutlined'
 import { useApiStatus, type ApiStatus } from '../hooks/useApiStatus'
 import { href } from '../hooks/useRoute'
@@ -48,6 +49,11 @@ export default function TopBar() {
           />
         </Tooltip>
 
+        <Tooltip title={t('nav.help')}>
+          <IconButton size="small" component="a" href={href('help')} sx={{ color: 'text.secondary' }}>
+            <HelpIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         <Tooltip title={t('lang.switch')}>
           <IconButton size="small" onClick={() => setLang(lang === 'vi' ? 'en' : 'vi')}
             sx={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, fontWeight: 700, width: 34, height: 34, borderRadius: 1, color: 'text.secondary' }}>
