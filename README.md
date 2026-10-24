@@ -7,8 +7,23 @@ Design and rationale: [plan.md](plan.md).
 
 ## Status
 
-Phase 0 — scaffolding. All six services build, connect to their backends,
-serve probes and drain cleanly. No scanning yet; that is Phase 1.
+Scanning works end to end: a target is discovered, its repositories are cloned
+and walked, credentials are detected, classified against the provider catalog,
+rolled up for analytics, and can be disclosed by mail.
+
+| Phase | | |
+|---|---|---|
+| 1 | repo scan to findings | done |
+| 2 | bulk user/org discovery, pause and resume | done |
+| 3 | enricher — registry resolution and the unmapped backlog | done |
+| 5 | notifier — responsible disclosure under a shared rate cap | done |
+| 6 | analytics — Kafka findings stream into rollups | done |
+| 4, 7+ | provider registry API, ownership-verified probes, tuning | not started |
+
+Detection currently runs on the built-in bootstrap ruleset
+(`internal/scan/bootstrap_rules.go`). Phase 4 replaces it with the
+registry-backed, hot-reloadable detector that the enricher already resolves
+against.
 
 ## Layout
 
