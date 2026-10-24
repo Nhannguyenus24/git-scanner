@@ -1,120 +1,52 @@
 import { useState } from 'react'
-import Alert from '@mui/material/Alert'
-import Box from '@mui/material/Box'
-import Button from '@mui/material/Button'
-import Snackbar from '@mui/material/Snackbar'
-import Typography from '@mui/material/Typography'
-import JobDetail from './components/JobDetail'
-import JobSidebar from './components/JobSidebar'
+import Layout from './components/Layout'
 import NewScanDialog from './components/NewScanDialog'
-import TopBar from './components/TopBar'
-import { useApiStatus } from './hooks/useApiStatus'
-import { usePoller } from './hooks/usePoller'
-import { createClient } from './api/client'
-import { useStore } from './store/jobs'
-import type { LocalJob, TargetKind } from './types'
-
-interface Toast { msg: string; severity: 'success' | 'error' }
+import { useResource } from './hooks/useResource'
+import { href, navigate, useRoute } from './hooks/useRoute'
+import CandidatesPage from './pages/CandidatesPage'
+import FindingsPage from './pages/FindingsPage'
+import OverviewPage from './pages/OverviewPage'
+import RepositoriesPage from './pages/RepositoriesPage'
+import ScanDetailPage from './pages/ScanDetailPage'
+import ScansPage from './pages/ScansPage'
+import { useSettings } from './store/settings'
+import { useToast } from './store/toast'
+import type { TargetKind } from './types'
 
 export default function App() {
-  const { state, dispatch } = useStore()
-  const { jobs, selectedId, baseUrl } = state
-  const apiStatus = useApiStatus(baseUrl)
-  usePoller()
-
+  const route  = useRoute()
+  const { api } = useSettings()
+  const notify = useToast()
   const [scanOpen, setScanOpen] = useState(false)
-  const [toast,    setToast]    = useState<Toast | null>(null)
+  const ov = useResource(() => api.overview(), [api], 10000)
 
-  const selected = jobs.find(j => j.id === selectedId) ?? null
-
-  const handleNewScan = async (kind: TargetKind, value: string, forks: boolean) => {
-    const api = createClient(baseUrl)
-    let raw
-    if (kind === 'repo')      raw = await api.scanRepo(value)
-    else if (kind === 'user') raw = await api.scanUser(value, forks)
-    else                      raw = await api.scanOrg(value, forks)
-
-    const job: LocalJob = { ...raw, target: { kind, value }, submittedAt: new Date().toISOString() }
-    dispatch({ type: 'ADD_JOB', job })
-    setToast({ msg: `Scan queued — ${kind}: ${value}`, severity: 'success' })
+  const startScan = async (kind: TargetKind, value: string, forks: boolean) => {
+    const job = kind === 'repo' ? await api.scanRepo(value)
+      : kind === 'user' ? await api.scanUser(value, forks)
+      : await api.scanOrg(value, forks)
+    notify(`Scan queued — ${kind}: ${value}`)
+    navigate(href('scans', job.id))
   }
 
-  const handleAddById = (id: string) => {
-    const existing = jobs.find(j => j.id === id)
-    if (existing) { dispatch({ type: 'SELECT', id }); return }
+  const open = () => setScanOpen(true)
+  // /repositories/<id> is a shortcut for that repository's findings.
+  const page = route.page === 'repositories' && route.id ? 'findings' : route.page
 
-    createClient(baseUrl)
-      .getJob(id)
-      .then(raw => {
-        const job: LocalJob = { ...raw, target: { kind: 'unknown', value: id.slice(0, 8) + '…' }, submittedAt: new Date().toISOString() }
-        dispatch({ type: 'ADD_JOB', job })
-      })
-      .catch(e => setToast({ msg: e instanceof Error ? e.message : 'Not found', severity: 'error' }))
-  }
-
-  const handleAction = async (action: 'pause' | 'resume' | 'cancel', id: string) => {
-    const api = createClient(baseUrl)
-    try {
-      if (action === 'pause')  await api.pause(id)
-      if (action === 'resume') await api.resume(id)
-      if (action === 'cancel') await api.cancel(id)
-      const updated = await api.getJob(id)
-      dispatch({ type: 'UPDATE_JOB', id, updates: updated })
-      setToast({ msg: `${action} applied`, severity: 'success' })
-    } catch (e) {
-      setToast({ msg: e instanceof Error ? e.message : 'Error', severity: 'error' })
-    }
+  let body
+  switch (page) {
+    case 'scans':        body = route.id ? <ScanDetailPage key={route.id} id={route.id} /> : <ScansPage onNewScan={open} />; break
+    case 'findings':     body = <FindingsPage route={route.id && route.page === 'repositories'
+                            ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
+    case 'repositories': body = <RepositoriesPage />; break
+    case 'candidates':   body = <CandidatesPage />; break
+    default:             body = <OverviewPage onNewScan={open} />
   }
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <TopBar
-        baseUrl={baseUrl}
-        onBaseUrl={url => dispatch({ type: 'SET_BASE', url })}
-        status={apiStatus}
-      />
-
-      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <JobSidebar
-          jobs={jobs}
-          selectedId={selectedId}
-          onSelect={id => dispatch({ type: 'SELECT', id })}
-          onNewScan={() => setScanOpen(true)}
-          onAddById={handleAddById}
-        />
-
-        <Box sx={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
-          {selected ? (
-            <JobDetail key={selected.id} job={selected} baseUrl={baseUrl} onAction={handleAction} />
-          ) : (
-            <Box sx={{
-              height: '100%', display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              color: 'text.secondary', gap: 1, p: 3, textAlign: 'center',
-            }}>
-              <Typography sx={{ fontSize: 48, lineHeight: 1 }}>🔍</Typography>
-              <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>Select a scan</Typography>
-              <Typography variant="body2">Start a new scan or choose one from the sidebar.</Typography>
-              <Button variant="contained" sx={{ mt: 1 }} onClick={() => setScanOpen(true)}>
-                New Scan
-              </Button>
-            </Box>
-          )}
-        </Box>
-      </Box>
-
-      <NewScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onSubmit={handleNewScan} />
-
-      <Snackbar
-        open={!!toast}
-        autoHideDuration={3500}
-        onClose={() => setToast(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        {toast
-          ? <Alert severity={toast.severity} onClose={() => setToast(null)} variant="filled">{toast.msg}</Alert>
-          : undefined}
-      </Snackbar>
-    </Box>
+    <Layout page={page} onNewScan={open}
+      badges={{ findings: ov.data?.open_findings ?? 0, scans: ov.data?.active_scans ?? 0, candidates: ov.data?.candidates ?? 0 }}>
+      {body}
+      <NewScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onSubmit={startScan} />
+    </Layout>
   )
 }

@@ -9,6 +9,8 @@
 //	api.go     Server, routing, JSON helpers
 //	scans.go   scan submission, status, findings
 //	notify.go  responsible-disclosure requests
+//	catalog.go dashboard browsing (overview, scans, findings, repositories,
+//	           candidates) and finding triage
 package api
 
 import (
@@ -54,6 +56,7 @@ type Server struct {
 	store   Store
 	queue   TaskQueue
 	control Control
+	catalog Catalog // optional: the dashboard's browsing and triage routes
 	log     *slog.Logger
 }
 
@@ -76,6 +79,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /v1/repositories/{id}/disclose", s.handleDisclose)
+	s.catalogRoutes(mux)
 	return mux
 }
 

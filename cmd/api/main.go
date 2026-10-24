@@ -43,7 +43,7 @@ var serveSpec = app.Spec{
 		}
 		queue := dispatch.New(publisher)
 		control := scan.NewControl(d.Redis.Raw())
-		srv := api.NewServer(d.DB, queue, control, d.Log)
+		srv := api.NewServer(d.DB, queue, control, d.Log).WithCatalog(d.DB)
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},
