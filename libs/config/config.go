@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -135,20 +134,6 @@ func GetDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return d, nil
-}
-
-func splitList(v string) []string {
-	if v == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // GetOr returns the environment variable or fallback when it is unset or empty.
