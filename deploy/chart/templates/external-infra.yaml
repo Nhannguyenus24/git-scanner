@@ -1,4 +1,4 @@
-# Postgres, RabbitMQ, Redis and Kafka run outside the cluster (plan.md §13.2).
+# Postgres, RabbitMQ and Redis run outside the cluster (plan.md §13.2).
 # Mapping them to in-cluster Service names means application config says
 # "postgres:5432" in every environment, and moving them into the cluster later
 # changes nothing in the application.

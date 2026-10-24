@@ -17,7 +17,7 @@ rolled up for analytics, and can be disclosed by mail.
 | 2 | bulk user/org discovery, pause and resume | done |
 | 3 | enricher — registry resolution and the unmapped backlog | done |
 | 5 | notifier — responsible disclosure under a shared rate cap | done |
-| 6 | analytics — Kafka findings stream into rollups | done |
+| 6 | analytics — findings stream into rollups | done |
 | 4, 7+ | provider registry API, ownership-verified probes, tuning | not started |
 
 Detection currently runs on the built-in bootstrap ruleset
@@ -37,7 +37,7 @@ internal/
 libs/                   shared, importable conventions
   entity/               domain types + validation, stdlib only
   proto/                wire format for queue and stream messages (buf)
-  rabbit/ kafka/ redis/ transport conventions over the drivers
+  rabbit/ redis/        transport conventions over the drivers
   config/               environment loading and validation
   observability/        logger and /healthz, /readyz
   lifecycle/            signal handling and ordered shutdown
@@ -60,7 +60,6 @@ Each package's `doc.go` or package comment lists its files and what each holds.
 | Startup and shutdown order | `internal/app/app.go`, `internal/app/deps.go` |
 | HTTP routes | `internal/api` |
 | Queue names, retry and dead-letter topology | `libs/rabbit/conn.go` |
-| Kafka topics | `libs/kafka/producer.go` |
 | Table definitions | `internal/store/migrations` |
 | Message schemas | `libs/proto/proto/gitscanner/v1` |
 | Per-service replicas, resources, scaling | `deploy/chart/values.yaml` |
@@ -104,14 +103,13 @@ make help          # every target
 
 ### Running against local infrastructure
 
-Postgres, RabbitMQ, Redis and Kafka are expected to be running already (the
-values are in [spec.md](spec.md)). To run a service directly:
+Postgres, RabbitMQ and Redis are expected to be running already (the values are
+in [spec.md](spec.md)). To run a service directly:
 
 ```bash
 export POSTGRES_URL='postgresql://postgres:postgres123@localhost:5432/app_db'
 export RABBITMQ_URL='amqp://admin:admin123@localhost:5672/'
 export REDIS_URL='redis://:redis123@localhost:6379/0'
-export KAFKA_BOOTSTRAP_SERVERS='localhost:9092'
 
 go run ./cmd/api
 curl localhost:8080/readyz

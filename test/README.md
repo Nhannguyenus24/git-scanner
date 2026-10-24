@@ -8,7 +8,7 @@ test/
   unit/          fast, no network, no backends     make test
     internal/    tests for internal/<pkg>
     libs/        tests for libs/<pkg>
-  integration/   real Postgres / RabbitMQ / Redis / Kafka,
+  integration/   real Postgres / RabbitMQ / Redis,
                  behind the `integration` build tag  make test-integration
 ```
 

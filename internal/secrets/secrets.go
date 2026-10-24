@@ -2,7 +2,7 @@
 // safe to store: a keyed fingerprint and a masked preview (plan.md §6).
 //
 // The plaintext itself never leaves this package. Everything the rest of the
-// system persists, logs, emits on Kafka or mails is derived here, so a review
+// system persists, logs, publishes on a queue or mails is derived here, so a review
 // of this one file is enough to be sure a live secret cannot reach the database.
 package secrets
 

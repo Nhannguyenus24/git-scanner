@@ -66,7 +66,6 @@ stable release in `go.mod` with a `toolchain` directive.
 | HTTP | `go-chi/chi/v5`, `log/slog`, OpenTelemetry |
 | Postgres | `pgx/v5` + `sqlc`, `golang-migrate` |
 | RabbitMQ | `rabbitmq/amqp091-go` |
-| Kafka | `twmb/franz-go` |
 | Redis | `redis/go-redis/v9` |
 | SMTP | `wneessen/go-mail` |
 | Git | `git` binary over `cat-file --batch` pipes, behind an interface |
@@ -75,12 +74,25 @@ stable release in `go.mod` with a `toolchain` directive.
 `git2go` requires cgo. Shelling out to `git` is fastest and most robust. Keep it
 behind an interface so it stays swappable.
 
-**Queue split.** RabbitMQ handles per-task dispatch with ack, retry and DLQ
-semantics. Kafka is the durable append-only finding stream that analytics consumes
-independently and can replay.
+**One broker, two kinds of message.** RabbitMQ carries both per-task dispatch and
+the finding stream analytics consumes, on queues that differ only in what they
+mean: a task asks for work, an event reports what happened. Both get the same
+ack, retry and dead-letter treatment.
 
-Infrastructure (Postgres, RabbitMQ, Redis, Kafka) is already deployed in Docker —
-see connection values in [spec.md](spec.md).
+This reverses an earlier split that put the finding stream on Kafka for its
+retention, so that a corrected aggregation could be replayed over the log. That
+property is genuinely gone: once analytics acks an event it is not recoverable
+from the queue. What replaces it is that `findings` is the system of record, so
+a rollup is rebuilt by reading the table rather than replaying a topic. The
+trade was deliberate — one broker instead of two for a system whose rollups are
+derivable from a table it already keeps.
+
+What did *not* change is the need for idempotency. RabbitMQ is at-least-once
+just as Kafka was, so the dedupe tables behind the rollups (§10) remain load
+bearing.
+
+Infrastructure (Postgres, RabbitMQ, Redis) is already deployed in Docker — see
+connection values in [spec.md](spec.md).
 
 ---
 
@@ -94,7 +106,7 @@ see connection values in [spec.md](spec.md).
 | `enricher` | Resolves a match against the provider registry → provider, type, severity |
 | `registry` | Provider catalog, versioning, unmapped backlog (§5) — ships inside `api` initially |
 | `notifier` | Disclosure mail, suppression, rate caps |
-| `analytics` | Kafka → rollup tables, serves dashboards |
+| `analytics` | Finding stream → rollup tables, serves dashboards |
 
 ---
 
@@ -109,7 +121,6 @@ gitscanner/                      module github.com/mservice/gitscanner
   libs/                          # shared across services
     entity/        domain types + validation, zero I/O
     proto/         buf workspace: proto/ definitions, gen/ generated Go
-    kafka/         franz-go conventions: topics, proto codec, groups, DLQ
     rabbit/        reconnect, confirms, prefetch, DLX backoff, cancellable consumer
     redis/         connection, distributed token bucket, pub/sub
     observability/ slog + OTel wiring, health probes
@@ -143,8 +154,8 @@ linter does prevent them, and it works inside one module.
 
 **The directory is named `libs/` on purpose.** With module path
 `github.com/mservice/gitscanner`, the import path is
-`github.com/mservice/gitscanner/libs/kafka`. If another repository later needs these
-libraries, giving `libs/kafka` its own `go.mod` with that exact module path and
+`github.com/mservice/gitscanner/libs/rabbit`. If another repository later needs these
+libraries, giving `libs/rabbit` its own `go.mod` with that exact module path and
 adding a `go.work` makes the split mechanical — **no import statement changes**.
 Pay that cost when a second repo actually exists, not before.
 
@@ -158,7 +169,7 @@ Pay that cost when a second repo actually exists, not before.
 ### 3.3 `entity` and `proto` are deliberately separate
 
 `libs/entity` holds domain types used by the store and business logic.
-`libs/proto` holds the wire format for Kafka events and RabbitMQ tasks, generated
+`libs/proto` holds the wire format for the tasks and events on RabbitMQ, generated
 by `buf`. Explicit mapping functions sit between them.
 
 Do not let generated proto structs reach the database layer. The moment they do,
@@ -168,7 +179,7 @@ buys independent evolution of the two.
 
 ### 3.4 Keep the transport libraries thin
 
-`libs/kafka`, `libs/rabbit` and `libs/redis` encode **our conventions** — topic and
+`libs/rabbit` and `libs/redis` encode **our conventions** — queue and
 queue naming, proto serialization, trace headers, consumer-group setup, retry and
 DLQ topology, graceful shutdown (§13.3), OTel spans. They do not attempt to hide
 franz-go, amqp091 or go-redis.
@@ -366,8 +377,8 @@ A definition version is immutable: `draft → test → published → deprecated`
 
 - **test** runs the version against stored fixtures. Fixtures are **synthetic keys
   only** — never a real leaked credential from the findings table.
-- **publish** bumps a global `registry_version` and announces it on Kafka
-  `registry.v1`, with a Redis pub/sub nudge for low latency.
+- **publish** bumps a global `registry_version` and announces it on the
+  `registry.events` queue, with a Redis pub/sub nudge for low latency.
 - Workers rebuild the Aho-Corasick automaton and compiled regex set **off to the
   side**, then swap it in with `atomic.Pointer`. No lock, no dropped in-flight task.
 - Workers report their active `registry_version` in the heartbeat, so a rollout is
@@ -478,13 +489,19 @@ Registry endpoints: §5.5. Auth: API key or JWT, scoped per tenant.
 
 ## 10. Analytics
 
-`scan-worker` and `enricher` publish to Kafka topic `findings.v1`. The `analytics`
-consumer upserts rollups: findings by provider per day, repos scanned, top firing
+`scan-worker` and `enricher` publish to the `findings.events` queue. The
+`analytics` consumer upserts rollups: findings by provider per day, repos scanned, top firing
 rules, time-to-remediation, false-positive rate, and **registry coverage** (§5.5).
 Served from `/v1/analytics/*`.
 
-Kafka rather than querying `findings` directly, so analytics can be replayed and
-rebuilt without touching the operational path.
+Consuming the stream rather than querying `findings` on every request keeps the
+dashboards off the operational path, which is the reason the rollups exist.
+
+Rebuilding them is a separate matter. A queue is not a retained log, so a
+corrected aggregation cannot be replayed over it — the rebuild reads `findings`,
+which is the system of record, and repopulates the rollup and dedupe tables
+together. That is a batch job run deliberately, not something the stream gives
+for free (§1).
 
 ---
 
@@ -492,7 +509,7 @@ rebuilt without touching the operational path.
 
 | Phase | Deliverable |
 |---|---|
-| 0 | Scaffolding, migrations, wiring to existing PG / Rabbit / Redis / Kafka; Helm chart skeleton and dev namespace (§13) |
+| 0 | Scaffolding, migrations, wiring to existing PG / Rabbit / Redis; Helm chart skeleton and dev namespace (§13) |
 | 1 | Repo scan end-to-end → findings in Postgres (vertical slice) |
 | 2 | User scan, discovery worker, checkpoint / pause / resume |
 | 3 | Provider registry: catalog, versioned definitions, hot reload; enricher reads from it |
@@ -509,8 +526,7 @@ definitions, so the catalog does not start empty.
 
 ## 12. Testing
 
-- `testcontainers-go` for integration tests against real Postgres / Rabbit / Redis /
-  Kafka.
+- `testcontainers-go` for integration tests against real Postgres / Rabbit / Redis.
 - Build a **labeled fixture repo early** — known secrets at known commits, plus known
   decoys. False-positive rate is the metric that decides whether anyone trusts the
   tool; it needs to be measurable from Phase 1.
@@ -657,7 +673,7 @@ Per workload:
 | `discovery-worker` | KEDA RabbitMQ, `discovery.tasks` |
 | `scan-worker` | KEDA RabbitMQ, `scan.tasks` |
 | `enricher` | KEDA RabbitMQ, `enrich.tasks` |
-| `analytics` | KEDA Kafka, consumer lag on `findings.v1` |
+| `analytics` | KEDA RabbitMQ, `findings.events` |
 | `notifier` | **fixed low replica count — see below** |
 
 `cooldownPeriod` must exceed typical task duration, otherwise KEDA scales down into
@@ -709,7 +725,7 @@ node credentials. Route probe traffic through an egress proxy that enforces the
 
 ### 13.9 Registry rollout across pods
 
-§5.6 distributes definition versions over Kafka and Redis pub/sub, which works
+§5.6 distributes definition versions over RabbitMQ and Redis pub/sub, which works
 across replicas unchanged. Two K8s-specific requirements:
 
 - A pod starting after a publish has missed the notification, so startup must load
@@ -747,8 +763,8 @@ k3d cluster create gitscanner \
 - `--registry-create` starts a registry reachable as `localhost:5050` from the Mac
   and `k3d-gitscanner-registry:5000` from inside the cluster. No `kind load`, no
   remote registry, and image pulls stay fast enough for an edit-run loop.
-- `--network` joins the cluster to the network where Postgres, RabbitMQ, Redis and
-  Kafka are already running, so pods resolve them **by container name**. Confirm the
+- `--network` joins the cluster to the network where Postgres, RabbitMQ and Redis
+  are already running, so pods resolve them **by container name**. Confirm the
   network with `docker network ls` and the registry host with `k3d registry list`.
 
 This is the local answer to §13.2: the `ExternalName` Services point at those

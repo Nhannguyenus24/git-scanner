@@ -68,7 +68,7 @@ pairs with `feat(`, and only that one differs:
 The area of the codebase, which here usually maps to a package or a service:
 
 `scan` `discovery` `enricher` `notifier` `analytics` `api` `store` `rabbit`
-`kafka` `entity` `skills` `docs` `ci` `deploy` `frontend`
+`entity` `skills` `docs` `ci` `deploy` `frontend`
 
 Omit it rather than invent one when a change is genuinely cross-cutting.
 

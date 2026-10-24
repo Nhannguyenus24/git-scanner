@@ -40,7 +40,7 @@ paths:
     get:
       tags: [meta]
       summary: Readiness probe
-      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ, Redis, Kafka) are reachable.
+      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ, Redis) are reachable.
       operationId: getReadiness
       responses:
         "200":

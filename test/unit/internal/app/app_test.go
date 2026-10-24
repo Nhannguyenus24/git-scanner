@@ -18,7 +18,7 @@ func testEnv(t *testing.T) {
 	t.Setenv("HTTP_ADDR", "127.0.0.1:0")
 	t.Setenv("LOG_LEVEL", "error")
 	t.Setenv("SHUTDOWN_TIMEOUT", "2s")
-	for _, k := range []string{"POSTGRES_URL", "RABBITMQ_URL", "REDIS_URL", "KAFKA_BOOTSTRAP_SERVERS"} {
+	for _, k := range []string{"POSTGRES_URL", "RABBITMQ_URL", "REDIS_URL"} {
 		t.Setenv(k, "")
 	}
 }
@@ -51,11 +51,11 @@ func TestRunReturnsWorkerError(t *testing.T) {
 
 func TestRunReportsAllMissingConfig(t *testing.T) {
 	testEnv(t)
-	err := app.Run(app.Spec{Name: "test", Needs: app.Needs{Postgres: true, Kafka: true}})
+	err := app.Run(app.Spec{Name: "test", Needs: app.Needs{Postgres: true, Rabbit: true}})
 	if err == nil {
 		t.Fatal("Run succeeded with no backend URLs configured")
 	}
-	for _, want := range []string{"POSTGRES_URL", "KAFKA_BOOTSTRAP_SERVERS"} {
+	for _, want := range []string{"POSTGRES_URL", "RABBITMQ_URL"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}

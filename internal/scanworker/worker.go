@@ -3,7 +3,7 @@
 // publishes them to the finding stream (plan.md §4, §10).
 //
 // It lives apart from internal/scan so the engine stays a pure library with no
-// queue, database or Kafka dependency, and this package holds all the wiring.
+// queue or database dependency, and this package holds all the wiring.
 package scanworker
 
 import (
@@ -14,41 +14,33 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
-	"github.com/mservice/gitscanner/libs/kafka"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
-// Publisher is the subset of the Kafka producer the worker needs. Narrowed to
-// an interface so the worker can be tested without a broker.
-type Publisher interface {
-	Publish(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
-}
-
-// Enqueuer is the dispatch surface the worker needs, narrowed for the same
-// reason as Publisher.
+// Enqueuer is the dispatch surface the worker needs, narrowed to an interface
+// so the worker can be tested without a broker.
 type Enqueuer interface {
 	EnqueueEnrich(ctx context.Context, req dispatch.EnrichRequest) error
+	PublishFinding(ctx context.Context, f entity.Finding) error
 }
 
 // Worker handles one scan task at a time within a RabbitMQ consumer.
 type Worker struct {
 	engine *scan.Engine
 	db     *store.DB
-	pub    Publisher
 	disp   Enqueuer
 	log    *slog.Logger
 }
 
 // New builds a worker.
-func New(engine *scan.Engine, db *store.DB, pub Publisher, disp Enqueuer, log *slog.Logger) *Worker {
-	return &Worker{engine: engine, db: db, pub: pub, disp: disp, log: log}
+func New(engine *scan.Engine, db *store.DB, disp Enqueuer, log *slog.Logger) *Worker {
+	return &Worker{engine: engine, db: db, disp: disp, log: log}
 }
 
 // Handle processes one ScanTask delivery. It is the rabbit.Handler for
@@ -103,9 +95,9 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	return nil
 }
 
-// storeSink persists each finding, mirrors it to Kafka and queues it for
+// storeSink persists each finding, announces it to analytics and queues it for
 // enrichment. It counts only the rows it actually inserted, so a redelivered
-// task does not inflate the total — and, because the Kafka publish hangs off
+// task does not inflate the total — and, because the event publish hangs off
 // that same check, does not emit a duplicate event for a finding already seen.
 type storeSink struct {
 	w            *Worker
@@ -135,7 +127,7 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 	}
 
 	s.inserted++
-	if err := s.w.publish(ctx, s.task, f); err != nil {
+	if err := s.w.disp.PublishFinding(ctx, f); err != nil {
 		return err
 	}
 	return s.w.enqueueEnrich(ctx, s.task, f)
@@ -189,30 +181,4 @@ func (w *Worker) enqueueEnrich(ctx context.Context, task *gpb.ScanTask, f entity
 		CharsetClass: f.Metadata["charset_class"],
 		SecretLength: length,
 	})
-}
-
-// publish mirrors a finding onto the Kafka finding stream. The repository id is
-// the partition key so every finding for a repo stays ordered, which the
-// analytics rollups depend on (plan.md §10).
-func (w *Worker) publish(ctx context.Context, task *gpb.ScanTask, f entity.Finding) error {
-	evt := &gpb.FindingDetected{
-		FindingId:         f.ID.String(),
-		JobId:             task.JobId,
-		RepositoryId:      task.RepositoryId,
-		RuleId:            f.RuleID,
-		ProviderSlug:      f.ProviderSlug,
-		Fingerprint:       f.Fingerprint,
-		MaskedPreview:     f.MaskedPreview,
-		BlobOid:           f.BlobOID,
-		FilePath:          f.FilePath,
-		LineNumber:        int32(f.LineNumber),
-		ReachableFromHead: f.ReachableFromHEAD,
-		Severity:          gpb.Severity(f.Severity + 1), // entity 0..4 -> proto 1..5
-		DetectedAt:        timestamppb.Now(),
-	}
-	body, err := proto.Marshal(evt)
-	if err != nil {
-		return fmt.Errorf("scanworker: marshal finding event: %w", err)
-	}
-	return w.pub.Publish(ctx, kafka.TopicFindings, task.RepositoryId, body, nil)
 }

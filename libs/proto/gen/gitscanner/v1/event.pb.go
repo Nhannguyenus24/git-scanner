@@ -4,8 +4,8 @@
 // 	protoc        (unknown)
 // source: gitscanner/v1/event.proto
 
-// Events carried on Kafka: the durable log analytics consumes and can replay
-// (plan.md §10).
+// Events carried on RabbitMQ: what a service reports as having happened, as
+// opposed to the work it asks for in task.proto (plan.md §10).
 
 package gitscannerv1
 
@@ -86,8 +86,8 @@ func (Severity) EnumDescriptor() ([]byte, []int) {
 // FindingDetected is emitted once per detected credential.
 //
 // Note what is absent: the credential. The event carries the HMAC fingerprint
-// and a masked preview only (plan.md §6). A Kafka topic is retained for days and
-// replicated across brokers, so putting a live secret in one would create copies
+// and a masked preview only (plan.md §6). A queue is persisted to disk and
+// mirrored across brokers, so putting a live secret in one would create copies
 // outside the database's access controls.
 type FindingDetected struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`

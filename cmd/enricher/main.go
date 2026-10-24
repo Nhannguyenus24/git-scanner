@@ -21,7 +21,7 @@ const (
 func main() {
 	app.Main(app.Spec{
 		Name:  "enricher",
-		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true, Kafka: true},
+		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
 		Build: build,
 	})
 }

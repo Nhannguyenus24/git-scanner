@@ -30,7 +30,4 @@ REDIS_PORT=6379
 REDIS_PASSWORD=redis123
 REDIS_URL=redis://:redis123@localhost:6379/0
 
-# --- KAFKA (KRaft mode) ---
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-KAFKA_SECURITY_PROTOCOL=PLAINTEXT
 use this infra (already deploy in docker)

@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: How GitScanner fits together at runtime — what each of the six services does, how work flows between them over RabbitMQ and Kafka, which store owns what state, and the contracts a structural change has to respect. Use this when adding or changing a service, moving logic between packages, touching queue or event plumbing, changing the schema, or when asked how the system works, before reading code at random.
+description: How GitScanner fits together at runtime — what each of the six services does, how work flows between them over RabbitMQ, which store owns what state, and the contracts a structural change has to respect. Use this when adding or changing a service, moving logic between packages, touching queue or event plumbing, changing the schema, or when asked how the system works, before reading code at random.
 ---
 
 # How GitScanner fits together
@@ -23,8 +23,8 @@ POST /v1/scans/user ──► api
                                    scan.tasks ──► scan-worker
                                                    │  git clone --bare, walk unique blobs,
                                                    │  detect, store finding
-                                                   ├──► findings.v1 (Kafka) ──► analytics
-                                                   │                             rollup tables
+                                                   ├──► findings.events ──► analytics
+                                                   │                          rollup tables
                                                    └──► enrich.tasks ──► enricher
                                                                           provider catalog,
                                                                           or candidate backlog
@@ -39,12 +39,16 @@ cursor advanced, rather than one long-running walk. That keeps each delivery
 short so prefetch backpressure means something, and makes pause simply a matter
 of not republishing (plan.md §8).
 
-**RabbitMQ carries work, Kafka carries facts.** A task is addressed to one
-consumer and may be retried or dead-lettered; a finding event is a durable log
-that analytics replays. They are not interchangeable — a Kafka consumer that
-cannot process a record must stop and be fixed, because the rollups depend on
-seeing every record once and in order, which is why that package has no retry or
-DLQ machinery (plan.md §1).
+**Tasks and events share a broker but not a meaning.** A task asks a consumer to
+do work; an event reports that something already happened. Both ride RabbitMQ
+with the same retry and dead-letter bindings, and the queue name says which it
+is — `*.tasks` against `findings.events`.
+
+The finding stream was on Kafka for its retention, so a corrected aggregation
+could be replayed over the log. That is gone: once analytics acks an event, the
+rollups are rebuilt by reading the `findings` table instead, which is the system
+of record (plan.md §1, §10). What survives the change is that delivery is still
+at-least-once, which is why the dedupe tables below are not optional.
 
 ## Every service is the same shape
 
@@ -55,7 +59,7 @@ serve probes → ready → run → unready → drain → close.
 ```go
 app.Main(app.Spec{
     Name:  "scan-worker",
-    Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true, Kafka: true},
+    Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
     Build: build,
 })
 
@@ -72,19 +76,17 @@ there cannot take it down. `Build` runs after the backends are up and before the
 service reports ready, which is where anything that must be loaded before taking
 work belongs.
 
-`Parts` takes an HTTP handler, a `Worker`, or both. Two adapters cover the
-existing services: `app.NewConsumerWorker` for a RabbitMQ queue and
-`app.NewKafkaConsumerWorker` for a consumer group. Both implement `Drainer`, so
-shutdown stops intake before cancelling work — the drain order is the part that
-must not drift, and it lives in one place for that reason.
+`Parts` takes an HTTP handler, a `Worker`, or both. `app.NewConsumerWorker`
+adapts a RabbitMQ queue and covers every worker here. It implements `Drainer`,
+so shutdown stops intake before cancelling work — the drain order is the part
+that must not drift, and it lives in one place for that reason.
 
 ## Where state lives
 
 | Store | Holds | Why there |
 |---|---|---|
 | Postgres | targets, jobs, repositories, findings, provider catalog, rollups | the system of record; anything that must survive and be queried |
-| RabbitMQ | per-task dispatch, with retry and dead-letter | addressed work, bounded by prefetch so queue depth is a real scaling signal |
-| Kafka | the findings event log | durable, replayable, partitioned by repository so a repo's events stay ordered |
+| RabbitMQ | task dispatch and the finding stream, both with retry and dead-letter | bounded by prefetch, so queue depth is a real scaling signal |
 | Redis | pause flags, the shared mail rate cap, blob index | small, hot, shared across replicas |
 
 The Redis cap matters architecturally: a per-process limiter would multiply the
@@ -107,7 +109,7 @@ behind them:
   a task's wire shape and which queue it belongs on, so handlers and the API
   never build raw messages.
 - **`internal/scan` is a pure library.** The engine clones, walks and detects; it
-  has no queue, database or Kafka dependency. All that wiring is
+  has no queue or database dependency. All that wiring is
   `internal/scanworker`. Keeping the split is what makes the engine testable
   without a broker.
 - **Domain code depends on the narrowest interface it needs, declared where it

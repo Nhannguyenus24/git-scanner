@@ -47,6 +47,45 @@ func (d *Dispatcher) EnqueueScan(ctx context.Context, job entity.ScanJob, repo e
 	return nil
 }
 
+// PublishFinding reports a detected credential to the analytics stream.
+//
+// The event carries the fingerprint and the masked preview, never the secret
+// (plan.md §6): a queue is persisted and replicated, so a live credential in
+// one would be a copy outside the database's access controls.
+//
+// Unlike the task publishers above, this announces something that already
+// happened. A consumer that cannot read it should dead-letter it rather than
+// stall, which is why it goes to a queue with the usual retry and DLQ bindings.
+// RepositoryFullName and AppType are left unset: the stack a repository uses is
+// only established once its whole blob walk has finished, which is after every
+// finding has already been emitted.
+func (d *Dispatcher) PublishFinding(ctx context.Context, f entity.Finding) error {
+	evt := &gpb.FindingDetected{
+		FindingId:         f.ID.String(),
+		JobId:             f.ScanJobID.String(),
+		RepositoryId:      f.RepositoryID.String(),
+		RuleId:            f.RuleID,
+		ProviderSlug:      f.ProviderSlug,
+		Fingerprint:       f.Fingerprint,
+		MaskedPreview:     f.MaskedPreview,
+		BlobOid:           f.BlobOID,
+		FilePath:          f.FilePath,
+		LineNumber:        int32(f.LineNumber),
+		ReachableFromHead: f.ReachableFromHEAD,
+		Severity:          gpb.Severity(f.Severity + 1), // entity 0..4 -> proto 1..5
+		DetectedAt:        timestamppb.Now(),
+	}
+
+	body, err := proto.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("dispatch: marshal finding event: %w", err)
+	}
+	if err := d.pub.Publish(ctx, rabbit.QueueFindings, body, nil); err != nil {
+		return fmt.Errorf("dispatch: publish finding: %w", err)
+	}
+	return nil
+}
+
 // EnrichRequest carries the context the enricher needs to classify a finding
 // without re-reading the blob it came from (plan.md §5).
 type EnrichRequest struct {

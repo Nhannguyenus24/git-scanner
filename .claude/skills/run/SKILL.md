@@ -10,7 +10,7 @@ Kubernetes path and are not needed here.
 
 ## Infrastructure is already on the machine
 
-Postgres, RabbitMQ, Redis and Kafka run as pre-existing containers that this
+Postgres, RabbitMQ and Redis run as pre-existing containers that this
 repository does not own. **There is deliberately no docker-compose file here —
 do not add one.** An earlier attempt was removed precisely because it duplicated
 infrastructure the developer already runs.
@@ -20,7 +20,6 @@ infrastructure the developer already runs.
 | postgres | 5432 | `postgres` / `postgres123`, db `app_db` |
 | rabbitmq | 5672 | `admin` / `admin123` (UI on 15672) |
 | redis    | 6379 | password `redis123` |
-| kafka    | 9092 | no auth |
 
 Confirm they are up before blaming the services:
 
@@ -107,8 +106,9 @@ curl -s http://localhost:8080/v1/scans/<job-id>/findings
 ```
 
 A scan is asynchronous: the POST returns a queued job, and the pipeline runs
-api → discovery-worker → scan-worker → enricher, with findings mirrored to Kafka
-for analytics. Expect to wait, and watch the logs rather than the response.
+api → discovery-worker → scan-worker → enricher, with findings published to the
+`findings.events` queue for analytics. Expect to wait, and watch the logs rather
+than the response.
 
 Without `GITHUB_TOKEN` the GitHub API allows 60 requests an hour, which bulk
 discovery exhausts quickly. Export one for anything beyond a few repositories.
@@ -135,7 +135,6 @@ make run-local \
   INFRA_POSTGRES='postgresql://user:pass@host:5432/db' \
   INFRA_RABBIT='amqp://user:pass@host:5672/' \
   INFRA_REDIS='redis://:pass@host:6379/0' \
-  INFRA_KAFKA='host:9092' \
   RUN_LOG_DIR=/your/log/path
 ```
 
