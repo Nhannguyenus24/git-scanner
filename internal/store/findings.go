@@ -135,3 +135,28 @@ func nullTime(t time.Time) *time.Time {
 	}
 	return &t
 }
+
+// BackfillAttribution records where an already-stored finding entered history,
+// if that is not known yet, and reports whether it changed the row.
+//
+// Findings stored before the scan learned to attribute commits have none, and
+// InsertFinding's conflict arm will not supply it: that arm is deliberately
+// limited to reclassification, and widening it would make a plain rescan look
+// like a reclassification to every counter downstream. A separate write keeps
+// both meanings intact. The guard on an empty commit_sha means it only ever
+// fills a gap; it never moves a finding to a different commit.
+func (db *DB) BackfillAttribution(ctx context.Context, f entity.Finding) (bool, error) {
+	if f.CommitSHA == "" {
+		return false, nil
+	}
+	tag, err := db.pool.Exec(ctx, `
+		UPDATE findings
+		SET commit_sha = $3, author_name = $4, author_email = $5, committed_at = $6, file_path = $7
+		WHERE fingerprint = $1 AND repository_id = $2 AND commit_sha = ''`,
+		f.Fingerprint, f.RepositoryID, f.CommitSHA, f.AuthorName, f.AuthorEmail,
+		nullTime(f.CommittedAt), f.FilePath)
+	if err != nil {
+		return false, fmt.Errorf("store: backfill attribution: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}

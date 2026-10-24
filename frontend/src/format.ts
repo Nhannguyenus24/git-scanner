@@ -45,3 +45,9 @@ export function fileLink(repoUrl: string, path: string, line: number, sha: strin
   if (!ref) return undefined
   return `${base}/blob/${ref}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}`
 }
+
+/** The GitHub page for the commit that introduced a finding. */
+export function commitLink(repoUrl: string, sha: string): string | undefined {
+  const base = repoUrl.replace(/\.git$/, '')
+  return sha && base.startsWith('https://github.com/') ? `${base}/commit/${sha}` : undefined
+}

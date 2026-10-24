@@ -17,7 +17,7 @@ import Typography from '@mui/material/Typography'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import SeverityChip from './SeverityChip'
-import { fileLink, STATUS_LABEL, timeAgo } from '../format'
+import { commitLink, fileLink, STATUS_LABEL, timeAgo } from '../format'
 import { href } from '../hooks/useRoute'
 import { STATUSES, type Finding, type FindingStatus } from '../types'
 
@@ -91,6 +91,16 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                         )}
                       </Box>
                     </Tooltip>
+                    {f.commit_sha ? (
+                      <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <Link href={commitLink(f.repository.url, f.commit_sha)} target="_blank" rel="noreferrer"
+                          underline="hover" sx={{ fontFamily: 'monospace' }}>{f.commit_sha.slice(0, 7)}</Link>
+                        {f.author_name && <> · {f.author_name}</>}
+                        {f.committed_at && <Tooltip title={new Date(f.committed_at).toLocaleString()}><span> · {timeAgo(f.committed_at)}</span></Tooltip>}
+                      </Box>
+                    ) : (
+                      <Box sx={{ fontSize: 11, color: 'text.disabled', mt: .25 }}>commit unknown — rescan to attribute</Box>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Tooltip title={f.reachable_from_head ? 'Still present at HEAD' : 'Only in history — removed from the current tree but still clonable'}>
