@@ -90,3 +90,56 @@ func TestGenericHighEntropy(t *testing.T) {
 		t.Errorf("low-entropy value reported: %+v", ms)
 	}
 }
+
+// The generic pass used to report the words of source code that sit beside
+// "token" and "password": method names, paths, variable references. Each case
+// here was a real false positive.
+func TestGenericHighEntropySkipsWordShapedTokens(t *testing.T) {
+	cases := []struct{ name, path, blob string }{
+		{"camelCase method", "AuthTest.java", "export const getChangePasswordRequestSchema = (t) => token(t);"},
+		{"package path", "README.md", "see /backend/src/main/java/com/app/UserController for auth"},
+		{"variable reference", "docker-compose.yml", "GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD_FROM_ENV}"},
+		{"url path", "schema.sql", `token <img src="https://cdn.jsdelivr.net/gh/Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa/a.png">`},
+		{"data uri", "index.html", `auth <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAACXBIWXMAAAsTAAALEwEAmpwYAAAKT2lDQ1BQaG90b3Nob3A">`},
+		{"notebook image", "a.ipynb", `"image/png": "iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAACXBIWXMAAAsTAAALEwEAmpwYAAAKT2lDQ1BQaG90b3Nob3A", "token"`},
+		{"lockfile", "web/package-lock.json", `"integrity": "sha512-Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa", "token"`},
+		{"ide metadata", ".idea/workspace.xml", `<change beforePath="Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa" token />`},
+	}
+	for _, c := range cases {
+		if ms := detect(c.path, c.blob); len(ms) != 0 {
+			t.Errorf("%s: reported %d match(es), want none", c.name, len(ms))
+		}
+	}
+}
+
+// A memorable value assigned straight to a secret setting is still a hardcoded
+// signing key; the identifier filter must not hide it.
+func TestGenericHighEntropyKeepsWordyHardcodedSecret(t *testing.T) {
+	ms := detect("application.properties", "jwt.secret=mySuperSecretSigningKeyForTokens2024")
+	if len(ms) != 1 || ms[0].RuleID != "generic-high-entropy" {
+		t.Fatalf("matches = %d, want one generic-high-entropy", len(ms))
+	}
+}
+
+// A service-account JSON keeps the whole key on one line beside "private_key".
+// It must be one finding spanning the block, not one per 64-character row, and
+// two different keys must not share a fingerprint.
+func TestPrivateKeyBlockSpansTheKey(t *testing.T) {
+	body := strings.Repeat(`Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0QaZx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa\n`, 4)
+	blob := `{"private_key": "-----BEGIN PRIVATE KEY-----\n` + body + `-----END PRIVATE KEY-----\n"}`
+	ms := detect("svc-firebase-adminsdk.json", blob)
+	if len(ms) != 1 || ms[0].RuleID != "private-key-block" {
+		t.Fatalf("matches = %d, want one private-key-block", len(ms))
+	}
+	if !strings.Contains(ms[0].Secret, "-----END PRIVATE KEY-----") {
+		t.Errorf("secret does not span to the END marker")
+	}
+}
+
+func TestSlackWebhookURL(t *testing.T) {
+	url := "https://hooks.slack.com/services/" + "T0123ABCD/B0123ABCD/" + "Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1"
+	ms := detect("notify.py", "WEBHOOK = '"+url+"'")
+	if len(ms) != 1 || ms[0].RuleID != "slack-webhook-url" {
+		t.Fatalf("matches = %+v, want one slack-webhook-url", ms)
+	}
+}
