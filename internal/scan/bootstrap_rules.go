@@ -55,6 +55,13 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"},
 	},
 	{
+		// The whole URL is the credential: anyone holding it can post to the
+		// channel. The generic pass skips URL paths, so this needs a rule.
+		id: "slack-webhook-url", provider: "slack", severity: "medium",
+		pattern:  `(?P<secret>https://hooks\.slack\.com/services/T[0-9A-Z]+/B[0-9A-Z]+/[0-9A-Za-z]{24})`,
+		literals: []string{"hooks.slack.com"},
+	},
+	{
 		id: "google-api-key", provider: "google", severity: "high",
 		pattern:  `(?P<secret>AIza[0-9A-Za-z_-]{35})`,
 		literals: []string{"AIza"},
@@ -101,8 +108,14 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"smtp://", "smtps://"},
 	},
 	{
+		// The secret spans the whole block, not just the header. A header-only
+		// match gave every key the same fingerprint, so a second key in the same
+		// repository was dropped as a duplicate; and the key body, which a
+		// service-account JSON keeps on one line beside "private_key", was left
+		// for the entropy pass to report again one 64-character row at a time.
+		// The END marker is optional so a truncated key is still reported.
 		id: "private-key-block", provider: "generic", severity: "critical",
-		pattern:  `(?P<secret>-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----)`,
+		pattern:  `(?P<secret>-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----(?:[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----)?)`,
 		literals: []string{"PRIVATE KEY-----"},
 	},
 }

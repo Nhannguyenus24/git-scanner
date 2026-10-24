@@ -3,6 +3,7 @@ package scan
 import (
 	"bytes"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -99,6 +100,23 @@ var highEntropyToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
 // hashes, UUIDs and base64 asset blobs out of the results.
 var secretKeyword = regexp.MustCompile(`(?i)(secret|token|passwo?rd|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)`)
 
+// secretAssignment matches the text just before a value that is being assigned
+// to a secret-named setting, in properties, env, YAML, JSON or code form.
+var secretAssignment = regexp.MustCompile(`(?i)(secret|passwo?r?d|token|api[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?$`)
+
+// inURLPath matches when the bytes before a token run, unbroken, from a URL
+// scheme: the token is a host or path segment. Userinfo and query values are
+// excluded by the character class so user:pass@ and ?key= still get checked.
+var inURLPath = regexp.MustCompile(`[a-z]+://[^\s"'<>()@?&=]*$`)
+
+// hasImageMagic reports a base64-encoded PNG, JPEG or GIF, which is long,
+// high-entropy and often sits on a line that happens to say "token".
+func hasImageMagic(token string) bool {
+	return strings.HasPrefix(token, "iVBORw0KGgo") ||
+		strings.HasPrefix(token, "/9j/") ||
+		strings.HasPrefix(token, "R0lGOD")
+}
+
 // genericHighEntropy is the catch-all detector for opaque credentials no rule
 // names (plan.md §4.1 step 5). A hit becomes a provider candidate downstream,
 // which is how the registry learns which services are still unmapped (§5.4).
@@ -113,6 +131,22 @@ func (d *Detector) genericHighEntropy(blob []byte, seen, named map[string]struct
 			continue // a named rule already reported this value
 		}
 		if shannonEntropy(token) < d.minEntropy || isPlaceholder(token) {
+			continue
+		}
+		before := blob[max(0, loc[0]-64):loc[0]]
+		if bytes.HasSuffix(before, []byte("${")) {
+			continue // a variable reference, not a value
+		}
+		if bytes.HasSuffix(before, []byte("base64,")) || hasImageMagic(token) {
+			continue // an embedded image: a data: URI or a notebook's output cell
+		}
+		if inURLPath.Match(before) {
+			continue // a CDN path or asset hash; credentials in URLs have named rules
+		}
+		// A wordy value assigned straight to a secret setting is a hardcoded
+		// secret, weak or not — jwt.secret=mySecretKey… signs real tokens. Only
+		// elsewhere on the line is a word-shaped token taken for an identifier.
+		if looksLikeIdentifier(token) && !secretAssignment.Match(before) {
 			continue
 		}
 		line := lineContaining(blob, loc[0])
@@ -131,6 +165,60 @@ func (d *Detector) genericHighEntropy(blob []byte, seen, named map[string]struct
 		})
 	}
 	return out
+}
+
+// looksLikeIdentifier reports whether token is built from words rather than
+// random characters: a camelCase method name, a SCREAMING_SNAKE variable
+// reference, a package or file path. These sit next to "token" and "password"
+// all the time in source code and cleared the entropy bar easily, so before
+// this check they made up most of the generic findings.
+//
+// The signal is segment length. Split on separators, case changes and
+// letter/digit boundaries, words come out four or more characters long on
+// average, while a random key fragments into runs of one or two. A vowel floor
+// stops a long run of random letters from passing as a word.
+func looksLikeIdentifier(token string) bool {
+	var segments, letters, vowels int
+	var prev rune
+	for i, r := range token {
+		isUpper, isLower := r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		if !isUpper && !isLower && !isDigit {
+			prev = 0 // a separator; the next character opens a new segment
+			continue
+		}
+		prevUpper, prevLower := prev >= 'A' && prev <= 'Z', prev >= 'a' && prev <= 'z'
+		prevDigit := prev >= '0' && prev <= '9'
+		next := rune(0)
+		if i+1 < len(token) {
+			next = rune(token[i+1])
+		}
+		switch {
+		case prev == 0,
+			isUpper && prevLower, // fooBar
+			isUpper && prevUpper && next >= 'a' && next <= 'z', // HTTPServer
+			isDigit != prevDigit:                               // abc123
+			segments++
+		}
+		if isUpper || isLower {
+			letters++
+			switch r | 0x20 {
+			case 'a', 'e', 'i', 'o', 'u':
+				vowels++
+			}
+		}
+		prev = r
+	}
+	if segments < 2 || letters == 0 {
+		return false
+	}
+	alnum := 0
+	for _, r := range token {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			alnum++
+		}
+	}
+	return float64(alnum)/float64(segments) >= 3.5 && float64(vowels)/float64(letters) >= 0.25
 }
 
 // overlapsNamed reports whether token is, contains, or sits inside a value a
@@ -259,7 +347,11 @@ func isPlaceholder(secret string) bool {
 // deniedPaths are directories and file shapes that hold vendored code, test
 // fixtures or build output, where a "secret" is almost always a decoy or a
 // third party's public example (plan.md §4.1 step 6).
-var deniedDirs = []string{"vendor/", "node_modules/", "testdata/", ".git/"}
+var deniedDirs = []string{"vendor/", "node_modules/", "testdata/", ".git/", ".idea/"}
+
+// deniedFiles are generated manifests whose long tokens are integrity hashes
+// and package paths. Every *.lock is already covered by the suffix check.
+var deniedFiles = []string{"package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "go.sum"}
 
 func deniedPath(path string) bool {
 	p := strings.ToLower(path)
@@ -268,7 +360,12 @@ func deniedPath(path string) bool {
 			return true
 		}
 	}
+	if slices.Contains(deniedFiles, p[strings.LastIndexByte(p, '/')+1:]) {
+		return true
+	}
 	return strings.HasSuffix(p, ".min.js") ||
+		strings.HasSuffix(p, ".svg") ||
+		strings.HasSuffix(p, ".drawio") ||
 		strings.HasSuffix(p, ".map") ||
 		strings.HasSuffix(p, "lock") ||
 		strings.HasSuffix(p, ".lock")
