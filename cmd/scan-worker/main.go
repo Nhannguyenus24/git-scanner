@@ -6,8 +6,12 @@ import (
 	"context"
 	"fmt"
 
+	"net/http"
+	"time"
+
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/probe"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
@@ -40,6 +44,14 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	// with a registry-backed, hot-reloadable detector.
 	det := scan.NewDetector(scan.BootstrapRuleset())
 	engine := scan.NewEngine(scan.NewGitCLI(d.Cfg.ScratchDir), det, hasher)
+
+	// Live credential validation is off unless explicitly enabled, and must only
+	// be enabled for targets the operator owns: it authenticates to providers
+	// with the credentials it finds (plan.md ownership gate).
+	if d.Cfg.ProbeSecrets {
+		engine = engine.WithProber(probe.New(&http.Client{Timeout: 10 * time.Second}))
+		d.Log.Warn("live credential probing is ON — only valid for targets you own")
+	}
 
 	publisher, err := d.Rabbit.NewPublisher()
 	if err != nil {

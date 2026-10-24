@@ -72,6 +72,22 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"SG."},
 	},
 
+	{
+		// A Giphy key is 32 alphanumerics with no prefix, so the setting name is
+		// the signal. Front-end code rarely assigns it directly: it is usually
+		// the fallback in `import.meta.env.VITE_GIPHY_API_KEY || '…'`, so the
+		// value may sit some way past the = rather than right after it.
+		id: "giphy-api-key", provider: "giphy", severity: "medium",
+		pattern:  `(?i)giphy[\w.-]{0,30}\s*[:=][^\n]{0,80}?\b(?P<secret>[A-Za-z0-9]{32})\b`,
+		literals: []string{"giphy", "GIPHY", "Giphy"},
+	},
+	{
+		// The same key passed straight to the API in a request URL.
+		id: "giphy-api-key-url", provider: "giphy", severity: "medium",
+		pattern:  `api\.giphy\.com/[^\s"'\x60]*[?&]api_key=(?P<secret>[A-Za-z0-9]{32})\b`,
+		literals: []string{"api.giphy.com"},
+	},
+
 	// AI providers. A leaked key here is billed per token, so it is spent within
 	// hours of reaching a public repository; most issue a recognisable prefix
 	// and need no context. Gemini keys are AIza… and already match

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +35,13 @@ type Common struct {
 	// ScratchDir is where scan-worker clones repositories; empty uses the OS
 	// temp dir. In Kubernetes it is the size-limited /scratch volume.
 	ScratchDir string
+
+	// ProbeSecrets turns on live credential validation in the scan worker: a
+	// single identity/liveness call per finding, to tell a user a leaked key is
+	// still active. It authenticates to third-party providers with found
+	// credentials, so it is off unless explicitly enabled, and must only be
+	// enabled for targets the operator owns or is authorized to test.
+	ProbeSecrets bool
 }
 
 // LoadCommon reads Common from the environment.
@@ -52,6 +60,7 @@ func LoadCommon(serviceName string) (Common, error) {
 		RedisURL:     os.Getenv("REDIS_URL"),
 		OTLPEndpoint: os.Getenv("OTLP_ENDPOINT"),
 		ScratchDir:   os.Getenv("SCRATCH_DIR"),
+		ProbeSecrets: GetBool("PROBE_SECRETS", false),
 	}
 
 	if raw := os.Getenv("FINGERPRINT_KEY"); raw != "" {
@@ -134,6 +143,20 @@ func GetDuration(key string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return d, nil
+}
+
+// GetBool reads a boolean environment variable. Only an explicit true value
+// (1, t, true, yes, on; case-insensitive) is true; unset or anything else is
+// the fallback, so a security-sensitive flag cannot be switched on by a typo.
+func GetBool(key string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "t", "true", "yes", "on":
+		return true
+	case "0", "f", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 // GetOr returns the environment variable or fallback when it is unset or empty.

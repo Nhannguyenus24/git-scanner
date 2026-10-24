@@ -190,6 +190,7 @@ run-local: build ## Build and start all six services locally (no k8s). Logs → 
 	@mkdir -p $(RUN_LOG_DIR)
 	@export POSTGRES_URL='$(INFRA_POSTGRES)' RABBITMQ_URL='$(INFRA_RABBIT)' \
 	        REDIS_URL='$(INFRA_REDIS)' \
+	        PROBE_SECRETS='$(PROBE_SECRETS)' \
 	        LOG_LEVEL=debug ENV=dev; \
 	port=8080; \
 	for svc in api discovery-worker scan-worker enricher notifier analytics; do \

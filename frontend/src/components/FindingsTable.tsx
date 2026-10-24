@@ -32,6 +32,26 @@ const STATUS_COLOR: Record<FindingStatus, 'error' | 'success' | 'default' | 'war
   open: 'error', rotated: 'success', false_positive: 'default', ignored: 'default',
 }
 
+// ProbeBadge turns a live-credential check into the finding's loudest signal:
+// a confirmed-live key is the one to rotate first. Nothing shows when probing
+// was not run for this finding.
+function ProbeBadge({ f }: { f: Finding }) {
+  const status = f.metadata?.probe_status
+  if (!status) return null
+  const who = f.metadata.probe_owner || f.metadata.probe_account || f.metadata.probe_team
+  if (status === 'live') {
+    return (
+      <Tooltip title={who ? `Live — authenticated as ${who}. Rotate now.` : 'Live — this credential still works. Rotate now.'}>
+        <Chip size="small" color="error" label="LIVE — rotate" />
+      </Tooltip>
+    )
+  }
+  if (status === 'dead') {
+    return <Tooltip title="The provider rejected this credential — already rotated or revoked."><Chip size="small" variant="outlined" color="success" label="revoked" /></Tooltip>
+  }
+  return <Tooltip title="Liveness check could not complete (rate limit or network)."><Chip size="small" variant="outlined" label="unchecked" /></Tooltip>
+}
+
 export default function FindingsTable({ findings, onStatus, showRepo = true, emptyMessage }: Props) {
   const [menu, setMenu] = useState<{ el: HTMLElement; f: Finding } | null>(null)
 
@@ -103,10 +123,13 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                     )}
                   </TableCell>
                   <TableCell>
-                    <Tooltip title={f.reachable_from_head ? 'Still present at HEAD' : 'Only in history — removed from the current tree but still clonable'}>
-                      <Chip size="small" variant="outlined" label={f.reachable_from_head ? 'live' : 'history'}
-                        color={f.reachable_from_head ? 'error' : 'default'} />
-                    </Tooltip>
+                    <Box sx={{ display: 'flex', gap: .5, flexWrap: 'wrap' }}>
+                      <Tooltip title={f.reachable_from_head ? 'Still present at HEAD' : 'Only in history — removed from the current tree but still clonable'}>
+                        <Chip size="small" variant="outlined" label={f.reachable_from_head ? 'at HEAD' : 'history'}
+                          color={f.reachable_from_head ? 'error' : 'default'} />
+                      </Tooltip>
+                      <ProbeBadge f={f} />
+                    </Box>
                   </TableCell>
                   <TableCell>
                     <Chip size="small" label={STATUS_LABEL[f.status]} color={STATUS_COLOR[f.status]}

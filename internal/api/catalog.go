@@ -73,21 +73,22 @@ func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
 }
 
 type findingResponse struct {
-	ID                string     `json:"id"`
-	ScanJobID         string     `json:"scan_job_id"`
-	Repository        repoRef    `json:"repository"`
-	RuleID            string     `json:"rule_id"`
-	Provider          string     `json:"provider"`
-	Severity          string     `json:"severity"`
-	Status            string     `json:"status"`
-	MaskedPreview     string     `json:"masked_preview"`
-	FilePath          string     `json:"file_path"`
-	LineNumber        int        `json:"line_number"`
-	CommitSHA         string     `json:"commit_sha"`
-	AuthorName        string     `json:"author_name"`
-	CommittedAt       *time.Time `json:"committed_at,omitempty"`
-	ReachableFromHEAD bool       `json:"reachable_from_head"`
-	DetectedAt        time.Time  `json:"detected_at"`
+	ID                string            `json:"id"`
+	ScanJobID         string            `json:"scan_job_id"`
+	Repository        repoRef           `json:"repository"`
+	RuleID            string            `json:"rule_id"`
+	Provider          string            `json:"provider"`
+	Severity          string            `json:"severity"`
+	Status            string            `json:"status"`
+	MaskedPreview     string            `json:"masked_preview"`
+	FilePath          string            `json:"file_path"`
+	LineNumber        int               `json:"line_number"`
+	CommitSHA         string            `json:"commit_sha"`
+	AuthorName        string            `json:"author_name"`
+	CommittedAt       *time.Time        `json:"committed_at,omitempty"`
+	ReachableFromHEAD bool              `json:"reachable_from_head"`
+	DetectedAt        time.Time         `json:"detected_at"`
+	Metadata          map[string]string `json:"metadata"`
 }
 
 type repoRef struct {
@@ -142,6 +143,7 @@ func (s *Server) handleSearchFindings(w http.ResponseWriter, r *http.Request) {
 			MaskedPreview: f.MaskedPreview, FilePath: f.FilePath, LineNumber: f.LineNumber,
 			CommitSHA: f.CommitSHA, AuthorName: f.AuthorName, CommittedAt: f.CommittedAt,
 			ReachableFromHEAD: f.ReachableFromHEAD, DetectedAt: f.DetectedAt,
+			Metadata: nonNilMap(f.Metadata),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"findings": out, "total": total})
@@ -290,6 +292,13 @@ func (s *Server) handleListCandidates(w http.ResponseWriter, r *http.Request) {
 var uuidShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validID(id entity.ID) bool { return uuidShape.MatchString(string(id)) }
+
+func nonNilMap(m map[string]string) map[string]string {
+	if m == nil {
+		return map[string]string{}
+	}
+	return m
+}
 
 func validFindingStatus(s entity.FindingStatus) bool {
 	switch s {

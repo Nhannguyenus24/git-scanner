@@ -5,6 +5,10 @@ description: Add or fix a credential detection rule in GitScanner's scan engine 
 
 # Adding a detection rule
 
+How the whole pipeline fits together — every gate, in order, and how to
+measure a change against real repositories — is in the `detection-engine`
+skill. This one covers a single provider's rule.
+
 Rules live in `internal/scan/bootstrap_rules.go`. This is the Phase 1 built-in
 set; Phase 3 moves the same shape into the provider registry, so a rule written
 here should read like a registry definition — a pattern, the literals that gate

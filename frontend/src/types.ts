@@ -44,6 +44,7 @@ export interface Finding {
   committed_at?:       string
   reachable_from_head: boolean
   detected_at:         string
+  metadata:            Record<string, string>
 }
 
 export interface FindingFilter {
