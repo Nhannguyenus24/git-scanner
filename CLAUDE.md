@@ -10,9 +10,11 @@ but are load-bearing.
 
 | Skill | Use it when |
 |---|---|
+| `architecture` | adding or changing a service, moving logic between packages, touching queue, event or schema plumbing |
 | `run` | starting, restarting or observing the local stack; reading logs; submitting a test scan |
 | `debug-pipeline` | a scan is stuck, silent, or finds nothing — before theorising about causes |
 | `detection-rule` | a credential is missed, attributed to no provider, or a template is reported as a finding |
+| `wipe-data` | clearing dev data when stale results are masking the effect of a change |
 | `merge-request` | branching, committing, or opening a PR — read it *before* committing, not after |
 
 ## Trunk-based
