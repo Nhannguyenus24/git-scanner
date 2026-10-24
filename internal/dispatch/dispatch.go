@@ -56,15 +56,18 @@ func (d *Dispatcher) EnqueueScan(ctx context.Context, job entity.ScanJob, repo e
 // Unlike the task publishers above, this announces something that already
 // happened. A consumer that cannot read it should dead-letter it rather than
 // stall, which is why it goes to a queue with the usual retry and DLQ bindings.
-// RepositoryFullName and AppType are left unset: the stack a repository uses is
-// only established once its whole blob walk has finished, which is after every
-// finding has already been emitted.
-func (d *Dispatcher) PublishFinding(ctx context.Context, f entity.Finding) error {
+// repoFullName and appType describe the repository the finding came from.
+// Analytics rolls up by app type, and the caller supplies it because the stack
+// is only established once the whole blob walk has finished — which is why the
+// scan worker publishes these events after the walk rather than during it.
+func (d *Dispatcher) PublishFinding(ctx context.Context, f entity.Finding, repoFullName, appType string) error {
 	evt := &gpb.FindingDetected{
-		FindingId:         f.ID.String(),
-		JobId:             f.ScanJobID.String(),
-		RepositoryId:      f.RepositoryID.String(),
-		RuleId:            f.RuleID,
+		FindingId:          f.ID.String(),
+		JobId:              f.ScanJobID.String(),
+		RepositoryId:       f.RepositoryID.String(),
+		RepositoryFullName: repoFullName,
+		AppType:            appType,
+		RuleId:             f.RuleID,
 		ProviderSlug:      f.ProviderSlug,
 		Fingerprint:       f.Fingerprint,
 		MaskedPreview:     f.MaskedPreview,
