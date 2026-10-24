@@ -85,6 +85,32 @@ the word "JWT" in an unrelated article decide a token 4 MB away.
   `commit_sha`, author, date and the path *at that commit*. A failed lookup is
   logged and the finding is kept unattributed.
 
+### 5b. Live validation (off by default)
+
+Two layers, both in the engine because it is the only place the plaintext secret
+exists:
+
+- **Offline extraction** (always on, no network, `extractOffline` in `probe.go`):
+  decodes facts the credential carries by itself. Today: the AWS account id baked
+  into an `AKIA…` key id, and a Stripe key's live/test mode. Written to metadata
+  (`aws_account_id`, `stripe_mode`).
+- **Liveness probe** (`PROBE_SECRETS=true`, default false): one identity call per
+  *named* finding — GitHub `/user`, Stripe `/v1/account`, Slack `auth.test`,
+  OpenAI `/v1/models`, SendGrid `/v3/scopes`, Giphy trending. Implemented in
+  `internal/probe`, injected into the engine via `WithProber`. Result in metadata:
+  `probe_status` (live/dead/unverified/error) and non-secret identity
+  (`probe_owner`, `probe_account`, `probe_team`). The UI shows a "LIVE — rotate"
+  badge.
+
+**Rules this must keep.** The probe authenticates to third-party providers with a
+found credential, so: it is **off unless explicitly enabled**, and only for
+targets the operator owns (the ownership gate — see plan.md and `entity.go`'s
+"probe results require the ownership gate"); it is **identity/liveness only** and
+must never enumerate, read or modify account resources; and it runs **only inside
+the engine**, so the secret itself still never travels onward (plan.md §6) — only
+the boolean outcome and non-secret identity do. The generic (provider-less) pass
+is never probed.
+
 ### 6. Storage and afterwards
 
 - `InsertFinding` is idempotent on `(fingerprint, repository_id)`. Its update arm
@@ -133,5 +159,8 @@ part being tested.
   up YAML keys and prose (`style`, `description`).
 - Cloudinary's `api_secret: '…'` inside `cloudinary.config({...})` has no
   `cloudinary` on the same line and is caught only by the generic pass.
+- Probe results are written at insert time; an already-stored finding is not
+  re-probed unless the row is reclassified or re-inserted, so turning probing on
+  and rescanning is how existing findings get a live/dead verdict.
 - Filters run at detection time; stored rows only change on a rescan, and rows a
   new filter would drop stay until a wipe (`wipe-data`).

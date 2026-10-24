@@ -95,6 +95,7 @@ type FindingRow struct {
 	CommittedAt       *time.Time
 	ReachableFromHEAD bool
 	DetectedAt        time.Time
+	Metadata          map[string]string
 }
 
 // SearchFindings returns one page of findings, most severe and most recent
@@ -141,7 +142,7 @@ func (db *DB) SearchFindings(ctx context.Context, f FindingFilter) ([]FindingRow
 		SELECT f.id, f.scan_job_id, f.repository_id, r.owner, r.name, r.clone_url,
 		       f.rule_id, f.provider_slug, f.severity, f.status, f.masked_preview,
 		       f.file_path, f.line_number, f.commit_sha, f.author_name, f.committed_at,
-		       f.reachable_from_head, f.detected_at,
+		       f.reachable_from_head, f.detected_at, f.metadata,
 		       count(*) OVER ()
 		FROM findings f JOIN repositories r ON r.id = f.repository_id
 		` + cond + `
@@ -162,7 +163,7 @@ func (db *DB) SearchFindings(ctx context.Context, f FindingFilter) ([]FindingRow
 			&r.ID, &r.ScanJobID, &r.RepositoryID, &r.RepoOwner, &r.RepoName, &r.RepoURL,
 			&r.RuleID, &r.Provider, &r.Severity, &r.Status, &r.MaskedPreview,
 			&r.FilePath, &r.LineNumber, &r.CommitSHA, &r.AuthorName, &r.CommittedAt,
-			&r.ReachableFromHEAD, &r.DetectedAt, &total,
+			&r.ReachableFromHEAD, &r.DetectedAt, &r.Metadata, &total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("store: finding row: %w", err)
 		}

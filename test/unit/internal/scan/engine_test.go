@@ -169,3 +169,85 @@ func scanFake(t *testing.T, repo *fakeRepo) []entity.Finding {
 	}
 	return s.f
 }
+
+// fakeProber returns a fixed outcome per provider, so the engine's probe wiring
+// is tested without any network.
+type fakeProber struct {
+	byProvider map[string]scan.ProbeResult
+	seen       []string
+}
+
+func (p *fakeProber) Probe(_ context.Context, provider, secret string) scan.ProbeResult {
+	p.seen = append(p.seen, provider+"\x00"+secret)
+	if r, ok := p.byProvider[provider]; ok {
+		return r
+	}
+	return scan.ProbeResult{Outcome: scan.ProbeUnverified}
+}
+
+// The AWS account id is decoded from the access key id offline, with no prober.
+func TestEngineOfflineExtractsAWSAccount(t *testing.T) {
+	repo := &fakeRepo{
+		blobs: []scan.Blob{{OID: "b1", Path: ".env", Data: []byte("AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2")}},
+		head:  map[string]struct{}{},
+	}
+	f := scanFake(t, repo)
+	if len(f) != 1 {
+		t.Fatalf("findings = %d, want 1", len(f))
+	}
+	if got := f[0].Metadata["aws_account_id"]; got != "052310077262" {
+		t.Errorf("aws_account_id = %q, want 052310077262", got)
+	}
+}
+
+func TestEngineProbesNamedFindings(t *testing.T) {
+	repo := &fakeRepo{
+		blobs: []scan.Blob{
+			{OID: "b1", Path: ".env", Data: []byte("GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz")},
+			{OID: "b2", Path: ".env", Data: []byte("APP_SECRET=Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa")},
+		},
+		head: map[string]struct{}{},
+	}
+	pr := &fakeProber{byProvider: map[string]scan.ProbeResult{
+		"github": {Outcome: scan.ProbeLive, Identity: map[string]string{"owner": "octocat"}},
+	}}
+	h, _ := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	eng := scan.NewEngine(&fakeCloner{repo: repo}, scan.NewDetector(scan.BootstrapRuleset()), h).WithProber(pr)
+	var s collectSink
+	res, err := eng.Scan(context.Background(), "job", "repo", "x", &s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byProvider := map[string]entity.Finding{}
+	for _, f := range s.f {
+		byProvider[f.RuleID] = f
+	}
+	gh := byProvider["github-pat"]
+	if gh.Metadata["probe_status"] != "live" || gh.Metadata["probe_owner"] != "octocat" {
+		t.Errorf("github probe metadata = %+v", gh.Metadata)
+	}
+	if res.ProbesLive != 1 {
+		t.Errorf("ProbesLive = %d, want 1", res.ProbesLive)
+	}
+	// The generic (unmapped) finding names no provider, so it is never probed:
+	// only the one github secret should have reached the prober.
+	if len(pr.seen) != 1 {
+		t.Errorf("prober called %d times, want 1 (github only)", len(pr.seen))
+	}
+	gen := byProvider["generic-high-entropy"]
+	if _, probed := gen.Metadata["probe_status"]; probed {
+		t.Errorf("generic finding was probed: %+v", gen.Metadata)
+	}
+}
+
+// With no prober configured, nothing is probed and no probe metadata appears.
+func TestEngineDoesNotProbeByDefault(t *testing.T) {
+	repo := &fakeRepo{
+		blobs: []scan.Blob{{OID: "b1", Path: ".env", Data: []byte("GITHUB_TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz")}},
+		head:  map[string]struct{}{},
+	}
+	f := scanFake(t, repo)
+	if _, probed := f[0].Metadata["probe_status"]; probed {
+		t.Errorf("probed with no prober configured: %+v", f[0].Metadata)
+	}
+}

@@ -125,6 +125,16 @@ api → discovery-worker → scan-worker → enricher, with findings published t
 `findings.events` queue for analytics. Expect to wait, and watch the logs rather
 than the response.
 
+Live credential validation is **off by default**. Set `PROBE_SECRETS=true` on
+the scan-worker to have it make one identity/liveness call per named finding
+(is the key live, whose account) and surface a "LIVE — rotate" badge. It
+authenticates to providers with the credentials it finds, so enable it **only
+for targets you own**:
+
+```bash
+make run-local PROBE_SECRETS=true
+```
+
 Without `GITHUB_TOKEN` the GitHub API allows 60 requests an hour, which bulk
 discovery exhausts quickly. Export one for anything beyond a few repositories.
 

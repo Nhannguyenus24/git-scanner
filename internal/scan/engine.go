@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/libs/entity"
 	"github.com/mservice/gitscanner/libs/id"
 )
+
+// probeTimeout bounds a single liveness probe. It is short: the probe makes one
+// identity call, and a slow provider must never hold up a scan.
+const probeTimeout = 8 * time.Second
 
 // Engine scans one repository: clone, walk unique blobs, detect, and hand each
 // finding to a sink. It owns no I/O state, so one Engine serves every task a
@@ -17,11 +22,20 @@ type Engine struct {
 	cloner Cloner
 	det    *Detector
 	hasher *secrets.Hasher
+	prober Prober // nil unless live probing is enabled (off by default)
 }
 
 // NewEngine assembles the engine from its collaborators.
 func NewEngine(cloner Cloner, det *Detector, hasher *secrets.Hasher) *Engine {
 	return &Engine{cloner: cloner, det: det, hasher: hasher}
+}
+
+// WithProber enables live credential validation. The caller passes a prober
+// only when probing is configured on and the target is one the operator owns;
+// with none, Scan does offline extraction only and never touches the network.
+func (e *Engine) WithProber(p Prober) *Engine {
+	e.prober = p
+	return e
 }
 
 // Sink receives findings as they are detected. Implementations must be safe to
@@ -36,6 +50,9 @@ type Result struct {
 	BlobsScanned  int
 	FindingsCount int
 	AppType       string
+
+	// ProbesLive counts findings a liveness probe confirmed are still active.
+	ProbesLive int
 
 	// AttributionErr is set when the findings could not be traced to the
 	// commits that introduced them. They are still emitted, just without commit,
@@ -69,7 +86,19 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 	// pass over history that is only worth making once, for every blob that
 	// produced one. They are few — the secret itself is already reduced to a
 	// fingerprint — so holding them costs little.
-	var pending []entity.Finding
+	type held struct {
+		f      entity.Finding
+		secret string
+	}
+	var pending []held
+	findings := func() []entity.Finding {
+		out := make([]entity.Finding, len(pending))
+		for i := range pending {
+			out[i] = pending[i].f
+		}
+		return out
+	}
+
 	err = repo.Blobs(ctx, func(b Blob) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -79,7 +108,7 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 
 		_, reachable := headOIDs[b.OID]
 		for _, m := range e.det.Detect(b.Path, b.Data) {
-			pending = append(pending, e.finding(jobID, repoID, b, m, reachable))
+			pending = append(pending, held{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret})
 		}
 		return nil
 	})
@@ -87,12 +116,31 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		return res, err
 	}
 
-	res.AttributionErr = attribute(ctx, repo, pending)
+	// Attribution works on the finding rows; it does not need the secret.
+	attrs := findings()
+	res.AttributionErr = attribute(ctx, repo, attrs)
+	for i := range pending {
+		pending[i].f = attrs[i]
+	}
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}
-	for _, f := range pending {
-		if err := sink.Emit(ctx, f); err != nil {
+
+	// Live probing, if enabled, is the last thing done with the secret in scope;
+	// only its non-secret result is written back into the finding.
+	if e.prober != nil {
+		for i := range pending {
+			if pending[i].f.ProviderSlug == "" {
+				continue // the generic pass names no provider to probe against
+			}
+			if e.probe(ctx, &pending[i].f, pending[i].secret) {
+				res.ProbesLive++
+			}
+		}
+	}
+
+	for _, pf := range pending {
+		if err := sink.Emit(ctx, pf.f); err != nil {
 			return res, fmt.Errorf("scan: emit finding: %w", err)
 		}
 		res.FindingsCount++
@@ -153,6 +201,10 @@ func (e *Engine) finding(jobID, repoID string, b Blob, m Match, reachable bool) 
 	if m.NearbyHost != "" {
 		meta["host"] = m.NearbyHost
 	}
+	// Offline extraction: facts the credential encodes in itself, no network.
+	for k, v := range extractOffline(m.Provider, m.Secret) {
+		meta[k] = v
+	}
 
 	sev, err := entity.ParseSeverity(m.Severity)
 	if err != nil {
@@ -175,4 +227,25 @@ func (e *Engine) finding(jobID, repoID string, b Blob, m Match, reachable bool) 
 		Status:            entity.FindingOpen,
 		Metadata:          meta,
 	}
+}
+
+// probe validates one finding's credential and records the non-secret result in
+// its metadata. It reports whether the credential is live. A probe never fails
+// the scan: a timeout or transport error is recorded as an error outcome and
+// the finding is kept.
+func (e *Engine) probe(ctx context.Context, f *entity.Finding, secret string) bool {
+	pctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	res := e.prober.Probe(pctx, f.ProviderSlug, secret)
+	if res.Outcome == ProbeUnverified {
+		return false // no prober for this provider; leave metadata unmarked
+	}
+	if f.Metadata == nil {
+		f.Metadata = map[string]string{}
+	}
+	f.Metadata["probe_status"] = string(res.Outcome)
+	for k, v := range res.Identity {
+		f.Metadata["probe_"+k] = v
+	}
+	return res.Outcome == ProbeLive
 }
