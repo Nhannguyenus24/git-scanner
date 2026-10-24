@@ -143,3 +143,56 @@ func TestSlackWebhookURL(t *testing.T) {
 		t.Fatalf("matches = %+v, want one slack-webhook-url", ms)
 	}
 }
+
+// AI keys are assembled from parts so that no complete key-shaped literal sits
+// in the source, where push protection and other scanners would flag it.
+func TestDetectAIProviderKeys(t *testing.T) {
+	r := func(n int) string { return strings.Repeat("Zx9Kq2Lp7W", n/10+1)[:n] }
+	h := func(n int) string { return strings.Repeat("3f9a0c7e1b", n/10+1)[:n] }
+	cases := []struct{ name, blob, rule string }{
+		{"openai legacy", "OPENAI_API_KEY=sk-" + r(20) + "T3Blbk" + "FJ" + r(20), "openai-api-key"},
+		{"openai project", "OPENAI_API_KEY=sk-proj-" + r(74) + "T3Blbk" + "FJ" + r(74), "openai-api-key"},
+		{"anthropic", "ANTHROPIC_API_KEY=sk-ant-" + "api03-" + r(93) + "AA", "anthropic-api-key"},
+		{"openrouter", "key: sk-or-" + "v1-" + h(64), "openrouter-api-key"},
+		{"groq", "GROQ_API_KEY=gsk" + "_" + r(52), "groq-api-key"},
+		{"huggingface", "HF_TOKEN=hf" + "_" + r(34), "huggingface-token"},
+		{"replicate", "REPLICATE_API_TOKEN=r8" + "_" + r(37), "replicate-api-token"},
+		{"perplexity", "PPLX_KEY=pplx" + "-" + r(48), "perplexity-api-key"},
+		{"xai", "XAI_API_KEY=xai" + "-" + r(80), "xai-api-key"},
+		{"langsmith", "LANGSMITH_API_KEY=lsv2" + "_pt_" + h(32) + "_" + h(10), "langsmith-api-key"},
+		{"pinecone", "PINECONE_API_KEY=pcsk" + "_" + r(6) + "_" + r(60), "pinecone-api-key"},
+		{"deepseek", "DEEPSEEK_API_KEY=sk-" + h(32), "deepseek-api-key"},
+		{"cohere", "COHERE_API_KEY=" + r(40), "cohere-api-key"},
+		{"mistral", "mistral.api-key: " + r(32), "mistral-api-key"},
+		{"azure openai", "AZURE_OPENAI_API_KEY=" + h(32), "azure-openai-api-key"},
+	}
+	for _, c := range cases {
+		ms := detect(".env", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			got := make([]string, len(ms))
+			for i, m := range ms {
+				got[i] = m.RuleID
+			}
+			t.Errorf("%s: rules = %v, want [%s]", c.name, got, c.rule)
+		}
+	}
+}
+
+func TestAIProviderRulesNeedTheirShape(t *testing.T) {
+	r := strings.Repeat("Zx9Kq2Lp7W", 10)
+	cases := []struct{ name, blob string }{
+		// sk- alone is used by too many services to attribute to OpenAI.
+		{"sk- without the OpenAI marker", "const id = 'sk-" + r[:48] + "'"},
+		{"hf_ inside an identifier", "pathf" + "_" + r[:34] + " = 1"},
+		{"bare 32 hex, no DeepSeek setting", "commit sk-" + strings.Repeat("3f9a0c7e", 4)},
+		{"template value", "OPENAI_API_KEY=your-openai-api-key"},
+		{"variable reference", "GROQ_API_KEY=${GROQ_API_KEY}"},
+	}
+	for _, c := range cases {
+		for _, m := range detect(".env", c.blob) {
+			if m.Provider != "" {
+				t.Errorf("%s: attributed to %s by %s", c.name, m.Provider, m.RuleID)
+			}
+		}
+	}
+}
