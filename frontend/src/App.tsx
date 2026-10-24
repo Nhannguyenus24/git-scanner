@@ -5,6 +5,7 @@ import { useResource } from './hooks/useResource'
 import { href, navigate, useRoute } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
 import FindingsPage from './pages/FindingsPage'
+import HelpPage from './pages/HelpPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
 import RepositoriesPage from './pages/RepositoriesPage'
@@ -43,6 +44,7 @@ export default function App() {
     case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
+    case 'help':         body = <HelpPage />; break
     default:             body = <OverviewPage onNewScan={open} />
   }
 
