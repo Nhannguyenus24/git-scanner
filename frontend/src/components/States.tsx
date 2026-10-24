@@ -3,15 +3,17 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import CircularProgress from '@mui/material/CircularProgress'
 import Typography from '@mui/material/Typography'
+import { useT } from '../i18n'
 
 export function Loading() {
   return <Box sx={{ p: 6, textAlign: 'center' }}><CircularProgress size={28} /></Box>
 }
 
 export function LoadError({ error, retry }: { error: string; retry: () => void }) {
+  const { t } = useT()
   return (
-    <Alert severity="error" action={<Button color="inherit" size="small" onClick={retry}>Retry</Button>}>
-      Could not reach the API: {error}. Check the address in the top bar and that <code>make run-local</code> is up.
+    <Alert severity="error" action={<Button color="inherit" size="small" onClick={retry}>{t('common.retry')}</Button>}>
+      {t('common.loadError', { error })}
     </Alert>
   )
 }

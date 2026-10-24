@@ -22,6 +22,10 @@ type Catalog interface {
 	ListRepositories(ctx context.Context) ([]store.RepositorySummary, error)
 	GetOverview(ctx context.Context) (store.Overview, error)
 	ListProviderCandidates(ctx context.Context) ([]entity.ProviderCandidate, error)
+	FindingsTimeline(ctx context.Context) ([]store.TimePoint, error)
+	FindingsByAppType(ctx context.Context) ([]store.Count, error)
+	FindingsByRule(ctx context.Context, limit int) ([]store.Count, error)
+	LiveProbeCounts(ctx context.Context) ([]store.Count, error)
 }
 
 // WithCatalog enables the browsing and triage routes.
@@ -40,6 +44,7 @@ func (s *Server) catalogRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/findings/{id}", s.handleUpdateFinding)
 	mux.HandleFunc("GET /v1/repositories", s.handleListRepositories)
 	mux.HandleFunc("GET /v1/candidates", s.handleListCandidates)
+	mux.HandleFunc("GET /v1/analytics", s.handleAnalytics)
 }
 
 type scanSummaryResponse struct {
@@ -292,6 +297,47 @@ func (s *Server) handleListCandidates(w http.ResponseWriter, r *http.Request) {
 var uuidShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func validID(id entity.ID) bool { return uuidShape.MatchString(string(id)) }
+
+func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	timeline, err := s.catalog.FindingsTimeline(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	byApp, err := s.catalog.FindingsByAppType(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	byRule, err := s.catalog.FindingsByRule(ctx, intParam(r, "rules"))
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	probe, err := s.catalog.LiveProbeCounts(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	points := make([]map[string]any, 0, len(timeline))
+	for _, p := range timeline {
+		points = append(points, map[string]any{"period": p.Period, "findings": p.Findings})
+	}
+	counts := func(cs []store.Count) []countResponse {
+		out := make([]countResponse, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, countResponse{Key: c.Key, Count: c.Count})
+		}
+		return out
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"timeline":    points,
+		"by_app_type": counts(byApp),
+		"by_rule":     counts(byRule),
+		"live_probes": counts(probe),
+	})
+}
 
 func nonNilMap(m map[string]string) map[string]string {
 	if m == nil {

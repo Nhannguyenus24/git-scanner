@@ -6,25 +6,31 @@ import ListItemButton from '@mui/material/ListItemButton'
 import ListItemIcon from '@mui/material/ListItemIcon'
 import ListItemText from '@mui/material/ListItemText'
 import DashboardIcon from '@mui/icons-material/SpaceDashboardOutlined'
+import InsightsIcon from '@mui/icons-material/InsightsOutlined'
 import RadarIcon from '@mui/icons-material/RadarOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import FolderIcon from '@mui/icons-material/FolderOutlined'
 import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
+import BookIcon from '@mui/icons-material/MenuBookOutlined'
 import AddIcon from '@mui/icons-material/Add'
 import TopBar from './TopBar'
 import { href } from '../hooks/useRoute'
+import { useT } from '../i18n'
 
 const NAV = [
-  { page: 'overview',     label: 'Overview',     icon: <DashboardIcon fontSize="small" /> },
-  { page: 'scans',        label: 'Scans',        icon: <RadarIcon fontSize="small" /> },
-  { page: 'findings',     label: 'Findings',     icon: <KeyIcon fontSize="small" /> },
-  { page: 'repositories', label: 'Repositories', icon: <FolderIcon fontSize="small" /> },
-  { page: 'candidates',   label: 'Unmapped',     icon: <HelpIcon fontSize="small" /> },
+  { page: 'overview',     icon: <DashboardIcon fontSize="small" /> },
+  { page: 'analytics',    icon: <InsightsIcon fontSize="small" /> },
+  { page: 'scans',        icon: <RadarIcon fontSize="small" /> },
+  { page: 'findings',     icon: <KeyIcon fontSize="small" /> },
+  { page: 'repositories', icon: <FolderIcon fontSize="small" /> },
+  { page: 'candidates',   icon: <HelpIcon fontSize="small" /> },
+  { page: 'help',         icon: <BookIcon fontSize="small" /> },
 ]
 
 interface Props { page: string; onNewScan: () => void; badges?: Record<string, number>; children: React.ReactNode }
 
 export default function Layout({ page, onNewScan, badges = {}, children }: Props) {
+  const { t } = useT()
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <TopBar />
@@ -33,12 +39,12 @@ export default function Layout({ page, onNewScan, badges = {}, children }: Props
           width: 210, flexShrink: 0, borderRight: 1, borderColor: 'divider', p: 1.5,
           display: { xs: 'none', md: 'flex' }, flexDirection: 'column', gap: 1.5, bgcolor: 'background.paper',
         }}>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={onNewScan} fullWidth>New scan</Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={onNewScan} fullWidth>{t('nav.newScan')}</Button>
           <List dense disablePadding sx={{ display: 'flex', flexDirection: 'column', gap: .25 }}>
             {NAV.map(n => (
               <ListItemButton key={n.page} component="a" href={href(n.page)} selected={page === n.page}>
                 <ListItemIcon sx={{ minWidth: 32, color: page === n.page ? 'primary.main' : 'text.secondary' }}>{n.icon}</ListItemIcon>
-                <ListItemText primary={n.label} primaryTypographyProps={{ fontSize: 13.5, fontWeight: page === n.page ? 700 : 500 }} />
+                <ListItemText primary={t(`nav.${n.page}`)} primaryTypographyProps={{ fontSize: 13.5, fontWeight: page === n.page ? 700 : 500 }} />
                 {!!badges[n.page] && (
                   <Box sx={{ fontSize: 11, fontWeight: 700, px: .75, borderRadius: 1, bgcolor: 'divider', color: 'text.secondary' }}>
                     {badges[n.page]}
@@ -54,10 +60,10 @@ export default function Layout({ page, onNewScan, badges = {}, children }: Props
           <Box sx={{ display: { xs: 'flex', md: 'none' }, gap: .5, p: 1, overflowX: 'auto', borderBottom: 1, borderColor: 'divider' }}>
             {NAV.map(n => (
               <Button key={n.page} size="small" href={href(n.page)} variant={page === n.page ? 'contained' : 'text'} color={page === n.page ? 'primary' : 'inherit'}>
-                {n.label}
+                {t(`nav.${n.page}`)}
               </Button>
             ))}
-            <Button size="small" onClick={onNewScan} startIcon={<AddIcon />}>Scan</Button>
+            <Button size="small" onClick={onNewScan} startIcon={<AddIcon />}>{t('nav.scan')}</Button>
           </Box>
           <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1400, mx: 'auto' }}>{children}</Box>
         </Box>

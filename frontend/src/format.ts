@@ -1,11 +1,13 @@
-import type { FindingStatus, Severity } from './types'
+import type { FindingStatus } from './types'
 
-export const SEV_COLOR: Record<Severity, string> = {
-  critical: '#f05252',
-  high:     '#f59e0b',
-  medium:   '#facc15',
-  low:      '#56b6f7',
-  info:     '#6b789a',
+// paletteFor assigns each key a stable colour by its position in the given order,
+// so a filter that drops a series never repaints the survivors. The palette and
+// the "other" colour come from the active theme (theme.chart), so they switch
+// with light/dark.
+export function paletteFor(keys: string[], categorical: string[], other: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  keys.forEach((k, i) => { out[k] = i < categorical.length ? categorical[i] : other })
+  return out
 }
 
 export const STATUS_LABEL: Record<FindingStatus, string> = {
@@ -39,8 +41,6 @@ export const num = (n: number) => n.toLocaleString()
 export function fileLink(repoUrl: string, path: string, line: number, sha: string, atHead: boolean): string | undefined {
   const base = repoUrl.replace(/\.git$/, '')
   if (!base.startsWith('https://github.com/')) return undefined
-  // Without a commit the only safe ref is HEAD, and only while the file is
-  // still there; a history-only finding would link to a 404.
   const ref = sha || (atHead ? 'HEAD' : '')
   if (!ref) return undefined
   return `${base}/blob/${ref}/${path.split('/').map(encodeURIComponent).join('/')}${line ? `#L${line}` : ''}`
@@ -50,4 +50,12 @@ export function fileLink(repoUrl: string, path: string, line: number, sha: strin
 export function commitLink(repoUrl: string, sha: string): string | undefined {
   const base = repoUrl.replace(/\.git$/, '')
   return sha && base.startsWith('https://github.com/') ? `${base}/commit/${sha}` : undefined
+}
+
+/** YYYY-MM → "Mon 'YY", for timeline axes. */
+export function monthLabel(period: string): string {
+  const [y, m] = period.split('-').map(Number)
+  if (!y || !m) return period
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]
+  return `${mon} '${String(y).slice(2)}`
 }

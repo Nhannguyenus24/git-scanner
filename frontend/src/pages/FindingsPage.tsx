@@ -11,11 +11,12 @@ import SearchIcon from '@mui/icons-material/Search'
 import FindingsTable from '../components/FindingsTable'
 import { PageHeader } from '../components/Layout'
 import { LoadError, Loading } from '../components/States'
-import { num, STATUS_LABEL } from '../format'
+import { num } from '../format'
 import { useResource } from '../hooks/useResource'
 import { href, navigate, type Route } from '../hooks/useRoute'
 import { useTriage } from '../hooks/useTriage'
 import { useSettings } from '../store/settings'
+import { useT } from '../i18n'
 import { SEVERITIES, STATUSES, type FindingFilter, type FindingStatus, type Severity } from '../types'
 
 // The filter lives in the URL so a filtered view can be linked, bookmarked and
@@ -24,6 +25,7 @@ const KEYS = ['severity', 'provider', 'status', 'q', 'repository_id', 'scan_id',
 
 export default function FindingsPage({ route }: { route: Route }) {
   const { api } = useSettings()
+  const { t } = useT()
   const p = route.params
   const page = Number(p.get('page') ?? 0), size = Number(p.get('size') ?? 50)
   const filter: FindingFilter = {
@@ -60,28 +62,28 @@ export default function FindingsPage({ route }: { route: Route }) {
 
   return (
     <>
-      <PageHeader title="Findings"
-        subtitle={res.data ? `${num(res.data.total)} matching` : 'Every credential the pipeline has recorded'}
+      <PageHeader title={t('findings.title')}
+        subtitle={res.data ? t('findings.matching', { n: num(res.data.total) }) : t('findings.subtitle')}
         actions={(filter.severity || filter.provider || filter.status || filter.q || scoped)
-          ? <Button color="inherit" onClick={() => navigate(href('findings'))}>Clear filters</Button> : undefined} />
+          ? <Button color="inherit" onClick={() => navigate(href('findings'))}>{t('common.clearFilters')}</Button> : undefined} />
 
       <Card sx={{ p: 1.5, mb: 2, display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
-        <TextField placeholder="Search path, rule, provider or repository" value={q} onChange={e => setQ(e.target.value)}
+        <TextField placeholder={t('findings.search')} value={q} onChange={e => setQ(e.target.value)}
           sx={{ flex: '1 1 280px' }}
           InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
-        <TextField select label="Severity" value={filter.severity} onChange={e => set({ severity: e.target.value })} sx={{ minWidth: 130 }}>
-          <MenuItem value="">Any</MenuItem>
-          {SEVERITIES.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+        <TextField select label={t('findings.severity')} value={filter.severity} onChange={e => set({ severity: e.target.value })} sx={{ minWidth: 130 }}>
+          <MenuItem value="">{t('common.any')}</MenuItem>
+          {SEVERITIES.map(s => <MenuItem key={s} value={s}>{t(`sev.${s}`)}</MenuItem>)}
         </TextField>
-        <TextField select label="Provider" value={filter.provider} onChange={e => set({ provider: e.target.value })} sx={{ minWidth: 150 }}>
-          <MenuItem value="">Any</MenuItem>
+        <TextField select label={t('findings.provider')} value={filter.provider} onChange={e => set({ provider: e.target.value })} sx={{ minWidth: 150 }}>
+          <MenuItem value="">{t('common.any')}</MenuItem>
           {[...new Set([...providers, ...(filter.provider ? [filter.provider] : [])])].map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
         </TextField>
-        <TextField select label="Status" value={filter.status} onChange={e => set({ status: e.target.value })} sx={{ minWidth: 150 }}>
-          <MenuItem value="">Any</MenuItem>
-          {STATUSES.map(s => <MenuItem key={s} value={s}>{STATUS_LABEL[s]}</MenuItem>)}
+        <TextField select label={t('findings.status')} value={filter.status} onChange={e => set({ status: e.target.value })} sx={{ minWidth: 150 }}>
+          <MenuItem value="">{t('common.any')}</MenuItem>
+          {STATUSES.map(s => <MenuItem key={s} value={s}>{t(`status.${s}`)}</MenuItem>)}
         </TextField>
-        {filter.repository_id && <Chip label="One repository" onDelete={() => set({ repository_id: '' })} />}
+        {filter.repository_id && <Chip label={t('findings.oneRepo')} onDelete={() => set({ repository_id: '' })} />}
         {filter.scan_id && <Chip label={`Scan ${filter.scan_id.slice(0, 8)}`} onDelete={() => set({ scan_id: '' })} />}
       </Card>
 
