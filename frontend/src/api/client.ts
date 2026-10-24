@@ -1,7 +1,8 @@
-import type { ScanJob, Finding } from '../types'
+import type {
+  Candidate, Finding, FindingFilter, FindingStatus, Overview, Repository, ScanJob, ScanSummary,
+} from '../types'
 
-export interface FindingsResponse { findings: Finding[] }
-export interface VersionResponse  { service: string; version: string; commit: string; go_version: string }
+export interface VersionResponse { service: string; version: string; commit: string; go_version: string }
 
 async function req<T>(base: string, method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
@@ -10,28 +11,41 @@ async function req<T>(base: string, method: string, path: string, body?: unknown
     headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
   }
-  const res = await fetch(base + path, opts)
+  const res  = await fetch(base + path, opts)
   const json = await res.json().catch(() => ({})) as Record<string, unknown>
   if (!res.ok) throw new Error((json['error'] as string | undefined) ?? `HTTP ${res.status}`)
   return json as T
 }
 
+function query(params: object): string {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '' && v !== null) q.set(k, String(v))
+  }
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
 export function createClient(rawBase: string) {
-  // When running via `vite dev` the proxy rewrites /v1 → localhost:8080/v1,
-  // so an empty base works. For a custom host the user sets it in the sidebar.
   const base = rawBase.replace(/\/$/, '')
   const r    = <T>(method: string, path: string, body?: unknown) => req<T>(base, method, path, body)
 
   return {
-    version:     ()                                          => r<VersionResponse>('GET', '/v1/version'),
-    scanRepo:    (url: string)                               => r<ScanJob>('POST', '/v1/scans/repo',  { url }),
-    scanUser:    (name: string, include_forks: boolean)      => r<ScanJob>('POST', '/v1/scans/user',  { name, include_forks }),
-    scanOrg:     (name: string, include_forks: boolean)      => r<ScanJob>('POST', '/v1/scans/org',   { name, include_forks }),
-    getJob:      (id: string)                                => r<ScanJob>('GET',  `/v1/scans/${id}`),
-    getFindings: (id: string)                                => r<FindingsResponse>('GET', `/v1/scans/${id}/findings`),
-    pause:       (id: string)                                => r<unknown>('POST', `/v1/scans/${id}/pause`),
-    resume:      (id: string)                                => r<unknown>('POST', `/v1/scans/${id}/resume`),
-    cancel:      (id: string)                                => r<unknown>('POST', `/v1/scans/${id}/cancel`),
+    version:      ()                                     => r<VersionResponse>('GET', '/v1/version'),
+    overview:     ()                                     => r<Overview>('GET', '/v1/overview'),
+    listScans:    (limit = 100)                          => r<{ scans: ScanSummary[] }>('GET', `/v1/scans?limit=${limit}`),
+    getScan:      (id: string)                           => r<ScanJob>('GET', `/v1/scans/${id}`),
+    scanRepo:     (url: string)                          => r<ScanJob>('POST', '/v1/scans/repo', { url }),
+    scanUser:     (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/user', { name, include_forks }),
+    scanOrg:      (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/org',  { name, include_forks }),
+    pause:        (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/pause`),
+    resume:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/resume`),
+    cancel:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/cancel`),
+    findings:     (f: FindingFilter)                     => r<{ findings: Finding[]; total: number }>('GET', `/v1/findings${query(f)}`),
+    setStatus:    (id: string, status: FindingStatus)    => r<unknown>('PATCH', `/v1/findings/${id}`, { status }),
+    repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),
+    candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
+    disclose:     (repoId: string)                       => r<unknown>('POST', `/v1/repositories/${repoId}/disclose`),
   }
 }
 

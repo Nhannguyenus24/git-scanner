@@ -105,6 +105,21 @@ curl -s http://localhost:8080/v1/scans/<job-id>
 curl -s http://localhost:8080/v1/scans/<job-id>/findings
 ```
 
+The dashboard reads everything from the server, so these are also the quickest
+way to look at results from a shell:
+
+```bash
+curl -s http://localhost:8080/v1/overview          # headline counts and breakdowns
+curl -s http://localhost:8080/v1/scans             # every job, newest first, with its target
+curl -s 'http://localhost:8080/v1/findings?severity=critical&status=open&q=env&limit=50&offset=0'
+curl -s http://localhost:8080/v1/repositories      # per-repository open counts by severity
+curl -s http://localhost:8080/v1/candidates        # unmapped-provider backlog
+curl -s -X PATCH http://localhost:8080/v1/findings/<id> -d '{"status":"false_positive"}'
+```
+
+`provider=unmapped` selects findings no named rule attributed; `status` is one
+of `open`, `rotated`, `false_positive`, `ignored`.
+
 A scan is asynchronous: the POST returns a queued job, and the pipeline runs
 api → discovery-worker → scan-worker → enricher, with findings published to the
 `findings.events` queue for analytics. Expect to wait, and watch the logs rather

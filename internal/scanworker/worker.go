@@ -83,10 +83,14 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 		return fmt.Errorf("scan repository %s: %w", task.RepositoryId, err)
 	}
 
+	if res.AttributionErr != nil {
+		w.log.Warn("findings stored without commit attribution",
+			append([]any{"job", task.JobId, "error", res.AttributionErr}, meta...)...)
+	}
 	w.log.Info("scan done", append([]any{
 		"job", task.JobId, "blobs", res.BlobsScanned,
 		"findings", sink.inserted, "reclassified", sink.reclassified,
-		"app_type", res.AppType,
+		"attributed", sink.attributed, "app_type", res.AppType,
 	}, meta...)...)
 
 	// The detected stack is worth keeping: it feeds severity scoring (plan.md
@@ -123,6 +127,7 @@ type storeSink struct {
 	task         *gpb.ScanTask
 	inserted     int
 	reclassified int
+	attributed   int // existing rows given their introducing commit
 
 	// announce holds the findings stored by this delivery. They cannot be
 	// published as they are found: the event carries the repository's app type,
@@ -134,6 +139,18 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 	write, err := s.w.db.InsertFinding(ctx, f)
 	if err != nil {
 		return err
+	}
+
+	// A row that already existed may predate commit attribution; give it the
+	// commit this scan found. A fresh insert carried it already.
+	if write != store.FindingInserted {
+		filled, err := s.w.db.BackfillAttribution(ctx, f)
+		if err != nil {
+			return err
+		}
+		if filled {
+			s.attributed++
+		}
 	}
 
 	switch write {

@@ -4,15 +4,18 @@ import CssBaseline from '@mui/material/CssBaseline'
 import { ThemeProvider } from '@mui/material/styles'
 import App from './App'
 import theme from './theme'
-import { StoreProvider } from './store/jobs'
+import { SettingsProvider } from './store/settings'
+import { ToastProvider } from './store/toast'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <StoreProvider>
-        <App />
-      </StoreProvider>
+      <SettingsProvider>
+        <ToastProvider>
+          <App />
+        </ToastProvider>
+      </SettingsProvider>
     </ThemeProvider>
   </React.StrictMode>,
 )

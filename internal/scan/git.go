@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Blob is one object from a repository's history.
@@ -15,6 +16,17 @@ type Blob struct {
 	OID  string
 	Path string
 	Data []byte
+}
+
+// Commit is where a blob entered history: who committed it, when, and under
+// which path. It is what turns a finding from "this content exists somewhere"
+// into something a person can be told about and a reviewer can open.
+type Commit struct {
+	SHA         string
+	AuthorName  string
+	AuthorEmail string
+	When        time.Time
+	Path        string
 }
 
 // Repo is the read-only view of a cloned repository the engine needs. Keeping
@@ -27,6 +39,10 @@ type Repo interface {
 	// HeadOIDs returns the set of blob OIDs reachable from the default branch
 	// tip, so a finding can be marked as live rather than only historical.
 	HeadOIDs(ctx context.Context) (map[string]struct{}, error)
+	// Introductions returns, for each of the given blob OIDs, the commit that
+	// first added it to history. OIDs no commit introduces (an object reachable
+	// only through a merge resolution, say) are absent from the result.
+	Introductions(ctx context.Context, oids map[string]struct{}) (map[string]Commit, error)
 	// Close removes the working directory.
 	Close() error
 }
@@ -296,4 +312,101 @@ func (r *gitRepo) HeadOIDs(ctx context.Context) (map[string]struct{}, error) {
 		}
 	}
 	return set, nil
+}
+
+// Introductions finds the commit that first added each wanted blob, in one pass
+// over history rather than one git invocation per finding.
+//
+// The blob walk deliberately works on unique blobs, not commits (plan.md §4.1),
+// so it never learns which commit carried a secret. Asking afterwards, and only
+// for the handful of blobs that produced findings, keeps that walk cheap: a
+// repository with no findings never pays for this at all.
+//
+// log --raw lists, per commit, each file's old and new blob id; the first commit
+// in oldest-first order whose new id is a wanted blob is the one that
+// introduced it. --root makes the root commit's files count as added.
+func (r *gitRepo) Introductions(ctx context.Context, oids map[string]struct{}) (map[string]Commit, error) {
+	found := make(map[string]Commit, len(oids))
+	if len(oids) == 0 {
+		return found, nil
+	}
+
+	// The walk stops as soon as every blob is accounted for, which leaves git
+	// writing into a pipe nobody reads. As in Blobs, the process must be
+	// cancelled before Wait or Wait never returns.
+	logCtx, cancel := context.WithCancel(ctx)
+	cmd := r.git(logCtx, "log", "--all", "--reverse", "--root", "--raw", "--no-abbrev",
+		"--no-renames", "--format=%x00%H%x1f%an%x1f%ae%x1f%aI")
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("scan: log stdout: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("scan: start log: %w", err)
+	}
+
+	var cur Commit
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for len(found) < len(oids) && sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "\x00") {
+			cur = parseCommitHeader(line[1:])
+			continue
+		}
+		// ":<old mode> <new mode> <old oid> <new oid> <status>\t<path>"
+		meta, path, ok := strings.Cut(line, "\t")
+		if !ok || !strings.HasPrefix(meta, ":") {
+			continue
+		}
+		f := strings.Fields(meta)
+		if len(f) < 5 {
+			continue
+		}
+		oid := f[3]
+		if _, want := oids[oid]; !want {
+			continue
+		}
+		if _, done := found[oid]; !done {
+			c := cur
+			c.Path = path
+			found[oid] = c
+		}
+	}
+	scanErr := sc.Err()
+	complete := len(found) == len(oids)
+
+	// Stopped reading early — everything found, or a read error — means git may
+	// be blocked on a full pipe, so it is killed first and its exit status is
+	// meaningless. Having read to EOF it is exiting on its own; killing it then
+	// would race that exit and report a healthy walk as cancelled.
+	stoppedEarly := complete || scanErr != nil
+	if stoppedEarly {
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	cancel()
+
+	if err := ctx.Err(); err != nil {
+		return found, err
+	}
+	if scanErr != nil {
+		return found, fmt.Errorf("scan: read log: %w", scanErr)
+	}
+	if waitErr != nil && !stoppedEarly {
+		return found, fmt.Errorf("scan: git log: %w", waitErr)
+	}
+	return found, nil
+}
+
+// parseCommitHeader reads "<sha>\x1f<name>\x1f<email>\x1f<iso date>".
+func parseCommitHeader(s string) Commit {
+	f := strings.SplitN(s, "\x1f", 4)
+	for len(f) < 4 {
+		f = append(f, "")
+	}
+	when, _ := time.Parse(time.RFC3339, f[3])
+	return Commit{SHA: f[0], AuthorName: f[1], AuthorEmail: f[2], When: when}
 }

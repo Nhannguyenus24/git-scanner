@@ -36,6 +36,12 @@ type Result struct {
 	BlobsScanned  int
 	FindingsCount int
 	AppType       string
+
+	// AttributionErr is set when the findings could not be traced to the
+	// commits that introduced them. They are still emitted, just without commit,
+	// author and date: a finding missing its provenance is worth far more than
+	// no finding, so this is reported rather than failing the scan.
+	AttributionErr error
 }
 
 // Scan clones cloneURL, walks its history and emits a finding per detected
@@ -59,6 +65,11 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 	var res Result
 	app := newAppTypeDetector()
 
+	// Findings are held until the walk ends, because attributing them needs a
+	// pass over history that is only worth making once, for every blob that
+	// produced one. They are few — the secret itself is already reduced to a
+	// fingerprint — so holding them costs little.
+	var pending []entity.Finding
 	err = repo.Blobs(ctx, func(b Blob) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -68,11 +79,7 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 
 		_, reachable := headOIDs[b.OID]
 		for _, m := range e.det.Detect(b.Path, b.Data) {
-			f := e.finding(jobID, repoID, b, m, reachable)
-			if err := sink.Emit(ctx, f); err != nil {
-				return fmt.Errorf("scan: emit finding: %w", err)
-			}
-			res.FindingsCount++
+			pending = append(pending, e.finding(jobID, repoID, b, m, reachable))
 		}
 		return nil
 	})
@@ -80,8 +87,52 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		return res, err
 	}
 
+	res.AttributionErr = attribute(ctx, repo, pending)
+	if ctx.Err() != nil {
+		return res, ctx.Err()
+	}
+	for _, f := range pending {
+		if err := sink.Emit(ctx, f); err != nil {
+			return res, fmt.Errorf("scan: emit finding: %w", err)
+		}
+		res.FindingsCount++
+	}
+
 	res.AppType = app.result()
 	return res, nil
+}
+
+// attribute stamps each finding with the commit that introduced its blob. It
+// fills in what it can even when the lookup fails part-way.
+func attribute(ctx context.Context, repo Repo, fs []entity.Finding) error {
+	if len(fs) == 0 {
+		return nil
+	}
+	want := make(map[string]struct{}, len(fs))
+	for _, f := range fs {
+		want[f.BlobOID] = struct{}{}
+	}
+	intro, err := repo.Introductions(ctx, want)
+	for i := range fs {
+		c, ok := intro[fs[i].BlobOID]
+		if !ok {
+			continue
+		}
+		fs[i].CommitSHA = c.SHA
+		fs[i].AuthorName = c.AuthorName
+		fs[i].AuthorEmail = c.AuthorEmail
+		fs[i].CommittedAt = c.When
+		// The walk names a blob by any one path it appears under; the
+		// introducing commit's own path is the one that exists at that commit,
+		// so a link to the file at that commit resolves.
+		if c.Path != "" {
+			fs[i].FilePath = c.Path
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("scan: attribute findings: %w", err)
+	}
+	return nil
 }
 
 // finding builds the storable finding from a match. The raw secret is consumed
