@@ -18,11 +18,11 @@ var (
 
 func TestDetectFindsKnownProviders(t *testing.T) {
 	cases := []struct{ name, blob, rule string }{
-		{"aws", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX", "aws-access-key-id"},
+		{"aws", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2", "aws-access-key-id"},
 		{"github pat", "token: ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github-pat"},
 		{"stripe", "STRIPE_KEY=" + dummyStripeKey, "stripe-secret-key"},
 		{"cloudinary", "url=cloudinary://123456789012345:abcdefghijklmnopqrstu@demo", "cloudinary-url"},
-		{"private key", "-----BEGIN RSA PRIVATE KEY-----", "private-key-block"},
+		{"private key", "-----BEGIN RSA PRIVATE KEY-----\n" + strings.Repeat("MIIBVgIBADANBgkqhki", 4) + "\n-----END RSA PRIVATE KEY-----", "private-key-block"},
 	}
 	for _, c := range cases {
 		ms := detect(".env", c.blob)
@@ -53,10 +53,10 @@ func TestDetectSkipsPlaceholdersAndVendored(t *testing.T) {
 	if ms := detect(".env", "key="+dummyStripePlaceholder); len(ms) != 0 {
 		t.Errorf("placeholder was reported: %+v", ms)
 	}
-	if ms := detect("vendor/x/f.go", "AKIAIOSFODNN7EXAMPLX"); len(ms) != 0 {
+	if ms := detect("vendor/x/f.go", "AKIAQYLPMN5HHHFPZAM2"); len(ms) != 0 {
 		t.Errorf("vendored path was scanned: %+v", ms)
 	}
-	if ms := detect("a.go", "\x00AKIAIOSFODNN7EXAMPLX"); len(ms) != 0 {
+	if ms := detect("a.go", "\x00AKIAQYLPMN5HHHFPZAM2"); len(ms) != 0 {
 		t.Errorf("binary blob was scanned: %+v", ms)
 	}
 }
@@ -261,7 +261,7 @@ func TestGenericSkipsExamples(t *testing.T) {
 	}
 	// A named rule still runs in an example file: a real key pasted into a
 	// template is still a leak, and its shape is still its own.
-	if ms := detect(".env.example", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX"); len(ms) != 1 {
+	if ms := detect(".env.example", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2"); len(ms) != 1 {
 		t.Errorf("named rule in .env.example: %d match(es), want 1", len(ms))
 	}
 }
@@ -383,5 +383,64 @@ func TestResendAndGoogleRefreshToken(t *testing.T) {
 		if m.RuleID == "resend-api-key" {
 			t.Errorf("re_ in code attributed to resend")
 		}
+	}
+}
+
+// Suppressions a named rule's shape cannot express. Each was a false positive in
+// the scanned corpus; none risks hiding a real key.
+func TestNamedRuleSuppressions(t *testing.T) {
+	// AWS's own documentation key is published, not a credential.
+	if ms := detect(".env", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE"); len(ms) != 0 {
+		t.Errorf("AWS documentation key reported: %+v", ms)
+	}
+	// A PEM header with no key body (a literal in a test table, a doc snippet).
+	if ms := detect("notes.md", "the file begins -----BEGIN RSA PRIVATE KEY----- and so on"); len(ms) != 0 {
+		t.Errorf("PEM header with no body reported: %+v", ms)
+	}
+	// smtp://user:pass@host in a comment — pass is a placeholder.
+	if ms := detect("README.md", "connect with smtp://user:pass@mail.example.org"); len(ms) != 0 {
+		t.Errorf("placeholder smtp URL reported: %+v", ms)
+	}
+	// A Google API key inside a Firebase client config is publishable by design.
+	if ms := detect("android/app/google-services.json", `"current_key": "AIzaSyD` + strings.Repeat("Zx9Kq2Lp7W", 4)[:32] + `"`); len(ms) != 0 {
+		t.Errorf("Firebase client key reported: %+v", ms)
+	}
+	// But the same key shape in an ordinary config is still a finding.
+	if ms := detect("application.properties", "gemini.api.key=AIzaSyD" + strings.Repeat("Zx9Kq2Lp7W", 4)[:32]); len(ms) != 1 {
+		t.Errorf("Gemini key in a normal config: %d matches, want 1", len(ms))
+	}
+}
+
+// reCAPTCHA secret keys and SDK-config cloudinary secrets are found via the word
+// that names their provider in a window around the match, not on the line.
+func TestKeywordWindowedRules(t *testing.T) {
+	recaptcha := "6L" + strings.Repeat("Ab3dEf9kH1", 4)[:38]
+	cloud := strings.Repeat("Zx9Kq2Lp7W", 3)[:27]
+	cases := []struct{ name, blob, rule string }{
+		{"recaptcha secret", "google.recaptcha.secret-key=" + recaptcha, "recaptcha-secret-key"},
+		{"cloudinary config", "cloudinary.config({\n  cloud_name: 'demo',\n  api_secret: '" + cloud + "',\n})", "cloudinary-api-secret-config"},
+	}
+	for _, c := range cases {
+		ms := detect("config.js", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			t.Errorf("%s: matches = %+v, want one %s", c.name, ms, c.rule)
+		}
+	}
+}
+
+// A synthetic fixture in a test file is suppressed; the same shape in production
+// code, and a real-looking key in a test file, are both still reported — the
+// suppression must never hide a real leak.
+func TestSyntheticFixtureOnlyInTestFiles(t *testing.T) {
+	fixture := "token: ghp_0123456789abcdefghijklmnopqrstuvwxyz"
+	if ms := detect("internal/scan/detect_test.go", fixture); len(ms) != 0 {
+		t.Errorf("synthetic github fixture in a test file reported: %+v", ms)
+	}
+	if ms := detect("internal/app/config.go", fixture); len(ms) != 1 {
+		t.Errorf("synthetic-looking value in production code must still fire: %d, want 1", len(ms))
+	}
+	real := "token: ghp_" + strings.Repeat("Zx9Kq2Lp7W", 4)[:36]
+	if ms := detect("auth/AuthServiceTest.java", real); len(ms) != 1 {
+		t.Errorf("a real-looking key in a test file must still fire: %d, want 1", len(ms))
 	}
 }

@@ -212,12 +212,24 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"cloudinary", "CLOUDINARY", "Cloudinary"},
 	},
 	{
-		// The API key is 15 digits and nothing else. Matched on its own it would
-		// fire on every timestamp and identifier in a codebase, so the setting
-		// name is not an optimisation here — it is the whole signal.
-		id: "cloudinary-api-key", provider: "cloudinary", severity: "high",
-		pattern:  `(?i)cloudinary[._-]?api[._-]?key\s*[:=]\s*["']?(?P<secret>[0-9]{15})`,
-		literals: []string{"cloudinary", "CLOUDINARY", "Cloudinary"},
+		// The same secret inside an SDK config object — cloudinary.config({
+		// api_secret: '...' }) or api_secret=os.getenv("CLOUDINARY_API_SECRET",
+		// "fallback") — where the setting is just api_secret and "cloudinary"
+		// sits a few lines away. The keyword is checked in a window around the
+		// match, not on the line, which is what makes this precise.
+		id: "cloudinary-api-secret-config", provider: "cloudinary", severity: "critical",
+		pattern:  `(?i)\bapi[_-]?secret\b["']?\s*[:=]\s*[^\n]{0,80}?["'\x60](?P<secret>[0-9A-Za-z_-]{27})["'\x60]`,
+		literals: []string{"api_secret", "api-secret", "apiSecret", "API_SECRET", "ApiSecret"},
+		keywords: []string{"cloudinary"},
+	},
+	{
+		// reCAPTCHA secret keys are 6L plus 38 characters — the same shape as
+		// the public site key, so only a setting that says secret, near the word
+		// recaptcha, separates them.
+		id: "recaptcha-secret-key", provider: "google", severity: "medium",
+		pattern:  `(?i)secret[\w.-]{0,20}["']?\s*[:=]\s*["']?(?P<secret>6L[0-9A-Za-z_-]{38})\b`,
+		literals: []string{"secret", "SECRET", "Secret"},
+		keywords: []string{"recaptcha"},
 	},
 	{
 		// SMTP credentials embedded in a URL (smtp://user:pass@host). The host

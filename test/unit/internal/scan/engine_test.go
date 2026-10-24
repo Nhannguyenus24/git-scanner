@@ -112,7 +112,7 @@ func TestEngineAttributesFindingsToCommits(t *testing.T) {
 	repo := &fakeRepo{
 		blobs: []scan.Blob{
 			{OID: "b1", Path: "renamed/.env", Data: []byte("token: ghp_0123456789abcdefghijklmnopqrstuvwxyz")},
-			{OID: "b2", Path: "other.env", Data: []byte("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX")},
+			{OID: "b2", Path: "other.env", Data: []byte("AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2")},
 		},
 		head:  map[string]struct{}{},
 		intro: map[string]scan.Commit{"b1": {SHA: "c0ffee", AuthorName: "dev", AuthorEmail: "dev@x", When: when, Path: ".env"}},
@@ -139,7 +139,7 @@ func TestEngineAttributesFindingsToCommits(t *testing.T) {
 // Losing provenance must not lose the finding.
 func TestEngineEmitsWhenAttributionFails(t *testing.T) {
 	repo := &fakeRepo{
-		blobs:    []scan.Blob{{OID: "b1", Path: ".env", Data: []byte("AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX")}},
+		blobs:    []scan.Blob{{OID: "b1", Path: ".env", Data: []byte("AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2")}},
 		head:     map[string]struct{}{},
 		introErr: errors.New("git log exploded"),
 	}

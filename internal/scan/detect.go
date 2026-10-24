@@ -70,8 +70,14 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 		if _, dup := seen[rule.ID+"\x00"+secret]; dup {
 			continue
 		}
+		if _, claimed := named[secret]; claimed {
+			continue // an earlier rule (by ID order) already reported this value
+		}
 		line := lineContaining(blob, lo)
-		if !rule.keywordsPresent(line) || isPlaceholder(secret) {
+		if !rule.keywordsPresent(keywordWindow(blob, lo, hi)) || isPlaceholder(secret) {
+			continue
+		}
+		if namedSuppressed(rule.ID, path, blob, lo, hi, secret) {
 			continue
 		}
 		seen[rule.ID+"\x00"+secret] = struct{}{}
@@ -146,7 +152,7 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		if overlapsNamed(token, named) {
 			continue // a named rule already reported this value
 		}
-		if shannonEntropy(token) < d.minEntropy || isPlaceholder(token) {
+		if shannonEntropy(token) < d.minEntropy || isPlaceholder(token) || isFakeValue(token) {
 			continue
 		}
 		before := blob[max(0, loc[0]-64):loc[0]]
@@ -204,6 +210,151 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		})
 	}
 	return out
+}
+
+// keywordSpan is how far a rule's keywords may sit from its match. Wider than a
+// line on purpose: a value inside cloudinary.config({ ... }) or a recaptcha:
+// YAML block has the word that names its provider a few lines above it.
+const keywordSpan = 400
+
+func keywordWindow(blob []byte, lo, hi int) string {
+	return string(blob[max(0, lo-keywordSpan):min(len(blob), hi+keywordSpan)])
+}
+
+// namedSuppressed applies the checks a named rule's shape cannot express: a
+// value with the right shape can still be a stand-in, or a credential that is
+// public by design. Each case below was a false positive in the corpus.
+func namedSuppressed(ruleID, path string, blob []byte, lo, hi int, secret string) bool {
+	switch {
+	case isFakeValue(secret):
+		return true // the AWS documentation key and other published examples
+	case isTestPath(path) && longestSequentialRun(secret) >= 8:
+		// A synthetic fixture (ghp_0123456789…, cloudinary://123456789012345…)
+		// in a test file. Scoped to test files and to an 8-character sequential
+		// run, so a real key — which in production code is reported whatever it
+		// contains — is never hidden by this.
+		return true
+	case strings.HasPrefix(ruleID, "private-key") && !hasKeyMaterial(blob[lo:min(len(blob), lo+800)]):
+		return true // a PEM header with no key in it, e.g. a test-table literal
+	case strings.Contains(secret, "://") && placeholderURLCredential(secret):
+		return true // smtp://user:pass@host in a comment
+	case ruleID == "google-api-key" && firebaseClientContext(path, blob, lo, hi):
+		return true // a Firebase client key, shipped inside every app on purpose
+	}
+	return false
+}
+
+// documentationKeys are published example credentials (AWS's own docs use
+// AKIAIOSFODNN7EXAMPLE and its secret). Matched by prefix, so the variants
+// people make by changing the last letter are caught too.
+var documentationKeys = []string{"AKIAIOSFODNN7", "wJalrXUtnFEMI/K7MDENG"}
+
+// isFakeValue reports a value with the shape of a credential but the content of
+// a published example. It matches only exact documentation keys — a run-based
+// heuristic (e.g. "contains 012345") was tried and dropped: a random key can
+// contain a short sequential run, and suppressing it would hide a real secret,
+// which is the one failure a scanner must never make.
+func isFakeValue(v string) bool {
+	for _, k := range documentationKeys {
+		if strings.Contains(v, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// longestSequentialRun is the longest stretch of letters or digits each one step
+// from the last in the same direction, ignoring case: "0123" is 4, "dcba" is 4.
+// Used only inside test files (see namedSuppressed) to spot synthetic fixtures;
+// never applied to production code, where it would risk hiding a real key.
+func longestSequentialRun(v string) int {
+	if len(v) == 0 {
+		return 0
+	}
+	best, run, dir := 1, 1, 0
+	low := func(c byte) byte {
+		if c >= 'A' && c <= 'Z' {
+			return c + 32
+		}
+		return c
+	}
+	cls := func(c byte) int {
+		switch {
+		case c >= '0' && c <= '9':
+			return 1
+		case c >= 'a' && c <= 'z':
+			return 2
+		}
+		return 0
+	}
+	for i := 1; i < len(v); i++ {
+		a, b := low(v[i-1]), low(v[i])
+		d := int(b) - int(a)
+		if cls(a) != 0 && cls(a) == cls(b) && (d == 1 || d == -1) && (run == 1 || d == dir) {
+			run, dir = run+1, d
+		} else if cls(a) != 0 && cls(a) == cls(b) && (d == 1 || d == -1) {
+			run, dir = 2, d
+		} else {
+			run, dir = 1, 0
+		}
+		best = max(best, run)
+	}
+	return best
+}
+
+// pemBody is a run of key material: base64 lines are 64 characters, so 40 is
+// well inside a real one and longer than anything in a PEM header.
+var pemBody = regexp.MustCompile(`[A-Za-z0-9+/=]{40,}`)
+
+// hasKeyMaterial reports whether a private-key header is followed by a body.
+// Legacy encrypted PEMs put Proc-Type/DEK-Info lines first, so the body is
+// searched in the next few hundred bytes rather than right after the header.
+func hasKeyMaterial(span []byte) bool {
+	if i := bytes.Index(span, []byte("PRIVATE KEY-----")); i >= 0 {
+		span = span[i+len("PRIVATE KEY-----"):]
+	}
+	return pemBody.Match(span)
+}
+
+// placeholderPasswords are the passwords people write when they mean "a
+// password goes here".
+var placeholderPasswords = map[string]bool{
+	"pass": true, "password": true, "passwd": true, "pwd": true, "secret": true,
+	"changeme": true, "xxx": true, "xxxx": true, "***": true, "****": true, "token": true,
+}
+
+// placeholderURLCredential reports scheme://user:password@host where the
+// password is a stand-in, a template variable, or the same as the user.
+func placeholderURLCredential(u string) bool {
+	_, rest, ok := strings.Cut(u, "://")
+	if !ok {
+		return false
+	}
+	userinfo, _, ok := strings.Cut(rest, "@")
+	if !ok {
+		return false
+	}
+	user, pass, ok := strings.Cut(userinfo, ":")
+	if !ok {
+		return false
+	}
+	lp := strings.ToLower(pass)
+	return placeholderPasswords[lp] || strings.HasPrefix(pass, "${") || strings.HasPrefix(pass, "<") ||
+		strings.HasPrefix(pass, "{{") || strings.EqualFold(user, pass) || isPlaceholder(pass)
+}
+
+// firebaseClientContext reports a Google API key that is a Firebase client key:
+// inside google-services.json or GoogleService-Info.plist, or in a web
+// firebaseConfig object (which always carries authDomain). Firebase documents
+// these keys as safe to ship in client code; they are restricted by app, not
+// kept secret. A Gemini or Maps server key in an ordinary config is unaffected.
+func firebaseClientContext(path string, blob []byte, lo, hi int) bool {
+	base := strings.ToLower(path[strings.LastIndexByte(path, '/')+1:])
+	if base == "google-services.json" || base == "googleservice-info.plist" {
+		return true
+	}
+	w := blob[max(0, lo-keywordSpan):min(len(blob), hi+keywordSpan)]
+	return bytes.Contains(w, []byte("authDomain")) || bytes.Contains(w, []byte(".firebaseapp.com"))
 }
 
 // keyClass is what a setting name says about the value assigned to it.

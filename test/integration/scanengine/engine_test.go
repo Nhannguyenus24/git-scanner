@@ -44,7 +44,7 @@ func buildRepo(t *testing.T) (string, []string) {
 
 	run("init", "-q", "-b", "main")
 	write("go.mod", "module example.com/app\n")
-	write("old.env", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX\n")
+	write("old.env", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2\n")
 	run("add", "-A")
 	run("commit", "-qm", "first")
 
