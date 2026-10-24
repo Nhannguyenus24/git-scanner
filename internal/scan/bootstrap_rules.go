@@ -71,6 +71,94 @@ var bootstrapRuleDefs = []struct {
 		pattern:  `(?P<secret>SG\.[0-9A-Za-z_-]{22}\.[0-9A-Za-z_-]{43})`,
 		literals: []string{"SG."},
 	},
+
+	// AI providers. A leaked key here is billed per token, so it is spent within
+	// hours of reaching a public repository; most issue a recognisable prefix
+	// and need no context. Gemini keys are AIza… and already match
+	// google-api-key above.
+	{
+		// Every OpenAI key format — legacy sk-, sk-proj-, sk-svcacct-, sk-admin-
+		// — embeds T3BlbkFJ ("OpenAI" in base64) mid-key. It is a far more
+		// selective literal than "sk-", which half the ecosystem also uses.
+		id: "openai-api-key", provider: "openai", severity: "high",
+		pattern:  `(?P<secret>sk-(?:proj-|svcacct-|admin-|None-)?[A-Za-z0-9_-]{16,}T3BlbkFJ[A-Za-z0-9_-]{16,})`,
+		literals: []string{"T3BlbkFJ"},
+	},
+	{
+		id: "anthropic-api-key", provider: "anthropic", severity: "high",
+		pattern:  `(?P<secret>sk-ant-(?:api|admin)\d{2}-[A-Za-z0-9_-]{80,})`,
+		literals: []string{"sk-ant-"},
+	},
+	{
+		// One OpenRouter key routes to every model it fronts, OpenAI and
+		// Anthropic included, on the owner's credit.
+		id: "openrouter-api-key", provider: "openrouter", severity: "high",
+		pattern:  `(?P<secret>sk-or-v1-[0-9a-f]{64})`,
+		literals: []string{"sk-or-v1-"},
+	},
+	{
+		id: "groq-api-key", provider: "groq", severity: "high",
+		pattern:  `(?P<secret>gsk_[A-Za-z0-9]{52})`,
+		literals: []string{"gsk_"},
+	},
+	{
+		// hf_ is short enough to occur inside identifiers (pathf_, graphf_), so
+		// the word boundary is what keeps it from matching mid-word.
+		id: "huggingface-token", provider: "huggingface", severity: "high",
+		pattern:  `\b(?P<secret>hf_[A-Za-z0-9]{34})\b`,
+		literals: []string{"hf_"},
+	},
+	{
+		id: "replicate-api-token", provider: "replicate", severity: "high",
+		pattern:  `\b(?P<secret>r8_[A-Za-z0-9]{37})\b`,
+		literals: []string{"r8_"},
+	},
+	{
+		id: "perplexity-api-key", provider: "perplexity", severity: "high",
+		pattern:  `(?P<secret>pplx-[A-Za-z0-9]{48})`,
+		literals: []string{"pplx-"},
+	},
+	{
+		id: "xai-api-key", provider: "xai", severity: "high",
+		pattern:  `\b(?P<secret>xai-[A-Za-z0-9]{80})\b`,
+		literals: []string{"xai-"},
+	},
+	{
+		id: "langsmith-api-key", provider: "langsmith", severity: "medium",
+		pattern:  `(?P<secret>lsv2_(?:pt|sk)_[0-9a-f]{32}_[0-9a-f]{10})`,
+		literals: []string{"lsv2_"},
+	},
+	{
+		id: "pinecone-api-key", provider: "pinecone", severity: "high",
+		pattern:  `\b(?P<secret>pcsk_[A-Za-z0-9]{5,}_[A-Za-z0-9]{40,})`,
+		literals: []string{"pcsk_"},
+	},
+	{
+		// DeepSeek keys are sk- plus 32 hex, a shape other services share, so
+		// the setting name is the signal.
+		id: "deepseek-api-key", provider: "deepseek", severity: "high",
+		pattern:  `(?i)deepseek[\w.-]{0,20}\s*[:=]\s*["']?(?P<secret>sk-[0-9a-f]{32})\b`,
+		literals: []string{"deepseek", "DEEPSEEK", "DeepSeek", "Deepseek"},
+	},
+	{
+		// Cohere, Mistral and Azure OpenAI issue bare alphanumeric or hex keys
+		// with no prefix, so — as with the Cloudinary API key — the setting
+		// name is the whole signal.
+		id: "cohere-api-key", provider: "cohere", severity: "high",
+		pattern:  `(?i)(?:cohere|co)[_.-]?api[_.-]?key\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9]{40})\b`,
+		literals: []string{"cohere", "COHERE", "Cohere", "CO_API_KEY", "co_api_key"},
+	},
+	{
+		id: "mistral-api-key", provider: "mistral", severity: "high",
+		pattern:  `(?i)mistral[\w.-]{0,20}\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9]{32})\b`,
+		literals: []string{"mistral", "MISTRAL", "Mistral"},
+	},
+	{
+		// Classic Azure keys are 32 hex; the newer format is 84 alphanumerics.
+		id: "azure-openai-api-key", provider: "azure-openai", severity: "high",
+		pattern:  `(?i)azure[_.-]?openai[\w.-]{0,20}\s*[:=]\s*["']?(?P<secret>[0-9a-f]{32}|[A-Za-z0-9]{84})\b`,
+		literals: []string{"azure", "AZURE", "Azure"},
+	},
 	{
 		// Cloudinary packs cloud name, key and secret into one URL.
 		id: "cloudinary-url", provider: "cloudinary", severity: "high",
