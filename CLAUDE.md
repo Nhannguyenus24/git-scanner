@@ -14,6 +14,7 @@ but are load-bearing.
 | `run` | starting, restarting or observing the local stack; reading logs; submitting a test scan |
 | `debug-pipeline` | a scan is stuck, silent, or finds nothing — before theorising about causes |
 | `detection-rule` | a credential is missed, attributed to no provider, or a template is reported as a finding |
+| `detection-engine` | asking why something was or was not reported, junk findings, or changing the gates in `detect.go` |
 | `wipe-data` | clearing dev data when stale results are masking the effect of a change |
 | `merge-request` | branching, committing, or opening a PR — read it *before* committing, not after |
 

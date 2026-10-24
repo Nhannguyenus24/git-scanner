@@ -113,9 +113,10 @@ func TestGenericHighEntropySkipsWordShapedTokens(t *testing.T) {
 }
 
 // A memorable value assigned straight to a secret setting is still a hardcoded
-// signing key; the identifier filter must not hide it.
+// secret; the identifier filter must not hide it. (A JWT signing secret is
+// excluded separately, by TestGenericSkipsJWTContext.)
 func TestGenericHighEntropyKeepsWordyHardcodedSecret(t *testing.T) {
-	ms := detect("application.properties", "jwt.secret=mySuperSecretSigningKeyForTokens2024")
+	ms := detect("application.properties", "app.secret=mySuperSecretSigningKeyForTokens2024")
 	if len(ms) != 1 || ms[0].RuleID != "generic-high-entropy" {
 		t.Fatalf("matches = %d, want one generic-high-entropy", len(ms))
 	}
@@ -193,6 +194,100 @@ func TestAIProviderRulesNeedTheirShape(t *testing.T) {
 			if m.Provider != "" {
 				t.Errorf("%s: attributed to %s by %s", c.name, m.Provider, m.RuleID)
 			}
+		}
+	}
+}
+
+// A random-looking value long and varied enough to clear the entropy bar.
+const opaque = "Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa"
+
+// JWT signing secrets and sample tokens are left out of the generic pass by
+// decision: every such hit in the scanned repositories was a tutorial default
+// or a documentation sample, and they outnumbered every other unmapped finding.
+func TestGenericSkipsJWTContext(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0QaXy"
+	cases := []struct{ name, path, blob string }{
+		{"env", ".env", "JWT_SECRET=" + opaque},
+		{"properties", "application.properties", "jwt.secret=" + opaque},
+		{"spring default", "Config.java", `@Value("${jwt.secret:` + opaque + `}")`},
+		{"jwt file", "src/security/JwtUtil.java", `private static final String SECRET = "` + opaque + `";`},
+		{"yaml block", "application.yml", "jwt:\n  expiration: 3600\n  secret: " + opaque + "\n"},
+		{"issued token", "AuthTest.java", `String expiredToken = "` + jwt + `";`},
+		{"header alone", "API.md", `"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`},
+	}
+	for _, c := range cases {
+		if ms := detect(c.path, c.blob); len(ms) != 0 {
+			t.Errorf("%s: reported %d match(es), want none", c.name, len(ms))
+		}
+	}
+}
+
+// The JWT exclusions must not spread to secrets that merely sit nearby.
+func TestGenericJWTContextStaysNarrow(t *testing.T) {
+	cases := []struct{ name, path, blob string }{
+		// "jwt" inside a random string is three letters, not a context.
+		{"jwt mid-word", ".env", "APP_SECRET=" + opaque + "xJWtq"},
+		// A YAML block more than a few lines below jwt: belongs to something else.
+		{"later yaml block", "application.yml",
+			"jwt:\n  secret: ${JWT_SECRET}\n  ttl: 1\nmail:\n  host: x\n  port: 1\n  user: y\n  password: " + opaque + "\n"},
+		// A keyword far away on a huge line is not context; one close by is.
+		{"huge line, JWT far away", "dump.sql", "JWT " + strings.Repeat("lorem ipsum ", 400) + "api_secret: " + opaque},
+	}
+	for _, c := range cases {
+		ms := detect(c.path, c.blob)
+		if len(ms) != 1 || ms[0].RuleID != "generic-high-entropy" {
+			t.Errorf("%s: matches = %d, want one generic", c.name, len(ms))
+		}
+	}
+	far := "password " + strings.Repeat("lorem ipsum ", 100) + opaque
+	if ms := detect("dump.sql", far); len(ms) != 0 {
+		t.Errorf("keyword 1 KB away still counted as context: %d match(es)", len(ms))
+	}
+}
+
+func TestGenericSkipsExamples(t *testing.T) {
+	cases := []struct{ name, path, blob string }{
+		{"example line", "README.md", "**Example:** api_key = " + opaque},
+		{"schema example", "Dto.java", `@Schema(description = "token", example = "` + opaque + `")`},
+		{"e.g.", "docs.md", "set API_TOKEN, e.g. " + opaque},
+		{".env.example", "backend/.env.example", "API_SECRET=" + opaque},
+		{"config.sample.json", "config.sample.json", `{"secret": "` + opaque + `"}`},
+		{"examples dir", "examples/basic/main.go", `token := "` + opaque + `"`},
+	}
+	for _, c := range cases {
+		if ms := detect(c.path, c.blob); len(ms) != 0 {
+			t.Errorf("%s: reported %d match(es), want none", c.name, len(ms))
+		}
+	}
+	// A named rule still runs in an example file: a real key pasted into a
+	// template is still a leak, and its shape is still its own.
+	if ms := detect(".env.example", "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLX"); len(ms) != 1 {
+		t.Errorf("named rule in .env.example: %d match(es), want 1", len(ms))
+	}
+}
+
+func TestGiphyAPIKey(t *testing.T) {
+	key := strings.Repeat("aB3dE6gH9k", 4)[:32]
+	cases := []struct{ name, blob, rule string }{
+		{"env", "GIPHY_API_KEY=" + key, "giphy-api-key"},
+		{"vite fallback", "const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY || '" + key + "';", "giphy-api-key"},
+		{"config object", "giphy: { apiKey: '" + key + "' }", "giphy-api-key"},
+		{"request url", "fetch(`https://api.giphy.com/v1/gifs/search?q=cat&api_key=" + key + "`)", "giphy-api-key-url"},
+	}
+	for _, c := range cases {
+		ms := detect("Picker.jsx", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule || ms[0].Provider != "giphy" {
+			got := make([]string, len(ms))
+			for i, m := range ms {
+				got[i] = m.RuleID
+			}
+			t.Errorf("%s: rules = %v, want [%s]", c.name, got, c.rule)
+		}
+	}
+	// Without a Giphy setting, a 32-character value is not attributed to Giphy.
+	for _, m := range detect("a.js", "const id = '"+key+"'") {
+		if m.Provider == "giphy" {
+			t.Errorf("bare 32-char value attributed to giphy")
 		}
 	}
 }

@@ -2,9 +2,11 @@ package scan
 
 import (
 	"bytes"
+	"encoding/base64"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Match is one detected credential inside a blob, before any storage form is
@@ -86,7 +88,14 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 		})
 	}
 
-	return append(matches, d.genericHighEntropy(blob, seen, named)...)
+	// Example and template files hold values meant to be replaced. A named rule
+	// still runs there — a real key pasted into .env.example is still a leak and
+	// still has its own shape — but an unrecognised high-entropy string in one
+	// is almost always a stand-in.
+	if exampleFile(path) {
+		return matches
+	}
+	return append(matches, d.genericHighEntropy(path, blob, seen, named)...)
 }
 
 // highEntropyToken matches a long run of base64/hex-ish characters — the shape
@@ -120,7 +129,7 @@ func hasImageMagic(token string) bool {
 // genericHighEntropy is the catch-all detector for opaque credentials no rule
 // names (plan.md §4.1 step 5). A hit becomes a provider candidate downstream,
 // which is how the registry learns which services are still unmapped (§5.4).
-func (d *Detector) genericHighEntropy(blob []byte, seen, named map[string]struct{}) []Match {
+func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[string]struct{}) []Match {
 	var out []Match
 	for _, loc := range highEntropyToken.FindAllIndex(blob, -1) {
 		token := string(blob[loc[0]:loc[1]])
@@ -144,13 +153,19 @@ func (d *Detector) genericHighEntropy(blob []byte, seen, named map[string]struct
 			continue // a CDN path or asset hash; credentials in URLs have named rules
 		}
 		// A wordy value assigned straight to a secret setting is a hardcoded
-		// secret, weak or not — jwt.secret=mySecretKey… signs real tokens. Only
-		// elsewhere on the line is a word-shaped token taken for an identifier.
+		// secret, weak or not. Only elsewhere on the line is a word-shaped token
+		// taken for an identifier.
 		if looksLikeIdentifier(token) && !secretAssignment.Match(before) {
 			continue
 		}
-		line := lineContaining(blob, loc[0])
+		line := contextAround(blob, loc[0], loc[1])
 		if !secretKeyword.MatchString(line) {
+			continue
+		}
+		if exampleLine.MatchString(line) {
+			continue // documentation: `example = "eyJ…"`, **Example:**, e.g. …
+		}
+		if inJWT(blob, loc[0], loc[1]) || isJSONSegment(token) || jwtSecretContext(path, blob, loc[0], line) {
 			continue
 		}
 		seen["generic\x00"+token] = struct{}{}
@@ -165,6 +180,113 @@ func (d *Detector) genericHighEntropy(blob []byte, seen, named map[string]struct
 		})
 	}
 	return out
+}
+
+// JWT context is excluded from the generic pass by decision, not because it
+// cannot matter. In the repositories scanned so far every hit was a sample
+// token in API docs or a test, or an application's own signing secret — the
+// mySecretKey… and dev-secret-for-testing defaults that tutorials ship — and
+// they outnumbered every other unmapped finding. An issued JWT is short-lived
+// and names its issuer in its payload; a signing secret only matters with
+// access to the service that uses it. A provider whose API key happens to be a
+// JWT (Supabase's service_role key, for one) needs a named rule, which this
+// does not affect.
+
+// jwtShape is a compact JWS: base64url header, payload and signature. The
+// header of every JWT starts {" which encodes as eyJ.
+var jwtShape = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`)
+
+// inJWT reports whether the token at [lo, hi) is one segment of a JWT. The
+// token pattern stops at dots, so a JWT arrives as three separate tokens, and
+// the signature segment alone looks like any other random string.
+func inJWT(blob []byte, lo, hi int) bool {
+	start := bytes.LastIndexByte(blob[:lo], '\n') + 1
+	end := bytes.IndexByte(blob[hi:], '\n')
+	if end < 0 {
+		end = len(blob)
+	} else {
+		end += hi
+	}
+	for _, m := range jwtShape.FindAllIndex(blob[start:end], -1) {
+		if start+m[0] <= lo && hi <= start+m[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// isJSONSegment reports a token that is base64url-encoded JSON: a JWT header or
+// payload quoted on its own, as API docs do with "eyJhbGciOi…" and an ellipsis.
+// Encoded JSON is data, not a credential, and a JWT header is identical across
+// every token an issuer signs.
+func isJSONSegment(token string) bool {
+	if !strings.HasPrefix(token, "eyJ") {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(token, "="))
+	if err != nil {
+		// A truncated sample may not be a whole number of base64 quanta; what
+		// does decode still has to read as the start of a JSON object.
+		n := len(token) / 4 * 4
+		raw, err = base64.RawURLEncoding.DecodeString(token[:n])
+		if err != nil {
+			return false
+		}
+	}
+	return bytes.HasPrefix(raw, []byte(`{"`)) && utf8.Valid(raw)
+}
+
+var (
+	// jwt must start a word: JWT_SECRET, jwt.secret, JwtUtil. Mid-word it is
+	// just three letters a random base64 string contains often enough to matter.
+	jwtWord      = regexp.MustCompile(`(?i)(^|[^a-z0-9])jwt`)
+	jwtYAMLBlock = regexp.MustCompile(`(?im)^\s*jwt\s*:\s*$`)
+)
+
+// jwtSecretContext reports a value that configures JWT signing: named on its
+// own line (JWT_SECRET=, jwt.secret:, @Value("${jwt.secret:…}")), in a file
+// that is about JWTs (JwtUtil.java), or nested under a `jwt:` YAML block.
+func jwtSecretContext(path string, blob []byte, off int, line string) bool {
+	if jwtWord.MatchString(line) {
+		return true
+	}
+	if jwtWord.MatchString(path[strings.LastIndexByte(path, '/')+1:]) {
+		return true
+	}
+	// A YAML key sits a few lines below its parent; four lines up covers the
+	// usual jwt: { secret, expiration, issuer } block without reaching into an
+	// unrelated one.
+	above := blob[:bytes.LastIndexByte(blob[:off], '\n')+1]
+	for i := 0; i < 4 && len(above) > 0; i++ {
+		prev := bytes.LastIndexByte(above[:len(above)-1], '\n') + 1
+		if jwtYAMLBlock.Match(above[prev:]) {
+			return true
+		}
+		above = above[:prev]
+	}
+	return false
+}
+
+// exampleLine matches a line that presents its value as an illustration.
+var exampleLine = regexp.MustCompile(`(?i)(\bexamples?\b|\be\.g\.|\bfor instance\b)`)
+
+// exampleFile reports a file that exists to be copied and filled in:
+// .env.example, config.sample.json, settings.template.yml, or anything under an
+// examples/ or samples/ directory.
+func exampleFile(path string) bool {
+	p := strings.ToLower(path)
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "example" || seg == "examples" || seg == "sample" || seg == "samples" {
+			return true
+		}
+	}
+	base := p[strings.LastIndexByte(p, '/')+1:]
+	for _, marker := range []string{".example", ".sample", ".template", ".tmpl", ".dist"} {
+		if strings.HasSuffix(base, marker) || strings.Contains(base, marker+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeIdentifier reports whether token is built from words rather than
@@ -241,6 +363,24 @@ func lineContaining(blob []byte, off int) string {
 		return string(blob[start:])
 	}
 	return string(blob[start : off+end])
+}
+
+// contextWindow bounds how far either side of a generic token its context
+// reaches. A line is the right unit in source code, but SQL dumps and minified
+// bundles put megabytes on one line, and a keyword anywhere in that much text
+// says nothing about the token: a 4 MB INSERT once had its every token judged
+// by the word "JWT" in an unrelated article.
+const contextWindow = 160
+
+// contextAround returns the token's line, clipped to contextWindow bytes on
+// each side of [lo, hi).
+func contextAround(blob []byte, lo, hi int) string {
+	start := max(bytes.LastIndexByte(blob[:lo], '\n')+1, lo-contextWindow)
+	end := len(blob)
+	if i := bytes.IndexByte(blob[hi:], '\n'); i >= 0 {
+		end = hi + i
+	}
+	return string(blob[start:min(end, hi+contextWindow)])
 }
 
 // lineNumber returns the 1-based line of byte offset off.
