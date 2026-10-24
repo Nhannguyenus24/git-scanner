@@ -11,12 +11,14 @@ import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
 import { useSettings } from './store/settings'
+import { useT } from './i18n'
 import { useToast } from './store/toast'
 import type { TargetKind } from './types'
 
 export default function App() {
   const route  = useRoute()
   const { api } = useSettings()
+  const { t } = useT()
   const notify = useToast()
   const [scanOpen, setScanOpen] = useState(false)
   const ov = useResource(() => api.overview(), [api], 10000)
@@ -25,7 +27,7 @@ export default function App() {
     const job = kind === 'repo' ? await api.scanRepo(value)
       : kind === 'user' ? await api.scanUser(value, forks)
       : await api.scanOrg(value, forks)
-    notify(`Scan queued — ${kind}: ${value}`)
+    notify(t('toast.scanQueued', { kind, value }))
     navigate(href('scans', job.id))
   }
 

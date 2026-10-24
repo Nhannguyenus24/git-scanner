@@ -1,9 +1,9 @@
 import Box from '@mui/material/Box'
-import { SEV_COLOR } from '../format'
+import { useTheme } from '@mui/material/styles'
 import type { Severity } from '../types'
 
 export default function SeverityChip({ severity }: { severity: Severity }) {
-  const c = SEV_COLOR[severity]
+  const c = useTheme().chart.severity[severity]
   return (
     <Box component="span" sx={{
       display: 'inline-flex', alignItems: 'center', gap: .75, px: 1, py: .25, borderRadius: 1,

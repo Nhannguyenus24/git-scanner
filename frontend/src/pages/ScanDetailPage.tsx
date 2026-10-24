@@ -20,11 +20,13 @@ import { useResource } from '../hooks/useResource'
 import { href } from '../hooks/useRoute'
 import { useTriage } from '../hooks/useTriage'
 import { useSettings } from '../store/settings'
+import { useT } from '../i18n'
 import { useToast } from '../store/toast'
 import { TERMINAL } from '../types'
 
 export default function ScanDetailPage({ id }: { id: string }) {
   const { api } = useSettings()
+  const { t } = useT()
   const notify  = useToast()
   // The list endpoint carries the target and timings; polled until the job ends.
   const scans    = useResource(() => api.listScans(500), [api], 3000)
@@ -35,7 +37,7 @@ export default function ScanDetailPage({ id }: { id: string }) {
 
   if (scans.loading) return <Loading />
   if (scans.error && !scans.data) return <LoadError error={scans.error} retry={scans.reload} />
-  if (!scan) return <Empty title="Scan not found" body="It may have been removed by a data wipe." action={<Button href={href('scans')}>Back to scans</Button>} />
+  if (!scan) return <Empty title={t('scan.notFound')} body={t('scan.notFoundBody')} action={<Button href={href('scans')}>{t('scan.back')}</Button>} />
 
   const act = (name: 'pause' | 'resume' | 'cancel') =>
     api[name](id).then(() => { notify(`Scan ${name}d`); scans.reload() })
@@ -44,23 +46,23 @@ export default function ScanDetailPage({ id }: { id: string }) {
   return (
     <>
       <Breadcrumbs sx={{ mb: 1, fontSize: 13 }}>
-        <Link href={href('scans')} underline="hover" color="inherit">Scans</Link>
+        <Link href={href('scans')} underline="hover" color="inherit">{t('scans.title')}</Link>
         <Typography color="text.primary" sx={{ fontSize: 13, fontFamily: 'monospace' }}>{id.slice(0, 8)}</Typography>
       </Breadcrumbs>
       <PageHeader
         title={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>{scan.target.value} <StateBadge state={scan.state} size="medium" /></Box>}
-        subtitle={`${scan.target.kind} scan · submitted ${timeAgo(scan.created_at)} · ${duration(scan.started_at, scan.finished_at)}`}
+        subtitle={t('scan.submitted', { kind: scan.target.kind, ago: timeAgo(scan.created_at), dur: duration(scan.started_at, scan.finished_at) })}
         actions={<>
-          {scan.state === 'running' && <Button startIcon={<PauseIcon />} onClick={() => act('pause')}>Pause</Button>}
-          {scan.state === 'paused'  && <Button startIcon={<PlayArrowIcon />} onClick={() => act('resume')}>Resume</Button>}
-          {!TERMINAL.has(scan.state) && <Button color="error" startIcon={<StopIcon />} onClick={() => act('cancel')}>Cancel</Button>}
+          {scan.state === 'running' && <Button startIcon={<PauseIcon />} onClick={() => act('pause')}>{t('scan.pause')}</Button>}
+          {scan.state === 'paused'  && <Button startIcon={<PlayArrowIcon />} onClick={() => act('resume')}>{t('scan.resume')}</Button>}
+          {!TERMINAL.has(scan.state) && <Button color="error" startIcon={<StopIcon />} onClick={() => act('cancel')}>{t('scan.cancel')}</Button>}
         </>} />
 
       {scan.error && <Alert severity="error" sx={{ mb: 2 }}>{scan.error}</Alert>}
 
       <Card sx={{ p: 2, mb: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, mb: 1 }}>
-          <span>{scan.repos_scanned} of {scan.repos_total || '?'} repositories</span>
+          <span>{t('scan.reposProgress', { a: scan.repos_scanned, b: scan.repos_total || '?' })}</span>
           <span>{Math.round(scan.progress * 100)}%</span>
         </Box>
         <LinearProgress variant={scan.state === 'queued' ? 'indeterminate' : 'determinate'} value={scan.progress * 100}
@@ -68,20 +70,20 @@ export default function ScanDetailPage({ id }: { id: string }) {
       </Card>
 
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={6} md={3}><StatCard label="Repositories" value={scan.repos_total} /></Grid>
-        <Grid item xs={6} md={3}><StatCard label="Blobs scanned" value={num(scan.blobs_scanned)} /></Grid>
-        <Grid item xs={6} md={3}><StatCard label="New findings" value={scan.findings_count} hint="first seen by this job" accent="#f5a623" /></Grid>
-        <Grid item xs={6} md={3}><StatCard label="Open in this job" value={findings.data?.findings.filter(f => f.status === 'open').length ?? '…'} accent="#f07070" /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('scan.reposCount')} value={scan.repos_total} /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('scan.blobsScanned')} value={num(scan.blobs_scanned)} /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('scan.newFindings')} value={scan.findings_count} hint={t('scan.newFindingsHint')} accent="#a9781a" /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('scan.openInJob')} value={findings.data?.findings.filter(f => f.status === 'open').length ?? '…'} accent="#9c3b2e" /></Grid>
       </Grid>
 
       <Card>
         <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography sx={{ fontWeight: 700 }}>Findings recorded by this scan</Typography>
-          <Link href={href('findings', undefined, { scan_id: id })} underline="hover" sx={{ fontSize: 13 }}>Open in Findings →</Link>
+          <Typography sx={{ fontWeight: 700 }}>{t('scan.findingsTitle')}</Typography>
+          <Link href={href('findings', undefined, { scan_id: id })} underline="hover" sx={{ fontSize: 13 }}>{t('scan.openInFindings')}</Link>
         </Box>
         {findings.loading ? <Loading /> : (
           <FindingsTable findings={findings.data?.findings ?? []} onStatus={triage}
-            emptyMessage={active ? 'Nothing yet — results appear as repositories finish.' : 'This scan recorded no new findings. A credential already found by an earlier scan stays attributed to that one.'} />
+            emptyMessage={active ? t('scan.emptyActive') : t('scan.emptyDone')} />
         )}
       </Card>
     </>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Box from '@mui/material/Box'
-import { ink } from '../../theme'
+import { useTheme } from '@mui/material/styles'
 import type { Count } from '../../types'
 
 export interface Slice { key: string; label: string; value: number; color: string }
@@ -16,6 +16,8 @@ export default function Ring({
   centerLabel?: string
   size?: number
 }) {
+  const theme = useTheme()
+  const ch = theme.chart
   const [hi, setHi] = useState<string | null>(null)
   const sum = total ?? slices.reduce((a, s) => a + s.value, 0)
   if (sum === 0) return <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary', fontSize: 13 }}>Nothing yet.</Box>
@@ -34,17 +36,17 @@ export default function Ring({
     <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}
         onMouseLeave={() => setHi(null)}>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={ink.line} strokeWidth={sw} />
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={ch.line} strokeWidth={sw} />
         {arcs.map(s => (
           <path key={s.key} d={s.d} fill="none" stroke={s.color}
             strokeWidth={hi === s.key ? sw + 3 : sw} strokeLinecap="butt"
             opacity={hi && hi !== s.key ? 0.4 : 1}
             onMouseEnter={() => setHi(s.key)} style={{ cursor: 'default', transition: 'opacity .12s' }} />
         ))}
-        <text x={cx} y={cy - 2} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="22" fontWeight="700" fill={ink.text}>
+        <text x={cx} y={cy - 2} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="22" fontWeight="700" fill={ch.text}>
           {hi ? slices.find(s => s.key === hi)!.value : sum}
         </text>
-        <text x={cx} y={cy + 14} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="9" fill={ink.textFaint} letterSpacing="1">
+        <text x={cx} y={cy + 14} textAnchor="middle" fontFamily="IBM Plex Mono, monospace" fontSize="9" fill={ch.textFaint} letterSpacing="1">
           {(hi ? slices.find(s => s.key === hi)!.label : centerLabel ?? 'total').toUpperCase()}
         </text>
       </svg>
@@ -54,7 +56,7 @@ export default function Ring({
           <Box component="li" key={s.key} onMouseEnter={() => setHi(s.key)} onMouseLeave={() => setHi(null)}
             sx={{ display: 'flex', alignItems: 'center', gap: 1, fontSize: 12.5, cursor: 'default',
               opacity: hi && hi !== s.key ? 0.5 : 1 }}>
-            <Box sx={{ width: 10, height: 10, bgcolor: s.color, border: `1px solid ${ink.lineStrong}`, flexShrink: 0 }} />
+            <Box sx={{ width: 10, height: 10, bgcolor: s.color, border: `1px solid ${ch.lineStrong}`, flexShrink: 0 }} />
             <Box sx={{ flex: 1 }}>{s.label}</Box>
             <Box sx={{ fontFamily: '"IBM Plex Mono", monospace', color: 'text.secondary' }}>{s.value}</Box>
           </Box>

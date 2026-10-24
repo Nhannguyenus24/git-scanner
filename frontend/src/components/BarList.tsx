@@ -1,6 +1,6 @@
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
-import { ink } from '../theme'
+import { useTheme } from '@mui/material/styles'
 import type { Count } from '../types'
 
 interface Props {
@@ -15,6 +15,7 @@ interface Props {
 // direct-labels every row, so identity never rests on colour. Bars are hatch-free
 // solid fills with a hairline frame, like a filled gauge on a printout.
 export default function BarList({ items, color, label, onClick, empty = 'Nothing yet' }: Props) {
+  const ch = useTheme().chart
   if (!items.length) return <Typography variant="body2" color="text.secondary">{empty}</Typography>
   const max = Math.max(...items.map(i => i.count))
   return (
@@ -26,7 +27,7 @@ export default function BarList({ items, color, label, onClick, empty = 'Nothing
             <span>{label ? label(i.key) : i.key}</span>
             <Box component="span" sx={{ fontFamily: '"IBM Plex Mono", monospace', color: 'text.secondary' }}>{i.count}</Box>
           </Box>
-          <Box sx={{ height: 9, bgcolor: ink.cardInset, border: `1px solid ${ink.line}`, borderRadius: .5, overflow: 'hidden' }}>
+          <Box sx={{ height: 9, bgcolor: ch.inset, border: `1px solid ${ch.line}`, borderRadius: .5, overflow: 'hidden' }}>
             <Box className="bar" sx={{
               height: '100%', width: `${(i.count / max) * 100}%`, minWidth: 2,
               bgcolor: color ? color(i.key) : 'primary.main', transition: 'width .3s, filter .12s',

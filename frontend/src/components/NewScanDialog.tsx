@@ -10,6 +10,7 @@ import Switch from '@mui/material/Switch'
 import Tab from '@mui/material/Tab'
 import Tabs from '@mui/material/Tabs'
 import TextField from '@mui/material/TextField'
+import { useT } from '../i18n'
 import type { TargetKind } from '../types'
 
 interface Props {
@@ -20,17 +21,12 @@ interface Props {
 
 const PLACEHOLDER: Record<TargetKind, string> = {
   repo: 'https://github.com/owner/repo',
-  user: 'GitHub username',
-  org:  'GitHub org login',
-}
-
-const HELPER: Record<TargetKind, string> = {
-  repo: 'Must be an HTTPS clone URL (no SSH, no credentials in the URL)',
-  user: 'Alphanumeric + hyphens, 1–39 characters, no leading/trailing hyphens',
-  org:  'Alphanumeric + hyphens, 1–39 characters',
+  user: 'octocat',
+  org:  'github',
 }
 
 export default function NewScanDialog({ open, onClose, onSubmit }: Props) {
+  const { t } = useT()
   const [kind,    setKind]    = useState<TargetKind>('repo')
   const [value,   setValue]   = useState('')
   const [forks,   setForks]   = useState(false)
@@ -41,53 +37,47 @@ export default function NewScanDialog({ open, onClose, onSubmit }: Props) {
   const handleClose = () => { reset(); onClose() }
 
   const handleSubmit = async () => {
-    if (!value.trim()) { setError('This field is required'); return }
+    if (!value.trim()) { setError(t('dialog.required')); return }
     setLoading(true); setError('')
     try   { await onSubmit(kind, value.trim(), forks); reset(); onClose() }
-    catch (e) { setError(e instanceof Error ? e.message : 'Unknown error'); setLoading(false) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Error'); setLoading(false) }
   }
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ fontWeight: 700 }}>New Scan</DialogTitle>
+      <DialogTitle sx={{ fontFamily: '"IBM Plex Mono", monospace', fontWeight: 700 }}>{t('dialog.title')}</DialogTitle>
 
       <DialogContent sx={{ pt: '12px !important', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <Tabs
-          value={kind}
-          onChange={(_, v: TargetKind) => { setKind(v); setValue(''); setError('') }}
-          textColor="primary"
-          indicatorColor="primary"
-        >
-          <Tab label="Repository" value="repo" />
-          <Tab label="User"       value="user" />
-          <Tab label="Org"        value="org"  />
+        <Tabs value={kind} onChange={(_, v: TargetKind) => { setKind(v); setValue(''); setError('') }}
+          textColor="primary" indicatorColor="primary">
+          <Tab label={t('dialog.repo')} value="repo" />
+          <Tab label={t('dialog.user')} value="user" />
+          <Tab label={t('dialog.org')}  value="org" />
         </Tabs>
 
         <TextField
-          fullWidth
-          autoFocus
-          label={kind === 'repo' ? 'Clone URL (HTTPS)' : 'GitHub login'}
+          fullWidth autoFocus
+          label={kind === 'repo' ? t('dialog.cloneUrl') : t('dialog.login')}
           placeholder={PLACEHOLDER[kind]}
           value={value}
           onChange={e => { setValue(e.target.value); setError('') }}
           error={!!error}
-          helperText={error || HELPER[kind]}
+          helperText={error || t(`dialog.help.${kind}`)}
           onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
         />
 
         {kind !== 'repo' && (
           <FormControlLabel
             control={<Switch checked={forks} onChange={e => setForks(e.target.checked)} color="primary" />}
-            label="Include forked repositories"
-          />
+            label={t('dialog.includeForks')} />
         )}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
-        <Button onClick={handleClose} color="inherit">Cancel</Button>
+        <Button onClick={handleClose} color="inherit">{t('common.cancel')}</Button>
         <Button onClick={handleSubmit} variant="contained" disabled={loading}>
           {loading && <CircularProgress size={14} sx={{ mr: 1 }} />}
-          Start Scan
+          {t('dialog.start')}
         </Button>
       </DialogActions>
     </Dialog>

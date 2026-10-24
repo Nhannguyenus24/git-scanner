@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import Box from '@mui/material/Box'
-import { ink } from '../../theme'
+import { useTheme } from '@mui/material/styles'
 import { Hatch } from './Figure'
 
 export interface Column { label: string; value: number; sub?: string }
@@ -10,13 +10,16 @@ export interface Column { label: string; value: number; sub?: string }
 // Hairline baseline and gridlines, monospace ticks, a hatch-filled bar with a
 // rounded data-end, and a hover readout.
 export default function Columns({
-  data, color = ink.primary, height = 200, format = (n: number) => String(n),
+  data, color, height = 200, format = (n: number) => String(n),
 }: {
   data: Column[]
   color?: string
   height?: number
   format?: (n: number) => string
 }) {
+  const theme = useTheme()
+  const ch = theme.chart
+  const stroke = color ?? theme.palette.primary.main
   const [hi, setHi] = useState<number | null>(null)
   if (!data.length) return <Empty />
 
@@ -36,13 +39,13 @@ export default function Columns({
     <Box sx={{ position: 'relative', width: '100%', overflowX: 'auto' }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ display: 'block', fontFamily: 'IBM Plex Mono, monospace' }}
         preserveAspectRatio="xMinYMid meet" onMouseLeave={() => setHi(null)}>
-        <defs><Hatch id="col-hatch" color={color} /></defs>
+        <defs><Hatch id="col-hatch" color={stroke} /></defs>
 
         {ticks.map((t, i) => (
           <g key={i}>
-            <line x1={padL} x2={W} y1={y(t)} y2={y(t)} stroke={ink.line} strokeWidth={1}
+            <line x1={padL} x2={W} y1={y(t)} y2={y(t)} stroke={ch.line} strokeWidth={1}
               strokeDasharray={i === 0 ? '0' : '2 3'} />
-            <text x={padL - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill={ink.textFaint}>{format(t)}</text>
+            <text x={padL - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill={ch.textFaint}>{format(t)}</text>
           </g>
         ))}
 
@@ -55,10 +58,10 @@ export default function Columns({
               <rect x={padL + i * bw} y={padT} width={bw} height={plotH} fill="transparent" />
               {d.value > 0 && (
                 <rect x={cx - barW / 2} y={top} width={barW} height={Math.max(plotH - (top - padT), 2)}
-                  rx={2} fill="url(#col-hatch)" stroke={color} strokeWidth={on ? 2 : 1.4} />
+                  rx={2} fill="url(#col-hatch)" stroke={stroke} strokeWidth={on ? 2 : 1.4} />
               )}
               {i % step === 0 && (
-                <text x={cx} y={H - padB + 14} textAnchor="middle" fontSize="9" fill={ink.textSoft}>{d.label}</text>
+                <text x={cx} y={H - padB + 14} textAnchor="middle" fontSize="9" fill={ch.textSoft}>{d.label}</text>
               )}
             </g>
           )
@@ -68,7 +71,7 @@ export default function Columns({
       {hi !== null && (
         <Box sx={{
           position: 'absolute', top: 0, left: `min(${(padL + hi * bw + bw / 2) / W * 100}%, calc(100% - 140px))`,
-          bgcolor: 'text.primary', color: ink.paper, px: 1, py: .5, borderRadius: .5,
+          bgcolor: 'text.primary', color: ch.paper, px: 1, py: .5, borderRadius: .5,
           fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, pointerEvents: 'none', whiteSpace: 'nowrap',
         }}>
           {data[hi].sub ?? data[hi].label}: <b>{format(data[hi].value)}</b>

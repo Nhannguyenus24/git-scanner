@@ -12,9 +12,11 @@ import { Empty, LoadError, Loading } from '../components/States'
 import { timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
 import { useSettings } from '../store/settings'
+import { useT } from '../i18n'
 
 export default function CandidatesPage() {
   const { api } = useSettings()
+  const { t } = useT()
   const res = useResource(() => api.candidates(), [api], 15000)
 
   if (res.loading) return <Loading />
@@ -23,30 +25,29 @@ export default function CandidatesPage() {
 
   return (
     <>
-      <PageHeader title="Unmapped credential shapes"
-        subtitle="High-entropy secrets no named rule claims, clustered by shape. A frequent shape is a provider worth writing a detection rule for." />
+      <PageHeader title={t('cand.title')} subtitle={t('cand.subtitle')} />
       <Card>
-        {!cs.length ? <Empty title="Backlog is empty" body="Every credential found so far was attributed to a known provider." /> : (
+        {!cs.length ? <Empty title={t('cand.empty')} body={t('cand.emptyBody')} /> : (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Guessed name</TableCell>
-                  <TableCell>Sample</TableCell>
-                  <TableCell>Shape</TableCell>
-                  <TableCell>Context</TableCell>
-                  <TableCell align="right">Seen</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Last seen</TableCell>
+                  <TableCell>{t('cand.col.name')}</TableCell>
+                  <TableCell>{t('cand.col.sample')}</TableCell>
+                  <TableCell>{t('cand.col.shape')}</TableCell>
+                  <TableCell>{t('cand.col.context')}</TableCell>
+                  <TableCell align="right">{t('cand.col.seen')}</TableCell>
+                  <TableCell>{t('cand.col.status')}</TableCell>
+                  <TableCell>{t('cand.col.lastSeen')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {cs.map(c => (
                   <TableRow key={c.id} hover>
-                    <TableCell sx={{ fontWeight: 600 }}>{c.guessed_name || <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>unknown</Box>}</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>{c.guessed_name || <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>{t('cand.unknown')}</Box>}</TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: 12, color: 'primary.main' }}>{c.sample_masked}</TableCell>
                     <TableCell sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-                      {c.charset_class} · {c.length_min === c.length_max ? c.length_min : `${c.length_min}–${c.length_max}`} chars
+                      {c.charset_class} · {t('cand.chars', { n: c.length_min === c.length_max ? c.length_min : `${c.length_min}–${c.length_max}` })}
                     </TableCell>
                     <TableCell sx={{ maxWidth: 320 }}>
                       <Box sx={{ display: 'flex', gap: .5, flexWrap: 'wrap' }}>

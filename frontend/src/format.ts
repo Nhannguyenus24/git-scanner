@@ -1,28 +1,12 @@
-import type { FindingStatus, Severity } from './types'
-
-// Severity is a status ramp — a single meaning per step — chosen to read on aged
-// paper: deep oxblood for critical down to a quiet grey for info. Distinct from
-// the categorical palette below, which carries identity, not rank.
-export const SEV_COLOR: Record<Severity, string> = {
-  critical: '#9c3b2e',
-  high:     '#c2622a',
-  medium:   '#a9781a',
-  low:      '#2f4ba8',
-  info:     '#8a8372',
-}
-
-// Validated categorical palette (light/paper surface): teal, brick, indigo,
-// ochre, plum, olive. Passes the dataviz checks — lightness band, chroma floor,
-// CVD and normal-vision separation, contrast. Assigned in this fixed order and
-// never cycled; a 7th series folds into "other" (the last, grey).
-export const CATEGORICAL = ['#0a8a70', '#c0392b', '#2f4ba8', '#a9781a', '#8e3b6b', '#5f7a1f']
-export const OTHER_COLOR = '#8a8372'
+import type { FindingStatus } from './types'
 
 // paletteFor assigns each key a stable colour by its position in the given order,
-// so a filter that drops a series never repaints the survivors.
-export function paletteFor(keys: string[]): Record<string, string> {
+// so a filter that drops a series never repaints the survivors. The palette and
+// the "other" colour come from the active theme (theme.chart), so they switch
+// with light/dark.
+export function paletteFor(keys: string[], categorical: string[], other: string): Record<string, string> {
   const out: Record<string, string> = {}
-  keys.forEach((k, i) => { out[k] = i < CATEGORICAL.length ? CATEGORICAL[i] : OTHER_COLOR })
+  keys.forEach((k, i) => { out[k] = i < categorical.length ? categorical[i] : other })
   return out
 }
 

@@ -18,6 +18,7 @@ import { Empty, LoadError, Loading } from '../components/States'
 import { duration, num, timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
 import { href, navigate } from '../hooks/useRoute'
+import { useT } from '../i18n'
 import { useSettings } from '../store/settings'
 import { TERMINAL } from '../types'
 
@@ -25,6 +26,7 @@ type View = 'all' | 'active' | 'done'
 
 export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
   const { api } = useSettings()
+  const { t } = useT()
   const res = useResource(() => api.listScans(200), [api], 3000)
   const [view, setView] = useState<View>('all')
 
@@ -36,32 +38,32 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
 
   return (
     <>
-      <PageHeader title="Scans" subtitle="Every job the API has accepted, newest first"
+      <PageHeader title={t('scans.title')} subtitle={t('scans.subtitle')}
         actions={<>
           <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v: View | null) => v && setView(v)}>
-            <ToggleButton value="all">All</ToggleButton>
-            <ToggleButton value="active">Active</ToggleButton>
-            <ToggleButton value="done">Finished</ToggleButton>
+            <ToggleButton value="all">{t('common.all')}</ToggleButton>
+            <ToggleButton value="active">{t('common.active')}</ToggleButton>
+            <ToggleButton value="done">{t('common.finished')}</ToggleButton>
           </ToggleButtonGroup>
-          <Button variant="contained" startIcon={<AddIcon />} onClick={onNewScan}>New scan</Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={onNewScan}>{t('nav.newScan')}</Button>
         </>} />
 
       <Card>
         {!scans.length ? (
-          <Empty title={view === 'active' ? 'Nothing running' : 'No scans yet'}
-            action={<Button onClick={onNewScan} sx={{ mt: 1 }}>Start a scan</Button>} />
+          <Empty title={view === 'active' ? t('scans.emptyActive') : t('scans.empty')}
+            action={<Button onClick={onNewScan} sx={{ mt: 1 }}>{t('common.startScan')}</Button>} />
         ) : (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>State</TableCell>
-                  <TableCell>Target</TableCell>
-                  <TableCell sx={{ width: 220 }}>Progress</TableCell>
-                  <TableCell align="right">Blobs</TableCell>
-                  <TableCell align="right">New findings</TableCell>
-                  <TableCell>Started</TableCell>
-                  <TableCell>Duration</TableCell>
+                  <TableCell>{t('scans.col.state')}</TableCell>
+                  <TableCell>{t('scans.col.target')}</TableCell>
+                  <TableCell sx={{ width: 220 }}>{t('scans.col.progress')}</TableCell>
+                  <TableCell align="right">{t('scans.col.blobs')}</TableCell>
+                  <TableCell align="right">{t('scans.col.newFindings')}</TableCell>
+                  <TableCell>{t('scans.col.started')}</TableCell>
+                  <TableCell>{t('scans.col.duration')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -75,7 +77,7 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
                     <TableCell>
                       <LinearProgress variant="determinate" value={s.progress * 100} sx={{ height: 6, borderRadius: 3 }}
                         color={s.state === 'failed' ? 'error' : TERMINAL.has(s.state) ? 'success' : 'primary'} />
-                      <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .5 }}>{s.repos_scanned}/{s.repos_total} repositories</Box>
+                      <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .5 }}>{t('scans.reposOf', { a: s.repos_scanned, b: s.repos_total })}</Box>
                     </TableCell>
                     <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{num(s.blobs_scanned)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.findings_count}</TableCell>
