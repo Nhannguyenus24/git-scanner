@@ -51,6 +51,14 @@ jobs:
 
   proto:
     runs-on: ubuntu-latest
+    # buf-action reports a lint, format or breaking-change finding by commenting
+    # on the pull request. Without this it still fails the job, but the comment
+    # call errors with "Resource not accessible by integration" and the finding
+    # is only visible by opening the logs. Scoped to this job so the rest of the
+    # workflow keeps the read-only default.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
