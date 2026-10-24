@@ -4,9 +4,9 @@ syntax = "proto3";
 // (plan.md §10).
 package gitscanner.v1;
 
-option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
-
 import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
 
 enum Severity {
   SEVERITY_UNSPECIFIED = 0;

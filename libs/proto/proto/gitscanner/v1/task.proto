@@ -3,9 +3,9 @@ syntax = "proto3";
 // Task messages carried on RabbitMQ (plan.md §1).
 package gitscanner.v1;
 
-option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
-
 import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1;gitscannerv1";
 
 // DiscoveryTask expands a target into repositories.
 message DiscoveryTask {
