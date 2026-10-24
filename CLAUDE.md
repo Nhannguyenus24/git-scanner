@@ -13,6 +13,15 @@ but are load-bearing.
 | `run` | starting, restarting or observing the local stack; reading logs; submitting a test scan |
 | `debug-pipeline` | a scan is stuck, silent, or finds nothing — before theorising about causes |
 | `detection-rule` | a credential is missed, attributed to no provider, or a template is reported as a finding |
+| `merge-request` | branching, committing, or opening a PR — read it *before* committing, not after |
+
+## Trunk-based
+
+`main` is the only long-lived branch and must stay releasable and green. Work
+goes on a short-lived `type/short-description` branch and reaches `main` through
+a pull request titled `type(scope): description`. Nothing is committed straight
+to `main`, and pushing or opening a PR needs the user's agreement first — the
+`merge-request` skill has the details.
 
 ## Verifying a change
 
