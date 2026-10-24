@@ -6,8 +6,8 @@ description: Diagnose a GitScanner scan that appears stuck, silent, or is produc
 # Diagnosing a stuck pipeline
 
 The hard part of this system is that a stall rarely announces itself. Work is
-spread across six services, RabbitMQ, Kafka and `git` subprocesses, and several
-of its real failure modes present identically: nothing moves and nothing logs.
+spread across six services, RabbitMQ and `git` subprocesses, and several of its
+real failure modes present identically: nothing moves and nothing logs.
 
 So resist the pull to theorise. Every cause below was found by walking the ladder
 in order, and the ones that look most obvious from the outside were wrong more
@@ -158,19 +158,9 @@ context and cancelling before `Wait`. If you add another early return in that
 function, preserve that ordering.
 
 **A blocked network call inside the blob walk.** The deadlock above is usually
-*triggered* by something else failing in the `Emit` callback — a Kafka publish,
-a RabbitMQ confirm, a database write. When a scan hangs, suspect the callback
-before the git plumbing.
-
-**Kafka topics missing.** `rabbit.Connect` declares its exchanges and queues at
-connect time; Kafka had no equivalent, so publishing failed with
-`UNKNOWN_TOPIC_OR_PARTITION`. `kafka.NewProducer` now declares the topics. If
-publishes fail again, check the topics exist:
-
-```bash
-docker exec $(docker ps --format '{{.Names}}' | grep -i kafka | head -1) \
-  /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
-```
+*triggered* by something else failing in the `Emit` callback — a RabbitMQ
+confirm, a database write. When a scan hangs, suspect the callback before the
+git plumbing.
 
 **A clone that is huge rather than hung.** `git clone --mirror` fetches `refs/*`,
 which on GitHub includes `refs/pull/*` — one ref per pull request ever opened.

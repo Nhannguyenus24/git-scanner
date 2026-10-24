@@ -30,6 +30,13 @@ const (
 	QueueEnrich    = "enrich.tasks"
 	QueueNotify    = "notify.tasks"
 
+	// QueueFindings carries detected findings to analytics. It is named for an
+	// event rather than a task because that is what it is: the scan worker is
+	// reporting something that happened, not asking for work. It is a queue all
+	// the same, so a consumer that cannot read a message dead-letters it instead
+	// of stalling the stream.
+	QueueFindings = "findings.events"
+
 	exchangeMain  = "gitscanner"
 	exchangeRetry = "gitscanner.retry"
 	exchangeDead  = "gitscanner.dead"
@@ -39,9 +46,9 @@ const (
 	retryDelay = 30 * time.Second
 )
 
-// Queues is every task queue the topology declares. Adding a queue here is the
-// only step needed for it to get retry and dead-letter queues too.
-var Queues = []string{QueueDiscovery, QueueScan, QueueEnrich, QueueNotify}
+// Queues is every queue the topology declares. Adding one here is the only step
+// needed for it to get retry and dead-letter queues too.
+var Queues = []string{QueueDiscovery, QueueScan, QueueEnrich, QueueNotify, QueueFindings}
 
 // Conn is a managed AMQP connection.
 type Conn struct {

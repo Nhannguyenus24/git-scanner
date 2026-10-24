@@ -39,8 +39,6 @@ linters:
               desc: "use libs/rabbit via app.Deps"
             - pkg: github.com/redis/go-redis
               desc: "use libs/redis via app.Deps"
-            - pkg: github.com/twmb/franz-go
-              desc: "use libs/kafka via app.Deps"
 
         # libs/entity is standard library only, so it never becomes the module
         # that drags a driver into every build.

@@ -55,29 +55,6 @@ spec:
         name: rabbitmq-auth
 {{- end }}
 
-{{- if eq $a.kind "keda-kafka" }}
----
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: {{ $name }}
-  labels:
-    {{- include "gitscanner.labels" $ | nindent 4 }}
-spec:
-  scaleTargetRef:
-    name: {{ $name }}
-  minReplicaCount: {{ $a.minReplicas }}
-  maxReplicaCount: {{ $a.maxReplicas }}
-  pollingInterval: 15
-  triggers:
-    - type: kafka
-      metadata:
-        bootstrapServers: "kafka:{{ $.Values.infra.kafka.port }}"
-        consumerGroup: {{ $a.consumerGroup }}
-        topic: {{ $a.topic }}
-        lagThreshold: {{ $a.lagThreshold | quote }}
-{{- end }}
-
 {{- end }}
 ---
 # KEDA reads the broker URL from the same Secret the workloads use, so there is

@@ -9,7 +9,7 @@ import (
 )
 
 func TestLoadCommonDefaults(t *testing.T) {
-	for _, k := range []string{"ENV", "LOG_LEVEL", "HTTP_ADDR", "SHUTDOWN_TIMEOUT", "KAFKA_BOOTSTRAP_SERVERS"} {
+	for _, k := range []string{"ENV", "LOG_LEVEL", "HTTP_ADDR", "SHUTDOWN_TIMEOUT"} {
 		t.Setenv(k, "")
 	}
 
@@ -34,16 +34,5 @@ func TestLoadCommonReportsEveryProblem(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
-	}
-}
-
-func TestKafkaBrokerList(t *testing.T) {
-	t.Setenv("KAFKA_BOOTSTRAP_SERVERS", " a:9092, ,b:9092 ")
-	c, err := config.LoadCommon("svc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(c.KafkaBroker) != 2 || c.KafkaBroker[0] != "a:9092" || c.KafkaBroker[1] != "b:9092" {
-		t.Errorf("KafkaBroker = %q", c.KafkaBroker)
 	}
 }

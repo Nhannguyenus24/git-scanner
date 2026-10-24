@@ -55,9 +55,9 @@ a duplicate under the one-mail-per-repository index, and drop the mail
 permanently.
 
 **`store/analytics.go` — the two dedupe tables.** Rollup columns are counters and
-Kafka commits offsets after the handler, so a replayed batch would double-count.
-A batch claims its finding ids and aggregates only the ids it won. The claim and
-the counter bump share one transaction.
+delivery is at-least-once, so a redelivered event would double-count. A batch
+claims its finding ids and aggregates only the ids it won. The claim and the
+counter bump share one transaction.
 
 **`store/findings.go` — the narrow update arm.** A *named* rule may replace the
 unattributed catch-all, never one provider another. Without it, improving a rule

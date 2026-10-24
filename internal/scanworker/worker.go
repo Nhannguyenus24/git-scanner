@@ -3,7 +3,7 @@
 // publishes them to the finding stream (plan.md §4, §10).
 //
 // It lives apart from internal/scan so the engine stays a pure library with no
-// queue, database or Kafka dependency, and this package holds all the wiring.
+// queue or database dependency, and this package holds all the wiring.
 package scanworker
 
 import (
@@ -14,41 +14,33 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
-	"github.com/mservice/gitscanner/libs/kafka"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
-// Publisher is the subset of the Kafka producer the worker needs. Narrowed to
-// an interface so the worker can be tested without a broker.
-type Publisher interface {
-	Publish(ctx context.Context, topic, key string, value []byte, headers map[string]string) error
-}
-
-// Enqueuer is the dispatch surface the worker needs, narrowed for the same
-// reason as Publisher.
+// Enqueuer is the dispatch surface the worker needs, narrowed to an interface
+// so the worker can be tested without a broker.
 type Enqueuer interface {
 	EnqueueEnrich(ctx context.Context, req dispatch.EnrichRequest) error
+	PublishFinding(ctx context.Context, f entity.Finding, repoFullName, appType string) error
 }
 
 // Worker handles one scan task at a time within a RabbitMQ consumer.
 type Worker struct {
 	engine *scan.Engine
 	db     *store.DB
-	pub    Publisher
 	disp   Enqueuer
 	log    *slog.Logger
 }
 
 // New builds a worker.
-func New(engine *scan.Engine, db *store.DB, pub Publisher, disp Enqueuer, log *slog.Logger) *Worker {
-	return &Worker{engine: engine, db: db, pub: pub, disp: disp, log: log}
+func New(engine *scan.Engine, db *store.DB, disp Enqueuer, log *slog.Logger) *Worker {
+	return &Worker{engine: engine, db: db, disp: disp, log: log}
 }
 
 // Handle processes one ScanTask delivery. It is the rabbit.Handler for
@@ -66,10 +58,17 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 
 func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	jobID := entity.ID(task.JobId)
+	repoID := entity.ID(task.RepositoryId)
 
-	// Identify the repository in human terms. A log line carrying only ids is
-	// unreadable while a scan is in flight, which is exactly when it is read.
-	meta := w.repoLogFields(ctx, task)
+	// Loaded once and used twice: to name the repository in the log lines that
+	// bracket the scan, and to stamp the finding events. A log line carrying
+	// only ids is unreadable while a scan is in flight, which is exactly when
+	// it is read.
+	repo, repoErr := w.db.GetRepository(ctx, repoID)
+	if repoErr != nil {
+		w.log.Debug("repository metadata unavailable", "repo_id", task.RepositoryId, "error", repoErr)
+	}
+	meta := repoLogFields(task, repo, repoErr)
 	w.log.Info("scan started", append([]any{"job", task.JobId}, meta...)...)
 
 	// A single-repo job starts running on its first (only) task. For a bulk job
@@ -90,6 +89,16 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 		"app_type", res.AppType,
 	}, meta...)...)
 
+	// The detected stack is worth keeping: it feeds severity scoring (plan.md
+	// §4.3) and is a rollup dimension, and only a completed walk can establish
+	// it. Stored before the events go out so both carry the same answer.
+	if err := w.db.SetRepositoryAppType(ctx, repoID, res.AppType); err != nil {
+		return err
+	}
+	if err := w.publishFindings(ctx, sink, repoName(repo, repoErr), res.AppType); err != nil {
+		return err
+	}
+
 	if err := w.db.RecordScanResult(ctx, jobID, res.BlobsScanned, sink.inserted); err != nil {
 		return err
 	}
@@ -103,15 +112,22 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	return nil
 }
 
-// storeSink persists each finding, mirrors it to Kafka and queues it for
-// enrichment. It counts only the rows it actually inserted, so a redelivered
-// task does not inflate the total — and, because the Kafka publish hangs off
-// that same check, does not emit a duplicate event for a finding already seen.
+// storeSink persists each finding, queues it for enrichment, and holds the ones
+// analytics needs told about until the walk ends.
+//
+// It counts only the rows it actually inserted, so a redelivered task does not
+// inflate the total, and only those are held for publishing — a finding an
+// earlier delivery already announced is not announced twice.
 type storeSink struct {
 	w            *Worker
 	task         *gpb.ScanTask
 	inserted     int
 	reclassified int
+
+	// announce holds the findings stored by this delivery. They cannot be
+	// published as they are found: the event carries the repository's app type,
+	// and that is only known once every blob has been seen.
+	announce []entity.Finding
 }
 
 func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
@@ -127,7 +143,7 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 	case store.FindingReclassified:
 		// The row existed but has just been attributed to a named rule, so its
 		// severity needs recomputing against the provider it now names. It is
-		// not a new finding and must not be counted or re-published as one:
+		// not a new finding and must not be counted or announced as one:
 		// analytics has already counted this finding id and would reject the
 		// replay anyway.
 		s.reclassified++
@@ -135,10 +151,34 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 	}
 
 	s.inserted++
-	if err := s.w.publish(ctx, s.task, f); err != nil {
-		return err
-	}
+	s.announce = append(s.announce, f)
 	return s.w.enqueueEnrich(ctx, s.task, f)
+}
+
+// publishFindings announces to analytics everything this scan stored.
+//
+// It runs after the walk because the app type the event carries is a verdict on
+// the whole repository. The cost is a wider window in which a crash leaves
+// findings in the database that analytics never counted; the same hole existed
+// between the insert and the publish before, and closing it properly means
+// re-announcing on redelivery, which belongs in its own change.
+func (w *Worker) publishFindings(ctx context.Context, sink *storeSink, repoFullName, appType string) error {
+	for _, f := range sink.announce {
+		if err := w.disp.PublishFinding(ctx, f, repoFullName, appType); err != nil {
+			return fmt.Errorf("scanworker: announce finding %s: %w", f.ID, err)
+		}
+	}
+	return nil
+}
+
+// repoName is the owner/name the finding events carry, or empty when the
+// repository could not be read. Empty is better than the "/" a zero-valued
+// Repository would format to, which reads like a real name and is not one.
+func repoName(r entity.Repository, lookupErr error) string {
+	if lookupErr != nil {
+		return ""
+	}
+	return r.FullName()
 }
 
 // repoLogFields describes the repository being scanned, for the log lines that
@@ -147,12 +187,9 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 // A lookup failure degrades to the ids and the URL the task already carries
 // rather than failing: this is context for a human reading the log, and losing
 // it is never a reason to abandon a scan that would otherwise succeed.
-func (w *Worker) repoLogFields(ctx context.Context, task *gpb.ScanTask) []any {
+func repoLogFields(task *gpb.ScanTask, r entity.Repository, lookupErr error) []any {
 	fields := []any{"repo_id", task.RepositoryId, "url", task.CloneUrl}
-
-	r, err := w.db.GetRepository(ctx, entity.ID(task.RepositoryId))
-	if err != nil {
-		w.log.Debug("repository metadata unavailable", "repo_id", task.RepositoryId, "error", err)
+	if lookupErr != nil {
 		return fields
 	}
 
@@ -189,30 +226,4 @@ func (w *Worker) enqueueEnrich(ctx context.Context, task *gpb.ScanTask, f entity
 		CharsetClass: f.Metadata["charset_class"],
 		SecretLength: length,
 	})
-}
-
-// publish mirrors a finding onto the Kafka finding stream. The repository id is
-// the partition key so every finding for a repo stays ordered, which the
-// analytics rollups depend on (plan.md §10).
-func (w *Worker) publish(ctx context.Context, task *gpb.ScanTask, f entity.Finding) error {
-	evt := &gpb.FindingDetected{
-		FindingId:         f.ID.String(),
-		JobId:             task.JobId,
-		RepositoryId:      task.RepositoryId,
-		RuleId:            f.RuleID,
-		ProviderSlug:      f.ProviderSlug,
-		Fingerprint:       f.Fingerprint,
-		MaskedPreview:     f.MaskedPreview,
-		BlobOid:           f.BlobOID,
-		FilePath:          f.FilePath,
-		LineNumber:        int32(f.LineNumber),
-		ReachableFromHead: f.ReachableFromHEAD,
-		Severity:          gpb.Severity(f.Severity + 1), // entity 0..4 -> proto 1..5
-		DetectedAt:        timestamppb.Now(),
-	}
-	body, err := proto.Marshal(evt)
-	if err != nil {
-		return fmt.Errorf("scanworker: marshal finding event: %w", err)
-	}
-	return w.pub.Publish(ctx, kafka.TopicFindings, task.RepositoryId, body, nil)
 }

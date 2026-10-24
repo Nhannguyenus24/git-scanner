@@ -49,13 +49,13 @@ type repoClaim struct {
 // RecordFindingRollups folds a batch of findings into analytics_rollups,
 // counting each finding exactly once however often it is delivered.
 //
-// The Kafka consumer commits offsets only after its handler succeeds, so a
-// crash in between replays the batch. Because the rollup columns are counters,
-// a plain `findings + n` would double-count that replay. Both dedupe tables
-// exist to prevent it: the batch first *claims* its finding ids, and only the
-// ids this call actually won are aggregated. The same trick guards repos, which
-// is a distinct count and so may only advance the first time a repository
-// appears in a bucket.
+// Delivery is at-least-once: the consumer acks only after its handler succeeds,
+// so a crash in between redelivers the event. Because the rollup columns are
+// counters, a plain `findings + n` would double-count that redelivery. Both
+// dedupe tables exist to prevent it: the batch first *claims* its finding ids,
+// and only the ids this call actually won are aggregated. The same trick guards
+// repos, which is a distinct count and so may only advance the first time a
+// repository appears in a bucket.
 //
 // Claim and counter bump share one transaction. Split across two, a crash
 // between them would leave the ids claimed and the counters never incremented,

@@ -110,6 +110,24 @@ func (db *DB) SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanS
 	})
 }
 
+// SetRepositoryAppType records the stack a scan detected in a repository.
+//
+// It is written here rather than at discovery because nothing short of walking
+// the files can tell: the detector accumulates evidence across the whole blob
+// walk and only reaches a verdict once it ends. An empty verdict is not stored,
+// so a scan that recognised nothing leaves an earlier scan's answer standing.
+func (db *DB) SetRepositoryAppType(ctx context.Context, repoID entity.ID, appType string) error {
+	if appType == "" {
+		return nil
+	}
+	_, err := db.pool.Exec(ctx,
+		`UPDATE repositories SET app_type = $2 WHERE id = $1`, repoID, appType)
+	if err != nil {
+		return fmt.Errorf("store: set repository app type: %w", err)
+	}
+	return nil
+}
+
 // RecordScanResult updates a job's progress counters after a repository scan.
 func (db *DB) RecordScanResult(ctx context.Context, jobID entity.ID, blobs, findings int) error {
 	_, err := db.pool.Exec(ctx, `

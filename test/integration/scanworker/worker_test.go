@@ -2,10 +2,9 @@
 
 // Full Phase 1 path against real infrastructure: a ScanTask published to
 // RabbitMQ is consumed by the worker, which clones a local repo, detects a
-// secret, stores it in Postgres and emits a FindingDetected on Kafka.
+// secret, stores it in Postgres and publishes a FindingDetected for analytics.
 //
-// Run with: make test-integration (needs POSTGRES_URL, RABBITMQ_URL,
-// KAFKA_BOOTSTRAP_SERVERS).
+// Run with: make test-integration (needs POSTGRES_URL, RABBITMQ_URL).
 package scanworker
 
 import (
@@ -25,7 +24,6 @@ import (
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
-	"github.com/mservice/gitscanner/libs/kafka"
 	"github.com/mservice/gitscanner/libs/observability"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -81,13 +79,6 @@ func TestWorkerStoresAndPublishes(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	brokers := strings.Split(env(t, "KAFKA_BOOTSTRAP_SERVERS"), ",")
-	prod, err := kafka.NewProducer(t.Context(), brokers, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = prod.Close(ctx) }()
-
 	// Seed target, job, repository.
 	target, err := db.CreateTarget(ctx, entity.Target{
 		Kind: entity.TargetRepo, Value: "https://github.com/t/r.git"})
@@ -110,11 +101,11 @@ func TestWorkerStoresAndPublishes(t *testing.T) {
 	engine := scan.NewEngine(
 		&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
 		scan.NewDetector(scan.BootstrapRuleset()), hasher)
-	enrichPub, err := conn.NewPublisher()
+	workerPub, err := conn.NewPublisher()
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker := scanworker.New(engine, db, prod, dispatch.New(enrichPub), log)
+	worker := scanworker.New(engine, db, dispatch.New(workerPub), log)
 
 	consumer, err := conn.NewConsumer(rabbit.QueueScan, 1, 3)
 	if err != nil {

@@ -18,9 +18,6 @@ infra:
   redis:
     host: redis.infra.internal
     port: 6379
-  kafka:
-    host: kafka.infra.internal
-    port: 9092
 
 # Name of the Secret holding connection URLs and crypto keys. Created by External
 # Secrets or Sealed Secrets, never committed (plan.md §13.7).
@@ -108,9 +105,11 @@ services:
       requests: { cpu: 200m, memory: 512Mi }
       limits:   { cpu: "1",  memory: 1Gi }
     autoscale:
-      kind: keda-kafka
-      topic: findings.v1
-      consumerGroup: analytics
-      lagThreshold: "1000"
+      kind: keda-rabbitmq
+      queue: findings.events
+      # Higher than the task queues because folding one event is two statements
+      # in a transaction, not a clone and a blob walk: a backlog here drains
+      # fast enough that scaling on a short one would only add churn.
+      queueLength: "500"
       minReplicas: 1
       maxReplicas: 6

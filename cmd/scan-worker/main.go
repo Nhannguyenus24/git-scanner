@@ -25,7 +25,7 @@ const (
 func main() {
 	app.Main(app.Spec{
 		Name:  "scan-worker",
-		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true, Kafka: true},
+		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
 		Build: build,
 	})
 }
@@ -46,7 +46,7 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 		return app.Parts{}, fmt.Errorf("scan-worker: publisher: %w", err)
 	}
 
-	worker := scanworker.New(engine, d.DB, d.Kafka, dispatch.New(publisher), d.Log)
+	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log)
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueScan, scanPrefetch, scanMaxRetry)
 	if err != nil {

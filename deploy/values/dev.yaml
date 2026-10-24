@@ -20,7 +20,6 @@ infra:
   postgres:  { host: host.k3d.internal, port: 5432 }
   rabbitmq:  { host: host.k3d.internal, port: 5672 }
   redis:     { host: host.k3d.internal, port: 6379 }
-  kafka:     { host: host.k3d.internal, port: 9092 }
 
 services:
   api:

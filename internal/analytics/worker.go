@@ -1,9 +1,12 @@
-// Package analytics is the analytics service: it consumes the durable finding
-// stream and folds it into the rollup tables the dashboards read (plan.md §10).
+// Package analytics is the analytics service: it consumes the finding stream
+// and folds it into the rollup tables the dashboards read (plan.md §10).
 //
-// It reads Kafka rather than RabbitMQ because a rollup must be rebuildable: the
-// topic is a retained log, so a corrected aggregation can be replayed over it,
-// which a task queue could never offer once its messages are acked (plan.md §1).
+// The stream arrives over RabbitMQ, which is not a retained log, so a rollup
+// cannot be rebuilt by replaying it — once a delivery is acked it is gone. The
+// findings table is the system of record and a rebuild reads from there
+// instead. What the queue must still survive is redelivery, and it does: the
+// dedupe tables behind RecordFindingRollups count each finding id once however
+// often it arrives.
 package analytics
 
 import (
@@ -17,8 +20,8 @@ import (
 
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
-	"github.com/mservice/gitscanner/libs/kafka"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
+	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
 // unmappedProvider is the bucket a finding falls into when no registry entry
@@ -43,47 +46,31 @@ func New(st Rollups, log *slog.Logger) *Worker {
 	return &Worker{store: st, log: log}
 }
 
-// Handle processes one poll's worth of records (the kafka.Handler for
-// findings.v1). The whole batch is folded in one transaction, so the offsets
-// the consumer commits afterwards can never be ahead of the counters.
-func (w *Worker) Handle(ctx context.Context, records []kafka.Record) error {
-	batch := make([]store.RollupInput, 0, len(records))
-	skipped := 0
-
-	for _, r := range records {
-		var evt gpb.FindingDetected
-		if err := proto.Unmarshal(r.Value, &evt); err != nil {
-			// Skipped, not returned as an error. Returning one stops the consumer
-			// without committing, so this same unreadable record would be polled
-			// again forever and the topic would never advance past it. The
-			// RabbitMQ workers answer this with rabbit.ErrDrop and a dead-letter
-			// queue; a Kafka topic has no such side exit, so the record is logged
-			// and left behind instead.
-			w.log.Error("skipping unparseable record",
-				"topic", r.Topic, "key", r.Key, "bytes", len(r.Value), "error", err)
-			skipped++
-			continue
-		}
-		if evt.FindingId == "" {
-			w.log.Error("skipping record with no finding id", "topic", r.Topic, "key", r.Key)
-			skipped++
-			continue
-		}
-		batch = append(batch, rollupInput(&evt))
+// Handle folds one finding event into the rollups (the rabbit.Handler for
+// findings.events).
+//
+// An event that cannot be read, or that names no finding, is dropped to the
+// dead-letter queue rather than retried: neither will parse on a second
+// attempt, and the message is kept there for inspection instead of being lost.
+func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
+	var evt gpb.FindingDetected
+	if err := proto.Unmarshal(d.Body, &evt); err != nil {
+		return fmt.Errorf("%w: unmarshal finding event: %v", rabbit.ErrDrop, err)
+	}
+	if evt.FindingId == "" {
+		return fmt.Errorf("%w: finding event carries no finding id", rabbit.ErrDrop)
 	}
 
-	counted := 0
-	if len(batch) > 0 {
-		var err error
-		if counted, err = w.store.RecordFindingRollups(ctx, batch); err != nil {
-			return fmt.Errorf("analytics: record rollups: %w", err)
-		}
+	counted, err := w.store.RecordFindingRollups(ctx, []store.RollupInput{rollupInput(&evt)})
+	if err != nil {
+		return fmt.Errorf("analytics: record rollups: %w", err)
 	}
 
-	// counted below len(batch) is normal, not a warning: it is the replayed
-	// portion of the batch that earlier runs already counted.
-	w.log.Info("rollup batch done",
-		"records", len(records), "counted", counted, "skipped", skipped)
+	// counted == 0 is normal rather than a warning: it is a redelivery of an
+	// event an earlier attempt already counted.
+	w.log.Info("finding rolled up",
+		"finding", evt.FindingId, "provider", evt.ProviderSlug,
+		"severity", severityName(evt.Severity), "counted", counted)
 	return nil
 }
 

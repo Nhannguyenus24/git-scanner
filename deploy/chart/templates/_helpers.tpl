@@ -40,6 +40,4 @@ backends run in the cluster or on the developer's Docker host (plan.md §13.2).
     secretKeyRef:
       name: {{ .root.Values.secretName }}
       key: REDIS_URL
-- name: KAFKA_BOOTSTRAP_SERVERS
-  value: "kafka:{{ .root.Values.infra.kafka.port }}"
 {{- end }}

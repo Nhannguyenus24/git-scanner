@@ -8,7 +8,6 @@ import (
 
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/config"
-	"github.com/mservice/gitscanner/libs/kafka"
 	"github.com/mservice/gitscanner/libs/lifecycle"
 	"github.com/mservice/gitscanner/libs/observability"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -21,7 +20,6 @@ type Needs struct {
 	Postgres bool
 	Rabbit   bool
 	Redis    bool
-	Kafka    bool
 }
 
 // validate reports every missing connection setting at once, before anything
@@ -37,9 +35,6 @@ func (n Needs) validate(cfg config.Common) error {
 	if n.Redis && cfg.RedisURL == "" {
 		errs = append(errs, errors.New("REDIS_URL is required"))
 	}
-	if n.Kafka && len(cfg.KafkaBroker) == 0 {
-		errs = append(errs, errors.New("KAFKA_BOOTSTRAP_SERVERS is required"))
-	}
 	return errors.Join(errs...)
 }
 
@@ -53,7 +48,6 @@ type Deps struct {
 	DB     *store.DB
 	Rabbit *rabbit.Conn
 	Redis  *redis.Client
-	Kafka  *kafka.Producer
 }
 
 // connect dials every backend in needs and registers its readiness check. On
@@ -98,29 +92,17 @@ func connect(ctx context.Context, cfg config.Common, log *slog.Logger, needs Nee
 		d.Health.AddCheck("rabbit", rc.Healthy)
 	}
 
-	if needs.Kafka {
-		kp, err := kafka.NewProducer(ctx, cfg.KafkaBroker, log)
-		if err != nil {
-			return fail(err)
-		}
-		d.Kafka = kp
-		d.Health.AddCheck("kafka", kp.Ping)
-	}
-
 	return d, nil
 }
 
 // closers returns backend shutdown steps in reverse dependency order.
 //
-// Order is deliberate and is the reason this lives in one place: the event
-// producer flushes first, then message brokers close, then the stores that a
-// flush or a cursor save writes to. Closing Postgres before the Kafka flush
-// would lose the cursor the drain is trying to persist (plan.md §13.3).
+// Order is deliberate and is the reason this lives in one place: the broker
+// closes first, then the stores that an in-flight handler writes to. Closing
+// Postgres while a delivery is still being acked would lose the cursor the
+// drain is trying to persist (plan.md §13.3).
 func (d *Deps) closers() []lifecycle.Component {
 	var cs []lifecycle.Component
-	if d.Kafka != nil {
-		cs = append(cs, lifecycle.Component{Name: "kafka", Stop: d.Kafka.Close})
-	}
 	if d.Rabbit != nil {
 		cs = append(cs, lifecycle.Component{Name: "rabbit", Stop: ignoreCtx(d.Rabbit.Close)})
 	}

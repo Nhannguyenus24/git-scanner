@@ -26,7 +26,7 @@ func TestCheckReportsFirstFailureInOrder(t *testing.T) {
 	h.SetReady(true)
 	h.AddCheck("postgres", func(context.Context) error { return nil })
 	h.AddCheck("redis", func(context.Context) error { return errors.New("down") })
-	h.AddCheck("kafka", func(context.Context) error { return errors.New("also down") })
+	h.AddCheck("redis", func(context.Context) error { return errors.New("also down") })
 
 	err := h.Check(context.Background())
 	if err == nil || !strings.HasPrefix(err.Error(), "redis:") {
