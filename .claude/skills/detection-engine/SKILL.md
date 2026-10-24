@@ -39,11 +39,15 @@ For each rule: **literal prefilter** (`bytes.Contains`, case-sensitive — list
 every casing) → regex → the `(?P<secret>…)` span → `keywords` on the line →
 `isPlaceholder`. Only the **first** match per rule per blob is reported.
 
+The maths and reasoning behind each gate — entropy ceilings, identifier
+segmentation, key classification, worked traces and measured effect — are in the
+`detection-algorithm` skill.
+
 Catalogue today, by how it is anchored:
 
 | Anchored on the value's own prefix | Anchored on the setting name (no prefix of their own) |
 |---|---|
-| aws `AKIA/ASIA`, github `ghp_/gho_/ghu_/ghs_/github_pat_`, stripe `sk_live_/sk_test_`, google `AIza` (also Gemini), `GOCSPX-`, slack `xox?-` and webhook URL, sendgrid `SG.`, cloudinary URL, smtp URL, PEM private key block (whole block), openai (`T3BlbkFJ` marker), anthropic `sk-ant-`, openrouter `sk-or-v1-`, groq `gsk_`, huggingface `hf_`, replicate `r8_`, perplexity `pplx-`, xai `xai-`, langsmith `lsv2_`, pinecone `pcsk_`, giphy request URL | cloudinary api key/secret, deepseek, cohere, mistral, azure-openai, giphy (`GIPHY…=` including `… \|\| 'fallback'`) |
+| aws `AKIA/ASIA`, github `ghp_/gho_/ghu_/ghs_/github_pat_`, stripe `sk_live_/sk_test_`, google `AIza` (also Gemini), `GOCSPX-`, slack `xox?-` and webhook URL, sendgrid `SG.`, cloudinary URL, smtp URL, PEM private key block (whole block), openai (`T3BlbkFJ` marker), anthropic `sk-ant-`, openrouter `sk-or-v1-`, groq `gsk_`, huggingface `hf_`, google refresh token `1//0`, resend `re_` (fixed layout), replicate `r8_`, perplexity `pplx-`, xai `xai-`, langsmith `lsv2_`, pinecone `pcsk_`, giphy request URL | cloudinary api key/secret, deepseek, cohere, mistral, azure-openai, giphy (`GIPHY…=` including `… \|\| 'fallback'`) |
 
 ### 4. The generic high-entropy pass
 
@@ -60,12 +64,13 @@ tokens. Gates, in order:
 | 4 | `base64,` before it, or PNG/JPEG/GIF magic | embedded images | notebook output cells |
 | 5 | `inURLPath` | host/path segments of a URL (userinfo and `?key=` still checked) | CDN asset hashes in a SQL dump |
 | 6 | `looksLikeIdentifier` unless directly assigned to a secret setting | camelCase, SCREAMING_SNAKE, package paths | `UserAuthenticationFilter`, test method names |
-| 7 | no `secretKeyword` within **±160 bytes** | tokens with no secret-ish word nearby | — |
-| 8 | `exampleLine` | `example`, `examples`, `e.g.`, `for instance` near it | `@Schema(example = "eyJ…")`, `**Example:**` |
-| 9 | `inJWT`, `isJSONSegment` | any segment of a JWT; base64url JSON quoted alone | sample tokens in API docs and tests |
-| 10 | `jwtSecretContext` | JWT signing secrets: `jwt` starting a word in the window, a file named `Jwt*`, or a `jwt:` YAML parent ≤ 4 lines up | `jwt.secret=mySecretKey…`, `@Value("${jwt.secret:…}")` |
+| 7 | `isTestPath`, `publicIdentifier` | test sources and fixtures; Stripe `pk_live_/pk_test_`, Google OAuth client ids | `detect_test.go` fixtures, `GOOGLE_OAUTH_CLIENT_ID=` |
+| 8 | **assignment-key class** (`assignmentKey` → `classifyKey`): public key → drop, secret key → keep, unknown → needs a whole secret word (`secretKeyword`) within **±160 bytes** | values assigned to `client_id`, `site-key`, `…_id`, `username`; tokens with no secret word nearby | client ids reported because OAUTH contains "auth" |
+| 9 | `exampleLine` | `example`, `examples`, `e.g.`, `for instance` near it | `@Schema(example = "eyJ…")`, `**Example:**` |
+| 10 | `inJWT`, `isJSONSegment` | any segment of a JWT; base64url JSON quoted alone | sample tokens in API docs and tests |
+| 11 | `jwtSecretContext` | JWT signing secrets: `jwt` starting a word in the window, a file named `Jwt*`, or a `jwt:` YAML parent ≤ 4 lines up | `jwt.secret=mySecretKey…`, `@Value("${jwt.secret:…}")` |
 
-Gates 9–10 are a **policy decision**, not a claim that JWT material never
+Gates 10–11 are a **policy decision**, not a claim that JWT material never
 matters: every hit in the scanned repositories was a tutorial default or a doc
 sample. A provider whose API key *is* a JWT (Supabase `service_role`) needs a
 named rule; the exclusion only applies to the generic pass.

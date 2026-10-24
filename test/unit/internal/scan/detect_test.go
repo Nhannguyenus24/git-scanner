@@ -96,7 +96,7 @@ func TestGenericHighEntropy(t *testing.T) {
 // here was a real false positive.
 func TestGenericHighEntropySkipsWordShapedTokens(t *testing.T) {
 	cases := []struct{ name, path, blob string }{
-		{"camelCase method", "AuthTest.java", "export const getChangePasswordRequestSchema = (t) => token(t);"},
+		{"camelCase method", "AuthService.java", "export const getChangePasswordRequestSchema = (t) => token(t);"},
 		{"package path", "README.md", "see /backend/src/main/java/com/app/UserController for auth"},
 		{"variable reference", "docker-compose.yml", "GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD_FROM_ENV}"},
 		{"url path", "schema.sql", `token <img src="https://cdn.jsdelivr.net/gh/Zx9Kq2Lp7Wm4Rt8Nv3Yb6Hc1Jd5Fg0Qa/a.png">`},
@@ -212,7 +212,7 @@ func TestGenericSkipsJWTContext(t *testing.T) {
 		{"spring default", "Config.java", `@Value("${jwt.secret:` + opaque + `}")`},
 		{"jwt file", "src/security/JwtUtil.java", `private static final String SECRET = "` + opaque + `";`},
 		{"yaml block", "application.yml", "jwt:\n  expiration: 3600\n  secret: " + opaque + "\n"},
-		{"issued token", "AuthTest.java", `String expiredToken = "` + jwt + `";`},
+		{"issued token", "AuthService.java", `String expiredToken = "` + jwt + `";`},
 		{"header alone", "API.md", `"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`},
 	}
 	for _, c := range cases {
@@ -288,6 +288,100 @@ func TestGiphyAPIKey(t *testing.T) {
 	for _, m := range detect("a.js", "const id = '"+key+"'") {
 		if m.Provider == "giphy" {
 			t.Errorf("bare 32-char value attributed to giphy")
+		}
+	}
+}
+
+// The generic pass decides on what a value is assigned to before it looks at the
+// words around it. Each case here is a shape seen in the scanned corpus.
+func TestGenericClassifiesTheAssignmentKey(t *testing.T) {
+	reported := []struct{ name, blob string }{
+		{"snake secret", "DB_PASSWORD=" + opaque},
+		{"short word, whole", "DB_PWD=" + opaque}, // pwd only counts as a whole word
+		{"camelCase", `clientSecret: "` + opaque + `"`},
+		{"json", `{"api_key": "` + opaque + `"}`},
+		{"kebab yaml", "hash-secret: " + opaque},
+		{"spring default", "resend.api-key=${API_SECRET:" + opaque + "}"},
+		{"recaptcha secret", "google.recaptcha.secret-key=" + opaque},
+	}
+	for _, c := range reported {
+		ms := detect("application.properties", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != "generic-high-entropy" {
+			t.Errorf("%s: matches = %d, want one generic", c.name, len(ms))
+		}
+	}
+
+	public := []struct{ name, blob string }{
+		// OAUTH contains "auth" — the old keyword list called this a secret.
+		{"oauth client id", "GOOGLE_OAUTH_CLIENT_ID=" + opaque},
+		{"recaptcha site key", "google.recaptcha.site-key=" + opaque},
+		{"sitekey", `data-sitekey="` + opaque + `"`},
+		{"publishable", "STRIPE_PUBLISHABLE_KEY=" + opaque},
+		{"public key", "publicKey: " + opaque},
+		{"key id", "AWS_KEY_ID=" + opaque + " # secret"},
+		{"username", "db.username=" + opaque + " # password below"},
+	}
+	for _, c := range public {
+		if ms := detect("application.properties", c.blob); len(ms) != 0 {
+			t.Errorf("%s: reported %d match(es), want none", c.name, len(ms))
+		}
+	}
+}
+
+// Values that are public by design are not leaks, whatever they are called.
+func TestGenericSkipsPublicIdentifiers(t *testing.T) {
+	cases := []struct{ name, blob string }{
+		{"stripe publishable", "STRIPE_KEY = 'pk_test_" + opaque + "'"},
+		{"google client id", "client: 123456789012-" + strings.ToLower(opaque) + ".apps.googleusercontent.com # secret"},
+	}
+	for _, c := range cases {
+		if ms := detect(".env", c.blob); len(ms) != 0 {
+			t.Errorf("%s: reported %d match(es), want none", c.name, len(ms))
+		}
+	}
+}
+
+// "pwd" as a substring of random text is not a context: it used to let a URL
+// parameter in a SQL dump through.
+func TestGenericShortKeywordNeedsAWholeWord(t *testing.T) {
+	blob := `<a href="https://x.example.org/p?__cft__[0]=` + opaque + `">xPWDq</a>`
+	if ms := detect("dump.sql", blob); len(ms) != 0 {
+		t.Errorf("reported %d match(es) from a substring, want none", len(ms))
+	}
+}
+
+func TestGenericSkipsTestFiles(t *testing.T) {
+	for _, path := range []string{
+		"src/test/java/com/app/AuthServiceTest.java", "internal/scan/detect_test.go",
+		"web/src/__tests__/api.js", "web/src/api.spec.ts", "tests/test_upload.py", "spec/fixtures/keys.yml",
+	} {
+		if ms := detect(path, "API_SECRET="+opaque); len(ms) != 0 {
+			t.Errorf("%s: generic reported %d match(es), want none", path, len(ms))
+		}
+	}
+	// A named rule still runs: a real key pasted into a test is still a leak.
+	if ms := detect("src/test/java/AuthServiceTest.java", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2"); len(ms) != 1 {
+		t.Errorf("named rule in a test file: %d match(es), want 1", len(ms))
+	}
+}
+
+func TestResendAndGoogleRefreshToken(t *testing.T) {
+	resend := "re_" + "Ab12Cd34" + "_" + strings.Repeat("Zx9Kq2Lp7W", 3)[:24]
+	refresh := "1//0" + strings.Repeat("Zx9Kq2Lp7W_", 5)
+	cases := []struct{ name, blob, rule string }{
+		{"resend", "RESEND_API_KEY=" + resend, "resend-api-key"},
+		{"google refresh", "google.refresh-token=" + refresh, "google-oauth-refresh-token"},
+	}
+	for _, c := range cases {
+		ms := detect(".env", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			t.Errorf("%s: matches = %+v, want one %s", c.name, ms, c.rule)
+		}
+	}
+	// re_ alone is ordinary code: the fixed layout keeps it from matching.
+	for _, m := range detect("a.py", "m = re_compile_pattern_for_the_tokenizer(x)") {
+		if m.RuleID == "resend-api-key" {
+			t.Errorf("re_ in code attributed to resend")
 		}
 	}
 }

@@ -67,6 +67,21 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"AIza"},
 	},
 	{
+		// The refresh token from Google's OAuth flow: long-lived, and exchangeable
+		// for access tokens until the user revokes it. 1// is its fixed prefix.
+		id: "google-oauth-refresh-token", provider: "google", severity: "high",
+		pattern:  `(?P<secret>1//0[0-9A-Za-z_-]{30,})`,
+		literals: []string{"1//0"},
+	},
+	{
+		// re_, an 8-character id, an underscore and a 24-character secret. The
+		// fixed layout is what keeps a literal as short as re_ from matching the
+		// re_compile and re_match of ordinary code.
+		id: "resend-api-key", provider: "resend", severity: "high",
+		pattern:  `\b(?P<secret>re_[A-Za-z0-9]{8}_[A-Za-z0-9]{24})\b`,
+		literals: []string{"re_"},
+	},
+	{
 		id: "sendgrid-api-key", provider: "sendgrid", severity: "high",
 		pattern:  `(?P<secret>SG\.[0-9A-Za-z_-]{22}\.[0-9A-Za-z_-]{43})`,
 		literals: []string{"SG."},

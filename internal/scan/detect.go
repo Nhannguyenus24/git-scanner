@@ -107,7 +107,14 @@ var highEntropyToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
 // secretKeyword is the proximity signal: a high-entropy token is only reported
 // as a generic secret when its line also names one of these, which keeps commit
 // hashes, UUIDs and base64 asset blobs out of the results.
-var secretKeyword = regexp.MustCompile(`(?i)(secret|token|passwo?rd|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)`)
+//
+// Every alternative is a word that names a secret, not a word that merely sits
+// near one. A bare "auth" used to be here and matched OAUTH, author and
+// AuthenticationFilter — GOOGLE_OAUTH_CLIENT_ID=<public id> was reported as a
+// secret for exactly that reason. Short words (pwd) are left to classifyKey,
+// which matches whole words: as a substring, three letters turn up inside
+// random base64 and URL parameters often enough to let junk through.
+var secretKeyword = regexp.MustCompile(`(?i)(secret|token|passw(or)?d|api[_-]?key|access[_-]?key|private[_-]?key|credential|authorization|auth[_-]?(token|key))`)
 
 // secretAssignment matches the text just before a value that is being assigned
 // to a secret-named setting, in properties, env, YAML, JSON or code form.
@@ -158,9 +165,26 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		if looksLikeIdentifier(token) && !secretAssignment.Match(before) {
 			continue
 		}
+		if isTestPath(path) {
+			continue // fixtures; a named rule still runs in test files
+		}
+		if publicIdentifier(token, blob[loc[1]:min(len(blob), loc[1]+40)]) {
+			continue // a value designed to be public: publishable key, OAuth client id
+		}
 		line := contextAround(blob, loc[0], loc[1])
-		if !secretKeyword.MatchString(line) {
+		// The decisive question is what the value is assigned to. A key that
+		// names a secret is enough on its own; a key that names a public
+		// identifier rules the value out however secret-ish the line around it
+		// looks; only with no key, or an uninformative one, does the presence of
+		// a secret word nearby decide.
+		switch classifyKey(assignmentKey(blob[max(0, loc[0]-96):loc[0]])) {
+		case keyPublic:
 			continue
+		case keySecret:
+		default:
+			if !secretKeyword.MatchString(line) {
+				continue
+			}
 		}
 		if exampleLine.MatchString(line) {
 			continue // documentation: `example = "eyJ…"`, **Example:**, e.g. …
@@ -180,6 +204,137 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		})
 	}
 	return out
+}
+
+// keyClass is what a setting name says about the value assigned to it.
+type keyClass int
+
+const (
+	keyUnknown keyClass = iota // no key, or one that says nothing either way
+	keySecret                  // client_secret, DB_PASSWORD, api_key, hash-secret
+	keyPublic                  // client_id, site-key, publishable_key, public_key
+)
+
+// assignKey finds the name a value is assigned to, in the text just before it:
+// KEY=v, key: v, "key": "v", key = 'v', key := v, key => v, and the default of
+// a placeholder, ${RESEND_API_KEY:v}.
+var assignKey = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_.\-]*)["'\]]?\s*(?::=|=>|[:=])\s*["'\x60]?$`)
+
+// assignmentKey returns the setting name the value right after before is
+// assigned to, or "" when the value is not the right-hand side of anything.
+func assignmentKey(before []byte) string {
+	if i := bytes.LastIndexByte(before, '\n'); i >= 0 {
+		before = before[i+1:] // a key never spans lines
+	}
+	m := assignKey.FindSubmatch(before)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+// keyWords splits a setting name into lower-case words across every naming
+// style: snake_case, kebab-case, dotted.paths and camelCase.
+func keyWords(key string) []string {
+	var words []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			words = append(words, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	var prev rune
+	for _, r := range key {
+		switch {
+		case r == '_' || r == '-' || r == '.':
+			flush()
+		case r >= 'A' && r <= 'Z' && prev >= 'a' && prev <= 'z':
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+		prev = r
+	}
+	flush()
+	return words
+}
+
+// classifyKey decides what a setting name says about its value.
+//
+// Public markers win over secret words, because the public variant of a
+// credential pair is named after the secret one: publishable_key, public_key,
+// site_key all contain "key". An id is an identifier — client_id, app_id,
+// key_id — unless the name also says secret (client_secret_id is not a thing,
+// but app_secret is).
+func classifyKey(key string) keyClass {
+	if key == "" {
+		return keyUnknown
+	}
+	words := keyWords(key)
+	has := func(w string) bool {
+		for _, x := range words {
+			if x == w {
+				return true
+			}
+		}
+		return false
+	}
+	joined := strings.Join(words, "")
+	switch {
+	case has("public") || has("publishable") || has("pub"):
+		return keyPublic
+	case (has("site") && has("key")) || strings.Contains(joined, "sitekey"):
+		return keyPublic
+	}
+	secret := has("secret") || has("password") || has("passwd") || has("pwd") ||
+		has("token") || has("credential") || has("credentials") || has("private") ||
+		has("apikey") || (has("api") && has("key")) || strings.Contains(joined, "secret") ||
+		strings.Contains(joined, "password") || strings.Contains(joined, "apikey")
+	if secret {
+		return keySecret
+	}
+	if len(words) > 0 && (words[len(words)-1] == "id" || has("username") || has("user") ||
+		has("email") || has("url") || has("uri") || has("host") || has("endpoint") || has("name")) {
+		return keyPublic
+	}
+	return keyUnknown
+}
+
+// googleClientID is the shape of an OAuth client id: a project number, a dash
+// and a lowercase hash, always followed by .apps.googleusercontent.com.
+var googleClientID = regexp.MustCompile(`^[0-9]{6,}-[a-z0-9]{16,}$`)
+
+// publicIdentifier reports a value that is public by design, so finding it in a
+// repository is not a leak. after is the text that follows the token.
+func publicIdentifier(token string, after []byte) bool {
+	switch {
+	case strings.HasPrefix(token, "pk_live_") || strings.HasPrefix(token, "pk_test_"):
+		return true // Stripe publishable key: shipped to browsers on purpose
+	case googleClientID.MatchString(token) && bytes.HasPrefix(after, []byte(".apps.googleusercontent.com")):
+		return true // OAuth client id: sent in every authorization URL
+	}
+	return false
+}
+
+// isTestPath reports a test source file or fixture directory. The generic pass
+// skips them: an unrecognised high-entropy string in a test is a fixture far
+// more often than a leak. Named rules still run, so a real key with its own
+// shape pasted into a test is still reported.
+func isTestPath(path string) bool {
+	p := strings.ToLower(path)
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "test", "tests", "__tests__", "spec", "specs", "fixtures", "__fixtures__", "__mocks__":
+			return true
+		}
+	}
+	base := p[strings.LastIndexByte(p, '/')+1:]
+	return strings.HasSuffix(base, "_test.go") ||
+		strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") ||
+		strings.HasSuffix(base, "test.java") || strings.HasSuffix(base, "tests.java") ||
+		strings.HasSuffix(base, "test.kt") || strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py")
 }
 
 // JWT context is excluded from the generic pass by decision, not because it
