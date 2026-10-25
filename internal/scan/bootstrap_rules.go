@@ -231,6 +231,68 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"secret", "SECRET", "Secret"},
 		keywords: []string{"recaptcha"},
 	},
+	// Database, cache and broker connection URLs with a password in the
+	// userinfo: scheme://user:pass@host[,host2][/db][?opts]. The secret is the
+	// whole URL, not just the password, because the password alone unlocks
+	// nothing without the host — and the prober needs both to check liveness.
+	// One rule per engine so each is attributed to its own provider.
+	//
+	// The user may be empty (redis://:pass@host). The password excludes / so
+	// a URL with no userinfo (postgres://host:5432/db?x=a@b) cannot read its
+	// port and path as one. Localhost URLs are dropped by the local-config
+	// filter (hostScopedProviders), private-range hosts are kept: those are
+	// real shared infrastructure. The jdbc:mysql:// and jdbc:postgresql://
+	// forms match too, since the scheme literal is a substring of them.
+	{
+		id: "postgres-url", provider: "postgres", severity: "high",
+		pattern:  `(?P<secret>postgres(?:ql)?://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"postgres://", "postgresql://"},
+	},
+	{
+		id: "mysql-url", provider: "mysql", severity: "high",
+		pattern:  `(?P<secret>(?:mysql|mariadb)://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"mysql://", "mariadb://"},
+	},
+	{
+		id: "mongodb-url", provider: "mongodb", severity: "high",
+		pattern:  `(?P<secret>mongodb(?:\+srv)?://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"mongodb://", "mongodb+srv://"},
+	},
+	{
+		id: "redis-url", provider: "redis", severity: "high",
+		pattern:  `(?P<secret>rediss?://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"redis://", "rediss://"},
+	},
+	{
+		id: "rabbitmq-url", provider: "rabbitmq", severity: "high",
+		pattern:  `(?P<secret>amqps?://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"amqp://", "amqps://"},
+	},
+	{
+		id: "mssql-url", provider: "mssql", severity: "high",
+		pattern:  `(?P<secret>(?:sqlserver|mssql)://[^:@\s/"'\x60]*:[^@\s/"'\x60]+@[^\s/"'\x60<>()]+(?:/[^\s"'\x60<>()]*)?)`,
+		literals: []string{"sqlserver://", "mssql://"},
+	},
+	// JDBC drivers also take the credentials as parameters rather than
+	// userinfo — jdbc:postgresql://host/db?user=app&password=…, and SQL
+	// Server's jdbc:sqlserver://host:1433;databaseName=…;password=… — which
+	// the userinfo rules above cannot see. The authority must not contain @,
+	// so a URL carrying both forms is reported once, by the userinfo rule.
+	{
+		id: "postgres-jdbc-url", provider: "postgres", severity: "high",
+		pattern:  `(?P<secret>jdbc:postgresql://[^\s/@?"'\x60<>()]+(?:/[^\s?"'\x60<>()]*)?\?(?:[^\s&"'\x60<>()]*&)*password=[^\s&"'\x60<>()]+(?:&[^\s"'\x60<>()]*)?)`,
+		literals: []string{"jdbc:postgresql://"},
+	},
+	{
+		id: "mysql-jdbc-url", provider: "mysql", severity: "high",
+		pattern:  `(?P<secret>jdbc:(?:mysql|mariadb)://[^\s/@?"'\x60<>()]+(?:/[^\s?"'\x60<>()]*)?\?(?:[^\s&"'\x60<>()]*&)*password=[^\s&"'\x60<>()]+(?:&[^\s"'\x60<>()]*)?)`,
+		literals: []string{"jdbc:mysql://", "jdbc:mariadb://"},
+	},
+	{
+		id: "mssql-jdbc-url", provider: "mssql", severity: "high",
+		pattern:  `(?P<secret>jdbc:sqlserver://[^\s/@;"'\x60<>()]*(?:;[^\s;"'\x60<>()]*)*?;(?i:password)=[^\s;"'\x60<>()]+(?:;[^\s"'\x60<>()]*)?)`,
+		literals: []string{"jdbc:sqlserver://"},
+	},
 	{
 		// SMTP credentials embedded in a URL (smtp://user:pass@host). The host
 		// reveals the provider; the local-config filter drops localhost ones.

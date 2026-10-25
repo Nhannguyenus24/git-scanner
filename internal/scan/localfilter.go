@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"bytes"
 	"net"
 	"net/netip"
 	"net/url"
@@ -34,6 +35,56 @@ var localHostNames = map[string]bool{
 	"host.k3d.internal":          true,
 	"host.containers.internal":   true, // podman
 	"host.minikube.internal":     true,
+}
+
+// hostScopedProviders are the providers whose credential is a URL that names
+// the one host it unlocks — a database, cache, broker or mail server. Only for
+// these does a localhost URL mean a local-only credential; a provider-issued
+// API key works from anywhere whatever host sits beside it (see LocalOnly).
+var hostScopedProviders = map[string]bool{
+	"postgres": true, "mysql": true, "mongodb": true, "redis": true,
+	"rabbitmq": true, "mssql": true, "smtp": true,
+}
+
+// composeServiceNames are the single-label host names a credential points at
+// when it names a service inside a docker-compose or Kubernetes network rather
+// than a routable host (postgres://app:pw@db:5432, REDIS_HOST=redis). Such a
+// name resolves only inside that orchestration network, so the credential it
+// carries reaches nothing from outside — the same reason localhost is dropped.
+//
+// Only the exact bare labels are treated this way; a dotted FQDN (db.prod.acme.io)
+// or a corporate single-label host not in this list stays a real finding, so a
+// genuine leak is never hidden by a coincidental name.
+var composeServiceNames = map[string]bool{
+	"db": true, "database": true, "postgres": true, "postgresql": true,
+	"pg": true, "pgsql": true, "timescaledb": true,
+	"mysql": true, "mariadb": true, "mssql": true, "sqlserver": true,
+	"mongo": true, "mongodb": true,
+	"redis": true, "valkey": true, "cache": true, "memcached": true,
+	"rabbitmq": true, "rabbit": true, "amqp": true, "broker": true,
+	"kafka": true, "mq": true,
+	"elasticsearch": true, "elastic": true, "opensearch": true,
+}
+
+// isComposeServiceHost reports a single-label host name that names an
+// orchestration service rather than a routable host. An IP is never one.
+func isComposeServiceHost(host string) bool {
+	h := normalizeHost(host)
+	if h == "" || strings.Contains(h, ".") {
+		return false
+	}
+	if _, err := netip.ParseAddr(h); err == nil {
+		return false // a bare IPv6 without brackets, etc.
+	}
+	return composeServiceNames[h]
+}
+
+// isDevLocalHost reports a host a host-scoped credential cannot leak to the
+// outside world: the local machine, or a compose/k8s service name. Used only
+// for database, cache and broker credentials — never for provider API keys,
+// which work from anywhere (see LocalOnly).
+func isDevLocalHost(host string) bool {
+	return IsLocalHost(host) || isComposeServiceHost(host)
 }
 
 // IsLocalHost reports whether host refers to the local machine. host may carry
@@ -77,6 +128,93 @@ func LocalURLCredential(text, secret string) bool {
 		}
 	}
 	return found
+}
+
+// hostScopedKeyWords are the words in a setting name that say its value is a
+// credential for a specific host — a database, cache or broker — rather than a
+// provider API key that works from anywhere. A password under one of these,
+// beside a local host, is a local development value.
+var hostScopedKeyWords = map[string]bool{
+	"db": true, "database": true, "datasource": true, "jdbc": true,
+	"postgres": true, "postgresql": true, "pg": true, "pgsql": true,
+	"mysql": true, "mariadb": true, "mssql": true, "sqlserver": true, "sql": true,
+	"mongo": true, "mongodb": true,
+	"redis": true, "cache": true,
+	"amqp": true, "rabbit": true, "rabbitmq": true, "broker": true,
+}
+
+// hostScopedKey reports whether a setting name identifies a host-scoped service
+// credential, so a local host beside it means a local-only value.
+func hostScopedKey(key string) bool {
+	for _, w := range keyWords(key) {
+		if hostScopedKeyWords[w] {
+			return true
+		}
+	}
+	return false
+}
+
+// neighbourhoodLines is how many lines either side of a match are read for its
+// host context. A split DB_HOST/DB_PASSWORD config keeps the two within a few
+// lines; a wider window would let an unrelated localhost elsewhere in the file
+// hide a real finding, which LocalOnly's own doc warns against.
+const neighbourhoodLines = 4
+
+// neighbourhood returns the text of the match's line plus a few lines on each
+// side — the narrow window LocalOnly is meant to judge a host-scoped credential
+// against.
+func neighbourhood(blob []byte, lo, hi int) string {
+	start := lo
+	for n := 0; n < neighbourhoodLines && start > 0; n++ {
+		if i := bytes.LastIndexByte(blob[:start-1], '\n'); i >= 0 {
+			start = i + 1
+		} else {
+			start = 0
+		}
+	}
+	end := hi
+	for n := 0; n < neighbourhoodLines && end < len(blob); n++ {
+		if i := bytes.IndexByte(blob[end:], '\n'); i >= 0 {
+			end = end + i + 1
+		} else {
+			end = len(blob)
+		}
+	}
+	return string(blob[start:end])
+}
+
+// localURL reports whether a connection URL found by a host-scoped rule names
+// only local hosts. The secret is the URL itself, so its hosts are the ones
+// the credential unlocks; jdbc: is stripped so the scheme parses.
+func localURL(secret string) bool {
+	hosts := urlHosts(strings.TrimPrefix(secret, "jdbc:"))
+	if len(hosts) == 0 {
+		return false
+	}
+	for _, h := range hosts {
+		if !isDevLocalHost(h) {
+			return false
+		}
+	}
+	return true
+}
+
+// allHostsDevLocal reports whether text references at least one host and every
+// one is dev-local (loopback, or a compose/k8s service name). It is the
+// split-variable counterpart of localURL: the host sits in a DB_HOST= line
+// rather than inside the credential URL. Like LocalOnly it is only for
+// host-scoped credentials.
+func allHostsDevLocal(text string) bool {
+	hosts := ReferencedHosts(text)
+	if len(hosts) == 0 {
+		return false
+	}
+	for _, h := range hosts {
+		if !isDevLocalHost(h) {
+			return false
+		}
+	}
+	return true
 }
 
 // LocalOnly reports whether every host referenced in text is local, and text
@@ -156,7 +294,8 @@ func urlHosts(raw string) []string {
 
 	// Fallback for what url.Parse rejects or merges: take the authority by hand.
 	rest := raw[strings.Index(raw, "://")+3:]
-	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+	// ; ends the authority in SQL Server's jdbc:sqlserver://host:1433;user=…
+	if i := strings.IndexAny(rest, "/?#;"); i >= 0 {
 		rest = rest[:i]
 	}
 	if i := strings.LastIndex(rest, "@"); i >= 0 {

@@ -24,6 +24,13 @@ type Match struct {
 	// filter: the environment-variable name and host near the match.
 	NearbyEnvVar string
 	NearbyHost   string
+
+	// ProbeURL is the connection URL to validate liveness against, when it
+	// differs from Secret — a database password split across variables is stored
+	// as the password but probed as a full URL assembled from its siblings. It
+	// holds the plaintext credential, so like Secret it never leaves the engine
+	// and is never persisted. Empty means probe Secret itself.
+	ProbeURL string
 }
 
 // Detector runs a ruleset plus the generic entropy pass over blob contents and
@@ -62,36 +69,40 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 	named := map[string]struct{}{} // values a named rule already claimed
 
 	for _, rule := range d.rs.candidates(blob) {
-		lo, hi, ok := rule.secretIndex(blob)
-		if !ok {
-			continue
-		}
-		secret := string(blob[lo:hi])
-		if _, dup := seen[rule.ID+"\x00"+secret]; dup {
-			continue
-		}
-		if _, claimed := named[secret]; claimed {
-			continue // an earlier rule (by ID order) already reported this value
-		}
-		line := lineContaining(blob, lo)
-		if !rule.keywordsPresent(keywordWindow(blob, lo, hi)) || isPlaceholder(secret) {
-			continue
-		}
-		if namedSuppressed(rule.ID, path, blob, lo, hi, secret) {
-			continue
-		}
-		seen[rule.ID+"\x00"+secret] = struct{}{}
-		named[secret] = struct{}{}
+		for _, span := range rule.secretIndexes(blob) {
+			lo, hi := span[0], span[1]
+			secret := string(blob[lo:hi])
+			if _, dup := seen[rule.ID+"\x00"+secret]; dup {
+				continue
+			}
+			if _, claimed := named[secret]; claimed {
+				continue // an earlier rule (by ID order) already reported this value
+			}
+			line := lineContaining(blob, lo)
+			if !rule.keywordsPresent(keywordWindow(blob, lo, hi)) || isPlaceholder(secret) {
+				continue
+			}
+			if namedSuppressed(rule.ID, path, blob, lo, hi, secret) {
+				continue
+			}
+			seen[rule.ID+"\x00"+secret] = struct{}{}
+			named[secret] = struct{}{}
+			// Claimed before the local check, so the generic pass does not pick
+			// the password back out of a URL that was dropped for being local.
+			if hostScopedProviders[rule.Provider] && localURL(secret) {
+				continue
+			}
 
-		matches = append(matches, Match{
-			RuleID:       rule.ID,
-			Provider:     rule.Provider,
-			Severity:     rule.Severity,
-			Secret:       secret,
-			Line:         lineNumber(blob, lo),
-			NearbyEnvVar: envVarIn(line),
-			NearbyHost:   firstHost(line),
-		})
+			matches = append(matches, Match{
+				RuleID:       rule.ID,
+				Provider:     rule.Provider,
+				Severity:     rule.Severity,
+				Secret:       secret,
+				Line:         lineNumber(blob, lo),
+				NearbyEnvVar: envVarIn(line),
+				NearbyHost:   firstHost(line),
+			})
+		}
 	}
 
 	// Example and template files hold values meant to be replaced. A named rule
@@ -183,7 +194,8 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		// identifier rules the value out however secret-ish the line around it
 		// looks; only with no key, or an uninformative one, does the presence of
 		// a secret word nearby decide.
-		switch classifyKey(assignmentKey(blob[max(0, loc[0]-96):loc[0]])) {
+		key := assignmentKey(blob[max(0, loc[0]-96):loc[0]])
+		switch classifyKey(key) {
 		case keyPublic:
 			continue
 		case keySecret:
@@ -192,6 +204,17 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 				continue
 			}
 		}
+		// A password for a host-scoped service (DB_PASSWORD, REDIS_PASS,
+		// MONGO_PASSWORD) split across separate variables from its DB_HOST is a
+		// local development value when every host named nearby is local — the
+		// same case the URL rules drop via localURL, which cannot see here
+		// because host and password are on different lines. Scoped to keys that
+		// name such a service, and to a narrow neighbourhood, so a provider key
+		// (caught by a named rule anyway) near a stray localhost is never hidden.
+		neigh := neighbourhood(blob, loc[0], loc[1])
+		if hostScopedKey(key) && allHostsDevLocal(neigh) {
+			continue
+		}
 		if exampleLine.MatchString(line) {
 			continue // documentation: `example = "eyJ…"`, **Example:**, e.g. …
 		}
@@ -199,7 +222,7 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 			continue
 		}
 		seen["generic\x00"+token] = struct{}{}
-		out = append(out, Match{
+		m := Match{
 			RuleID:       "generic-high-entropy",
 			Provider:     "", // unmapped: the enricher turns this into a candidate
 			Severity:     "medium",
@@ -207,7 +230,23 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 			Line:         lineNumber(blob, loc[0]),
 			NearbyEnvVar: envVarIn(line),
 			NearbyHost:   firstHost(line),
-		})
+		}
+		// A DB/cache/broker password split from its host across variables can be
+		// attributed and probed when the neighbourhood names the engine and a
+		// routable host. The stored secret stays the password (its fingerprint
+		// and preview); ProbeURL carries the assembled connection URL, which is
+		// used only to validate liveness and is never persisted. Attribution is
+		// made only when the engine is unambiguous, so a probe never guesses the
+		// wrong protocol for a host.
+		if hostScopedKey(key) {
+			if c, ok := assembleDBConn(key, neigh, token); ok {
+				m.RuleID = "db-split-env"
+				m.Provider = c.engine
+				m.Severity = "high"
+				m.ProbeURL = c.url()
+			}
+		}
+		out = append(out, m)
 	}
 	return out
 }
@@ -237,7 +276,7 @@ func namedSuppressed(ruleID, path string, blob []byte, lo, hi int, secret string
 	case strings.HasPrefix(ruleID, "private-key") && !hasKeyMaterial(blob[lo:min(len(blob), lo+800)]):
 		return true // a PEM header with no key in it, e.g. a test-table literal
 	case strings.Contains(secret, "://") && placeholderURLCredential(secret):
-		return true // smtp://user:pass@host in a comment
+		return true // smtp://user:pass@host in a comment, ?password=${DB_PASS}
 	case ruleID == "google-api-key" && firebaseClientContext(path, blob, lo, hi):
 		return true // a Firebase client key, shipped inside every app on purpose
 	}
@@ -326,21 +365,49 @@ var placeholderPasswords = map[string]bool{
 // placeholderURLCredential reports scheme://user:password@host where the
 // password is a stand-in, a template variable, or the same as the user.
 func placeholderURLCredential(u string) bool {
-	_, rest, ok := strings.Cut(u, "://")
-	if !ok {
-		return false
-	}
-	userinfo, _, ok := strings.Cut(rest, "@")
-	if !ok {
-		return false
-	}
-	user, pass, ok := strings.Cut(userinfo, ":")
+	user, pass, ok := urlCredential(u)
 	if !ok {
 		return false
 	}
 	lp := strings.ToLower(pass)
 	return placeholderPasswords[lp] || strings.HasPrefix(pass, "${") || strings.HasPrefix(pass, "<") ||
 		strings.HasPrefix(pass, "{{") || strings.EqualFold(user, pass) || isPlaceholder(pass)
+}
+
+// urlCredential extracts the user and password from a connection URL, in any
+// of the three places drivers accept them: userinfo (scheme://user:pass@host),
+// query parameters (jdbc:postgresql://host/db?user=…&password=…) and SQL
+// Server's ;-separated properties (jdbc:sqlserver://host;user=…;password=…).
+func urlCredential(u string) (user, pass string, ok bool) {
+	_, rest, found := strings.Cut(u, "://")
+	if !found {
+		return "", "", false
+	}
+	authority := rest
+	if i := strings.IndexAny(rest, "/?;"); i >= 0 {
+		authority = rest[:i]
+	}
+	// userinfo form: scheme://user:pass@host. ok is whether a ":" split the
+	// userinfo, i.e. a password is present (an empty one still counts).
+	if userinfo, _, has := strings.Cut(authority, "@"); has {
+		user, pass, ok = strings.Cut(userinfo, ":")
+		return user, pass, ok
+	}
+	// query/property form: only a password= parameter sets ok, so a URL with no
+	// credentials (a plain webhook) reports none rather than an empty match.
+	for _, kv := range strings.FieldsFunc(rest, func(r rune) bool { return r == '?' || r == '&' || r == ';' }) {
+		k, v, kvOK := strings.Cut(kv, "=")
+		if !kvOK {
+			continue
+		}
+		switch strings.ToLower(k) {
+		case "user", "username":
+			user = v
+		case "password":
+			pass, ok = v, true
+		}
+	}
+	return user, pass, ok
 }
 
 // firebaseClientContext reports a Google API key that is a Firebase client key:
