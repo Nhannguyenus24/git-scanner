@@ -18,6 +18,21 @@ type Message struct {
 	Body    string
 }
 
+// DisclosureInfo is the operator's identity and the project's description,
+// configured from the environment. It personalises the disclosure mail so the
+// recipient knows who is contacting them and can look the project up.
+//
+// It carries no payment link, bounty or other ask. plan.md §0.3 keeps that out
+// of disclosure mail on purpose: a security notice that also solicits reads as
+// leverage and undermines the one thing the mail is for — getting the
+// credential rotated. The InfoURL is informational (the project's page), never
+// a donation link.
+type DisclosureInfo struct {
+	Project   string // e.g. "GitScanner, a community secret-scanning project"
+	Signature string // e.g. "— Nhan, a software engineer in Vietnam"
+	InfoURL   string // a page describing the project; optional
+}
+
 // Sender delivers a Message. Implementations must be safe for concurrent use.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
@@ -86,13 +101,18 @@ func (s *SMTPSender) Send(_ context.Context, m Message) error {
 // secret itself, and per plan.md §0.3 it never contains a payment link, a
 // bounty request or any other ask — the mail exists to get the credential
 // rotated, and anything that reads as leverage would undermine that.
-func RenderDisclosure(repo entity.Repository, findings []entity.Finding) Message {
+func RenderDisclosure(repo entity.Repository, findings []entity.Finding, info DisclosureInfo) Message {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "Hello,\n\n")
-	fmt.Fprintf(&b, "An automated scan of the public repository %s found %s that appear to be "+
-		"live credentials committed to the repository's history.\n\n",
-		repo.FullName(), plural(len(findings), "value", "values"))
+	project := info.Project
+	if project == "" {
+		project = "an automated secret-scanning project"
+	}
+	fmt.Fprintf(&b, "I run %s. A scan of the public repository %s found %s that look like "+
+		"live credentials committed to its history. I am writing so you can rotate them "+
+		"before someone else finds and abuses them.\n\n",
+		project, repo.FullName(), plural(len(findings), "value", "values"))
 
 	fmt.Fprintf(&b, "What was found:\n\n")
 	for _, f := range sortedBySeverity(findings) {
@@ -102,8 +122,13 @@ func RenderDisclosure(repo entity.Repository, findings []entity.Finding) Message
 		}
 		fmt.Fprintf(&b, "\n    value:    %s\n", f.MaskedPreview)
 		fmt.Fprintf(&b, "    severity: %s\n", f.Severity)
-		if f.ProviderSlug != "" {
+		if name := f.Metadata["provider_name"]; name != "" {
+			fmt.Fprintf(&b, "    provider: %s\n", name)
+		} else if f.ProviderSlug != "" {
 			fmt.Fprintf(&b, "    provider: %s\n", f.ProviderSlug)
+		}
+		for _, line := range enrichmentLines(f) {
+			fmt.Fprintf(&b, "    %s\n", line)
 		}
 		if f.ReachableFromHEAD {
 			fmt.Fprintf(&b, "    note:     still present on the default branch\n")
@@ -115,15 +140,22 @@ func RenderDisclosure(repo entity.Repository, findings []entity.Finding) Message
 
 	b.WriteString("Only a masked form of each value is shown above; the full values are not " +
 		"stored or included here.\n\n")
-	b.WriteString("What we suggest:\n\n")
+	b.WriteString("What I suggest:\n\n")
 	b.WriteString("  1. Rotate the affected credentials at the provider. This is the step that " +
 		"matters -- a credential in public git history should be treated as compromised " +
 		"even after the file is changed.\n")
 	b.WriteString("  2. Remove the values from the repository, including history if you can.\n")
 	b.WriteString("  3. Consider a pre-commit secret scan to catch the next one earlier.\n\n")
 	b.WriteString("If these are test or placeholder values, or you would rather not receive " +
-		"this kind of notice, reply and we will suppress future mail for your address or " +
+		"this kind of notice, reply and I will suppress future mail for your address or " +
 		"domain.\n")
+
+	if info.InfoURL != "" {
+		fmt.Fprintf(&b, "\nMore about the project: %s\n", info.InfoURL)
+	}
+	if info.Signature != "" {
+		fmt.Fprintf(&b, "\n%s\n", info.Signature)
+	}
 
 	return Message{
 		To:      "",
@@ -146,4 +178,30 @@ func plural(n int, one, many string) string {
 		return fmt.Sprintf("%d %s", n, one)
 	}
 	return fmt.Sprintf("%d %s", n, many)
+}
+
+// enrichmentLines turns the non-secret facts the enricher gathered into lines
+// for the mail: the provider category, whether a liveness probe found the key
+// still active, and any identity it read back (account, owner). It never emits a
+// secret — everything here is metadata the engine derived without the value.
+func enrichmentLines(f entity.Finding) []string {
+	var out []string
+	if c := f.Metadata["category"]; c != "" {
+		out = append(out, "category: "+c)
+	}
+	switch f.Metadata["probe_status"] {
+	case "live":
+		out = append(out, "status:   CONFIRMED LIVE by a check against the provider -- rotate this first")
+	case "dead":
+		out = append(out, "status:   the provider rejected it (already rotated or revoked)")
+	}
+	if id := f.Metadata["probe_owner"]; id != "" {
+		out = append(out, "account:  authenticates as "+id)
+	} else if id := f.Metadata["probe_account"]; id != "" {
+		out = append(out, "account:  "+id)
+	}
+	if a := f.Metadata["aws_account_id"]; a != "" {
+		out = append(out, "aws acct: "+a)
+	}
+	return out
 }
