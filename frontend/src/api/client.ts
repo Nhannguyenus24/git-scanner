@@ -42,6 +42,8 @@ export function createClient(rawBase: string) {
     pause:        (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/pause`),
     resume:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/resume`),
     cancel:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/cancel`),
+    rescan:       (id: string)                           => r<ScanJob>('POST', `/v1/scans/${id}/rescan`),
+    deleteScan:   (id: string)                           => r<unknown>('DELETE', `/v1/scans/${id}`),
     findings:     (f: FindingFilter)                     => r<{ findings: Finding[]; total: number }>('GET', `/v1/findings${query(f)}`),
     setStatus:    (id: string, status: FindingStatus)    => r<unknown>('PATCH', `/v1/findings/${id}`, { status }),
     repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),

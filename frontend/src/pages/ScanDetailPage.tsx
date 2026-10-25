@@ -10,6 +10,8 @@ import Typography from '@mui/material/Typography'
 import PauseIcon from '@mui/icons-material/Pause'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import StopIcon from '@mui/icons-material/Stop'
+import ReplayIcon from '@mui/icons-material/Replay'
+import DeleteIcon from '@mui/icons-material/DeleteOutline'
 import FindingsTable from '../components/FindingsTable'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
@@ -17,7 +19,7 @@ import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading } from '../components/States'
 import { duration, num, timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
-import { href } from '../hooks/useRoute'
+import { href, navigate } from '../hooks/useRoute'
 import { useTriage } from '../hooks/useTriage'
 import { useSettings } from '../store/settings'
 import { useT } from '../i18n'
@@ -43,6 +45,16 @@ export default function ScanDetailPage({ id }: { id: string }) {
     api[name](id).then(() => { notify(`Scan ${name}d`); scans.reload() })
       .catch(e => notify(e instanceof Error ? e.message : 'Failed', 'error'))
 
+  const rescan = () =>
+    api.rescan(id).then(j => { notify(t('scan.rescanned')); navigate(href('scans', j.id)) })
+      .catch(e => notify(e instanceof Error ? e.message : 'Failed', 'error'))
+
+  const remove = () => {
+    if (!window.confirm(t('scan.deleteConfirm'))) return
+    api.deleteScan(id).then(() => { notify(t('scan.deleted')); navigate(href('scans')) })
+      .catch(e => notify(e instanceof Error ? e.message : 'Failed', 'error'))
+  }
+
   return (
     <>
       <Breadcrumbs sx={{ mb: 1, fontSize: 13 }}>
@@ -56,6 +68,8 @@ export default function ScanDetailPage({ id }: { id: string }) {
           {scan.state === 'running' && <Button startIcon={<PauseIcon />} onClick={() => act('pause')}>{t('scan.pause')}</Button>}
           {scan.state === 'paused'  && <Button startIcon={<PlayArrowIcon />} onClick={() => act('resume')}>{t('scan.resume')}</Button>}
           {!TERMINAL.has(scan.state) && <Button color="error" startIcon={<StopIcon />} onClick={() => act('cancel')}>{t('scan.cancel')}</Button>}
+          {TERMINAL.has(scan.state) && <Button startIcon={<ReplayIcon />} onClick={rescan}>{t('scan.rescan')}</Button>}
+          {TERMINAL.has(scan.state) && <Button color="error" startIcon={<DeleteIcon />} onClick={remove}>{t('scan.delete')}</Button>}
         </>} />
 
       {scan.error && <Alert severity="error" sx={{ mb: 2 }}>{scan.error}</Alert>}

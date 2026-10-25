@@ -28,7 +28,9 @@ import (
 // are testable against a fake without pulling in pgx.
 type Store interface {
 	CreateTarget(ctx context.Context, t entity.Target) (entity.Target, error)
+	GetTarget(ctx context.Context, targetID entity.ID) (entity.Target, error)
 	CreateScanJob(ctx context.Context, targetID entity.ID) (entity.ScanJob, error)
+	DeleteScanJob(ctx context.Context, jobID entity.ID) error
 	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
 	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
 	GetRepository(ctx context.Context, repoID entity.ID) (entity.Repository, error)
@@ -74,10 +76,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/scans/user", s.handleScanUser)
 	mux.HandleFunc("POST /v1/scans/org", s.handleScanOrg)
 	mux.HandleFunc("GET /v1/scans/{id}", s.handleGetScan)
+	mux.HandleFunc("DELETE /v1/scans/{id}", s.handleDeleteScan)
 	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)
 	mux.HandleFunc("POST /v1/scans/{id}/pause", s.handlePause)
 	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /v1/scans/{id}/rescan", s.handleRescan)
 	mux.HandleFunc("POST /v1/repositories/{id}/disclose", s.handleDisclose)
 	s.catalogRoutes(mux)
 	return mux

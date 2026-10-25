@@ -66,8 +66,32 @@ export default function Layout({ page, onNewScan, badges = {}, children }: Props
             <Button size="small" onClick={onNewScan} startIcon={<AddIcon />}>{t('nav.scan')}</Button>
           </Box>
           <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 1400, mx: 'auto' }}>{children}</Box>
+          <Footer />
         </Box>
       </Box>
+    </Box>
+  )
+}
+
+// Footer is a deliberately faint line at the bottom of every page: a copyright
+// and the build the bundle was stamped with (vite.config.ts), so a screenshot or
+// a bug report carries the version without anyone having to ask.
+function Footer() {
+  const { t } = useT()
+  const year = new Date().getFullYear()
+  const build = [`v${__APP_VERSION__}`, __APP_COMMIT__, __BUILD_DATE__].filter(Boolean).join(' · ')
+  return (
+    <Box
+      component="footer"
+      sx={{
+        px: { xs: 2, md: 3 }, py: 2, mt: 2, textAlign: 'center',
+        color: 'text.disabled', fontSize: 11, opacity: 0.6,
+        userSelect: 'none', borderTop: 1, borderColor: 'divider',
+      }}
+    >
+      © {year} GitScanner · {t('footer.rights')}
+      <Box component="span" sx={{ mx: 0.75 }}>·</Box>
+      <Box component="span" sx={{ fontFamily: '"IBM Plex Mono", monospace' }}>{build}</Box>
     </Box>
   )
 }
