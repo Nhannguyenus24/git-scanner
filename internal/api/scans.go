@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -124,6 +125,93 @@ func (s *Server) handleListFindings(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"findings": out})
+}
+
+// handleDeleteScan removes a scan job and the findings it recorded (the DB
+// cascades). It is the dashboard's "delete scan result" action. The repository
+// and target survive, so a later scan of the same target still has them.
+func (s *Server) handleDeleteScan(w http.ResponseWriter, r *http.Request) {
+	id := entity.ID(r.PathValue("id"))
+	err := s.store.DeleteScanJob(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, errors.New("scan not found"))
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("scan deleted", "job", id.String())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRescan starts a fresh scan of an existing job's target. It creates a new
+// job rather than reviving the old one, so the history of both runs is kept, and
+// re-dispatches the same kind of work: a single repository is re-enqueued
+// directly, a user or org is re-enumerated through discovery.
+func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	old, err := s.store.GetScanJob(ctx, entity.ID(r.PathValue("id")))
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, errors.New("scan not found"))
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	target, err := s.store.GetTarget(ctx, old.TargetID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	job, err := s.store.CreateScanJob(ctx, target.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	switch target.Kind {
+	case entity.TargetRepo:
+		owner, name, perr := github.ParseRepoURL(target.Value)
+		if perr != nil {
+			s.writeError(w, http.StatusBadRequest, perr)
+			return
+		}
+		repo, rerr := s.store.UpsertRepository(ctx, entity.Repository{
+			TargetID: target.ID, Owner: owner, Name: name, CloneURL: target.Value,
+		})
+		if rerr != nil {
+			s.writeError(w, http.StatusInternalServerError, rerr)
+			return
+		}
+		if err := s.store.SetReposTotal(ctx, job.ID, 1); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := s.queue.EnqueueScan(ctx, job, repo); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		job.ReposTotal = 1
+	case entity.TargetUser, entity.TargetOrg:
+		// include_forks is not stored on the target, so a rescan uses the default
+		// (forks excluded); submit a new scan from the dialog to change it.
+		if err := s.queue.EnqueueDiscovery(ctx, dispatch.DiscoveryRequest{
+			JobID: job.ID, TargetID: target.ID, Kind: string(target.Kind), Value: target.Value,
+		}); err != nil {
+			s.writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	default:
+		s.writeError(w, http.StatusBadRequest, fmt.Errorf("cannot rescan target kind %q", target.Kind))
+		return
+	}
+
+	s.log.Info("rescan queued", "job", job.ID.String(), "from", old.ID.String(), "kind", string(target.Kind))
+	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
 func toScanResponse(j entity.ScanJob) scanJobResponse {

@@ -22,6 +22,7 @@ type fakeStore struct {
 	jobs     map[entity.ID]entity.ScanJob
 	findings map[entity.ID][]entity.Finding
 	repos    map[entity.ID]entity.Repository
+	targets  map[entity.ID]entity.Target
 	// openFindings is keyed by repository id, for the disclosure handler.
 	openFindings map[entity.ID][]entity.Finding
 }
@@ -31,13 +32,30 @@ func newFakeStore() *fakeStore {
 		jobs:         map[entity.ID]entity.ScanJob{},
 		findings:     map[entity.ID][]entity.Finding{},
 		repos:        map[entity.ID]entity.Repository{},
+		targets:      map[entity.ID]entity.Target{},
 		openFindings: map[entity.ID][]entity.Finding{},
 	}
 }
 
 func (s *fakeStore) CreateTarget(_ context.Context, t entity.Target) (entity.Target, error) {
 	t.ID = id.New()
+	s.targets[t.ID] = t
 	return t, nil
+}
+func (s *fakeStore) GetTarget(_ context.Context, targetID entity.ID) (entity.Target, error) {
+	t, ok := s.targets[targetID]
+	if !ok {
+		return entity.Target{}, store.ErrNotFound
+	}
+	return t, nil
+}
+func (s *fakeStore) DeleteScanJob(_ context.Context, jobID entity.ID) error {
+	if _, ok := s.jobs[jobID]; !ok {
+		return store.ErrNotFound
+	}
+	delete(s.jobs, jobID)
+	delete(s.findings, jobID)
+	return nil
 }
 func (s *fakeStore) CreateScanJob(_ context.Context, targetID entity.ID) (entity.ScanJob, error) {
 	j := entity.ScanJob{ID: id.New(), TargetID: targetID, State: entity.ScanQueued}
@@ -257,5 +275,72 @@ func TestDiscloseRejectsWhenNoRecipientDerivable(t *testing.T) {
 	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "bot@users.noreply.github.com"}}
 	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestDeleteScan(t *testing.T) {
+	srv, st, _ := newServer(t)
+	// Submit a repo scan, then delete the job it created.
+	rec := do(srv, http.MethodPost, "/v1/scans/repo", `{"url":"https://github.com/owner/repo.git"}`)
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	jobID := resp["id"].(string)
+
+	rec = do(srv, http.MethodDelete, "/v1/scans/"+jobID, "")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body %s", rec.Code, rec.Body)
+	}
+	if _, ok := st.jobs[entity.ID(jobID)]; ok {
+		t.Error("job still present after delete")
+	}
+	// Deleting again is a 404.
+	if rec = do(srv, http.MethodDelete, "/v1/scans/"+jobID, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("second delete status = %d, want 404", rec.Code)
+	}
+}
+
+func TestRescanRepoCreatesNewJobAndEnqueues(t *testing.T) {
+	srv, _, q := newServer(t)
+	rec := do(srv, http.MethodPost, "/v1/scans/repo", `{"url":"https://github.com/owner/repo.git"}`)
+	var first map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &first)
+	firstID := first["id"].(string)
+
+	rec = do(srv, http.MethodPost, "/v1/scans/"+firstID+"/rescan", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rescan status = %d, body %s", rec.Code, rec.Body)
+	}
+	var second map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &second)
+	if second["id"] == firstID || second["id"] == "" {
+		t.Errorf("rescan should create a new job id, got %v (first %v)", second["id"], firstID)
+	}
+	if second["state"] != "queued" {
+		t.Errorf("state = %v, want queued", second["state"])
+	}
+	if q.scans != 2 { // the original submit plus the rescan
+		t.Errorf("scans enqueued = %d, want 2", q.scans)
+	}
+}
+
+func TestRescanUserEnqueuesDiscovery(t *testing.T) {
+	srv, _, q := newServer(t)
+	rec := do(srv, http.MethodPost, "/v1/scans/user", `{"name":"octocat","include_forks":false}`)
+	var first map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &first)
+
+	rec = do(srv, http.MethodPost, "/v1/scans/"+first["id"].(string)+"/rescan", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rescan status = %d, body %s", rec.Code, rec.Body)
+	}
+	if q.discoveries != 2 {
+		t.Errorf("discoveries = %d, want 2", q.discoveries)
+	}
+}
+
+func TestRescanNotFound(t *testing.T) {
+	srv, _, _ := newServer(t)
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+id.New().String()+"/rescan", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }

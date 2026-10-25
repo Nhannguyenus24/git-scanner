@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
@@ -11,7 +11,11 @@ import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
+import IconButton from '@mui/material/IconButton'
+import Tooltip from '@mui/material/Tooltip'
 import AddIcon from '@mui/icons-material/Add'
+import ReplayIcon from '@mui/icons-material/Replay'
+import DeleteIcon from '@mui/icons-material/DeleteOutline'
 import { PageHeader } from '../components/Layout'
 import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading } from '../components/States'
@@ -20,6 +24,7 @@ import { useResource } from '../hooks/useResource'
 import { href, navigate } from '../hooks/useRoute'
 import { useT } from '../i18n'
 import { useSettings } from '../store/settings'
+import { useToast } from '../store/toast'
 import { TERMINAL } from '../types'
 
 type View = 'all' | 'active' | 'done'
@@ -27,11 +32,25 @@ type View = 'all' | 'active' | 'done'
 export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
   const { api } = useSettings()
   const { t } = useT()
+  const notify = useToast()
   const res = useResource(() => api.listScans(200), [api], 3000)
   const [view, setView] = useState<View>('all')
 
   const scans = useMemo(() => (res.data?.scans ?? []).filter(s =>
     view === 'all' || (view === 'active') !== TERMINAL.has(s.state)), [res.data, view])
+
+  // Row actions stop the row's navigate-on-click from firing.
+  const rescan = (e: MouseEvent, id: string) => {
+    e.stopPropagation()
+    api.rescan(id).then(j => { notify(t('scan.rescanned')); navigate(href('scans', j.id)) })
+      .catch(err => notify(err instanceof Error ? err.message : 'Failed', 'error'))
+  }
+  const remove = (e: MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!window.confirm(t('scan.deleteConfirm'))) return
+    api.deleteScan(id).then(() => { notify(t('scan.deleted')); res.reload() })
+      .catch(err => notify(err instanceof Error ? err.message : 'Failed', 'error'))
+  }
 
   if (res.loading) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
@@ -64,6 +83,7 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
                   <TableCell align="right">{t('scans.col.newFindings')}</TableCell>
                   <TableCell>{t('scans.col.started')}</TableCell>
                   <TableCell>{t('scans.col.duration')}</TableCell>
+                  <TableCell align="right" />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -83,6 +103,22 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
                     <TableCell align="right" sx={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{s.findings_count}</TableCell>
                     <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{timeAgo(s.created_at)}</TableCell>
                     <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{duration(s.started_at, s.finished_at)}</TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                      {TERMINAL.has(s.state) && (
+                        <>
+                          <Tooltip title={t('scan.rescan')}>
+                            <IconButton size="small" onClick={e => rescan(e, s.id)} sx={{ color: 'text.secondary' }}>
+                              <ReplayIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title={t('scan.delete')}>
+                            <IconButton size="small" onClick={e => remove(e, s.id)} sx={{ color: 'text.secondary' }}>
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

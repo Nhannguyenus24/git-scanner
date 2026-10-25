@@ -168,6 +168,41 @@ func (db *DB) GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, 
 	return j, nil
 }
 
+// GetTarget loads one scan target, so a rescan can re-dispatch the same kind of
+// work (a repo URL, or a user/org to enumerate) without the caller resupplying it.
+func (db *DB) GetTarget(ctx context.Context, targetID entity.ID) (entity.Target, error) {
+	const q = `SELECT id, kind, value, allowlist, created_at FROM targets WHERE id = $1`
+	var t entity.Target
+	var kind string
+	err := db.pool.QueryRow(ctx, q, targetID).Scan(&t.ID, &kind, &t.Value, &t.Allowlist, &t.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return entity.Target{}, ErrNotFound
+	}
+	if err != nil {
+		return entity.Target{}, fmt.Errorf("store: get target: %w", err)
+	}
+	t.Kind = entity.TargetKind(kind)
+	return t, nil
+}
+
+// DeleteScanJob removes a scan job and, by the ON DELETE CASCADE on
+// findings.scan_job_id, the findings it recorded. The repository and target
+// rows are left untouched: they are shared across scans and owned by the target.
+//
+// The analytics rollups are counters decoupled from findings (no foreign key),
+// so a delete does not decrement them — the same already-documented limitation
+// as a reclassification; a clean rollup needs a data wipe, not a single delete.
+func (db *DB) DeleteScanJob(ctx context.Context, jobID entity.ID) error {
+	tag, err := db.pool.Exec(ctx, `DELETE FROM scan_jobs WHERE id = $1`, jobID)
+	if err != nil {
+		return fmt.Errorf("store: delete scan job: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def
