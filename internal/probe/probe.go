@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 
 	"github.com/mservice/gitscanner/internal/scan"
@@ -27,6 +28,7 @@ import (
 type Prober struct {
 	client    *http.Client
 	endpoints map[string]string // provider -> base URL; overridable in tests
+	dial      dialFunc          // database connections; guardedDial unless a test overrides it
 }
 
 // New returns a Prober that calls the real provider endpoints.
@@ -34,7 +36,14 @@ func New(client *http.Client) *Prober {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Prober{client: client, endpoints: defaultEndpoints}
+	return &Prober{client: client, endpoints: defaultEndpoints, dial: guardedDial}
+}
+
+// WithDialer replaces the guarded dialer the database probes use, so tests can
+// reach a fake server on loopback, which the real dialer refuses.
+func (p *Prober) WithDialer(d func(ctx context.Context, network, addr string) (net.Conn, error)) *Prober {
+	p.dial = d
+	return p
 }
 
 // WithEndpoints overrides provider base URLs, so tests can point at httptest
@@ -75,6 +84,9 @@ var probers = map[string]prober{
 // Probe routes to the provider's identity call, or reports Unverified when no
 // prober is defined for it.
 func (p *Prober) Probe(ctx context.Context, provider, secret string) scan.ProbeResult {
+	if db, ok := dbProbers[provider]; ok {
+		return db(ctx, p.dial, secret) // the secret is the whole connection URL
+	}
 	fn, ok := probers[provider]
 	if !ok {
 		return scan.ProbeResult{Outcome: scan.ProbeUnverified}

@@ -44,17 +44,25 @@ func (r *Rule) compile(pattern string) error {
 	return nil
 }
 
-// secretIndex returns the byte range of the captured secret in b, or ok=false.
-func (r *Rule) secretIndex(b []byte) (lo, hi int, ok bool) {
-	m := r.re.FindSubmatchIndex(b)
-	if m == nil {
-		return 0, 0, false
-	}
+// maxMatchesPerRule bounds how many matches one rule yields from one blob. A
+// limit is needed because a generated file can hold thousands of URL-shaped
+// strings; 64 is far beyond any real config file.
+const maxMatchesPerRule = 64
+
+// secretIndexes returns the byte range of the captured secret for every match
+// in b. It used to return only the first, which was harmless while each file
+// held one key of a kind — but a config with a localhost URL above the
+// production one had the production URL hidden behind the dropped local one.
+func (r *Rule) secretIndexes(b []byte) [][2]int {
 	i := r.re.SubexpIndex("secret") * 2
-	if i < 0 || m[i] < 0 {
-		return 0, 0, false
+	var out [][2]int
+	for _, m := range r.re.FindAllSubmatchIndex(b, maxMatchesPerRule) {
+		if i < 0 || m[i] < 0 {
+			continue
+		}
+		out = append(out, [2]int{m[i], m[i+1]})
 	}
-	return m[i], m[i+1], true
+	return out
 }
 
 // keywordsPresent reports whether every keyword appears in text (case-insensitive).

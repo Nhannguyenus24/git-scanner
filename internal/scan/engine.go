@@ -87,8 +87,9 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 	// produced one. They are few — the secret itself is already reduced to a
 	// fingerprint — so holding them costs little.
 	type held struct {
-		f      entity.Finding
-		secret string
+		f        entity.Finding
+		secret   string
+		probeURL string // when set, validate this instead of secret (split-var DB creds)
 	}
 	var pending []held
 	findings := func() []entity.Finding {
@@ -108,7 +109,7 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 
 		_, reachable := headOIDs[b.OID]
 		for _, m := range e.det.Detect(b.Path, b.Data) {
-			pending = append(pending, held{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret})
+			pending = append(pending, held{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret, probeURL: m.ProbeURL})
 		}
 		return nil
 	})
@@ -133,7 +134,11 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 			if pending[i].f.ProviderSlug == "" {
 				continue // the generic pass names no provider to probe against
 			}
-			if e.probe(ctx, &pending[i].f, pending[i].secret) {
+			probeInput := pending[i].secret
+			if pending[i].probeURL != "" {
+				probeInput = pending[i].probeURL // a URL assembled from split DB settings
+			}
+			if e.probe(ctx, &pending[i].f, probeInput) {
 				res.ProbesLive++
 			}
 		}
