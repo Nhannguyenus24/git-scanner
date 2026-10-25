@@ -84,7 +84,10 @@ func (s *fakeStore) SetScanState(_ context.Context, jobID entity.ID, to entity.S
 	return nil
 }
 
-type fakeQueue struct{ scans, discoveries, notifies int }
+type fakeQueue struct {
+	scans, discoveries, notifies int
+	lastNotify                  dispatch.NotifyRequest
+}
 
 func (q *fakeQueue) EnqueueScan(context.Context, entity.ScanJob, entity.Repository) error {
 	q.scans++
@@ -94,8 +97,9 @@ func (q *fakeQueue) EnqueueDiscovery(context.Context, dispatch.DiscoveryRequest)
 	q.discoveries++
 	return nil
 }
-func (q *fakeQueue) EnqueueNotify(context.Context, dispatch.NotifyRequest) error {
+func (q *fakeQueue) EnqueueNotify(_ context.Context, req dispatch.NotifyRequest) error {
 	q.notifies++
+	q.lastNotify = req
 	return nil
 }
 
@@ -220,5 +224,38 @@ func TestPauseResumeCancel(t *testing.T) {
 	}
 	if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/cancel", ""); rec.Code != http.StatusAccepted {
 		t.Errorf("cancel status = %d", rec.Code)
+	}
+}
+
+// With no recipient in the request, disclosure falls back to the email of
+// whoever committed the leaked credential — from data the scan already holds.
+func TestDiscloseDerivesRecipientFromCommitter(t *testing.T) {
+	srv, st, q := newServer(t)
+	repoID := id.New()
+	st.repos[repoID] = entity.Repository{Owner: "octocat", Name: "demo"}
+	st.openFindings[repoID] = []entity.Finding{
+		{ID: id.New(), AuthorEmail: "dev@example.com"},
+		{ID: id.New(), AuthorEmail: "dev@example.com"},
+		{ID: id.New(), AuthorEmail: "octocat@users.noreply.github.com"}, // privacy address, ignored
+	}
+
+	rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if q.lastNotify.Recipient != "dev@example.com" {
+		t.Errorf("recipient = %q, want dev@example.com", q.lastNotify.Recipient)
+	}
+}
+
+// With no recipient and no usable committer email, the request is rejected
+// rather than guessed at.
+func TestDiscloseRejectsWhenNoRecipientDerivable(t *testing.T) {
+	srv, st, _ := newServer(t)
+	repoID := id.New()
+	st.repos[repoID] = entity.Repository{Owner: "a", Name: "b"}
+	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "bot@users.noreply.github.com"}}
+	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }

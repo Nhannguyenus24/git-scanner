@@ -47,7 +47,12 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	bucket := d.Redis.NewBucket("notify:mail", float64(cap), window)
 
 	sender := newSender(d)
-	worker := notify.New(d.DB, sender, bucket, d.Log)
+	info := notify.DisclosureInfo{
+		Project:   config.GetOr("DISCLOSURE_PROJECT", ""),
+		Signature: config.GetOr("DISCLOSURE_SIGNATURE", ""),
+		InfoURL:   config.GetOr("DISCLOSURE_INFO_URL", ""),
+	}
+	worker := notify.New(d.DB, sender, bucket, info, d.Log)
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueNotify, notifyPrefetch, notifyMaxRetry)
 	if err != nil {

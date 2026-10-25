@@ -4,11 +4,32 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 )
+
+// pickRecipient chooses the most frequent real committer email across the
+// findings, ignoring GitHub's noreply privacy addresses and anything that does
+// not look like an address. It returns "" when there is no usable email, which
+// the caller surfaces as a validation error.
+func pickRecipient(findings []entity.Finding) string {
+	count := map[string]int{}
+	var best string
+	for _, f := range findings {
+		e := strings.ToLower(strings.TrimSpace(f.AuthorEmail))
+		if e == "" || strings.Contains(e, "noreply") || !strings.Contains(e, "@") || !strings.Contains(e, ".") {
+			continue
+		}
+		count[e]++
+		if count[e] > count[best] {
+			best = e
+		}
+	}
+	return best
+}
 
 // discloseRequest asks for one disclosure mail about a repository. FindingIDs
 // is optional: omitted, the disclosure covers every open finding the repository
@@ -44,6 +65,12 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	open, err := s.store.ListOpenFindingsByRepository(ctx, repoID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	findingIDs, err := s.discloseFindings(ctx, repoID, req.FindingIDs)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
@@ -52,6 +79,14 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 	if len(findingIDs) == 0 {
 		s.writeError(w, http.StatusConflict, errors.New("repository has no open findings to disclose"))
 		return
+	}
+
+	// With no recipient given, fall back to the email of whoever committed the
+	// leaked credentials — the person this notice is for, from data the scan
+	// already has. GitHub's privacy addresses are not real inboxes, so they are
+	// not used. The operator can always pass an explicit recipient instead.
+	if req.Recipient == "" {
+		req.Recipient = pickRecipient(open)
 	}
 
 	// Validate the whole notification rather than the address alone, so the API

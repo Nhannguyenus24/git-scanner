@@ -48,12 +48,13 @@ type Worker struct {
 	store  Store
 	sender Sender
 	limit  Limiter
+	info   DisclosureInfo
 	log    *slog.Logger
 }
 
 // New builds a notifier worker.
-func New(store Store, sender Sender, limit Limiter, log *slog.Logger) *Worker {
-	return &Worker{store: store, sender: sender, limit: limit, log: log}
+func New(store Store, sender Sender, limit Limiter, info DisclosureInfo, log *slog.Logger) *Worker {
+	return &Worker{store: store, sender: sender, limit: limit, info: info, log: log}
 }
 
 // Handle processes one NotifyTask delivery (the rabbit.Handler for notify.tasks).
@@ -163,7 +164,7 @@ func (w *Worker) send(ctx context.Context, n entity.Notification) error {
 		return fmt.Errorf("notify: load findings: %w", err)
 	}
 
-	msg := RenderDisclosure(repo, findings)
+	msg := RenderDisclosure(repo, findings, w.info)
 	msg.To = n.Recipient
 
 	if err := w.sender.Send(ctx, msg); err != nil {
