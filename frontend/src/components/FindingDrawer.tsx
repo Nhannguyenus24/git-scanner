@@ -22,7 +22,22 @@ import { STATUSES, type Finding, type FindingStatus } from '../types'
 
 // Metadata keys already shown in their own section, so the raw table below
 // lists only what is left.
-const SHOWN = new Set(['provider_name', 'category', 'probe_status', 'probe_owner', 'probe_account', 'probe_team'])
+const SHOWN = new Set([
+  'provider_name', 'category', 'probe_status', 'probe_owner', 'probe_account', 'probe_team',
+  'probe_rate_remaining', 'probe_rate_limit', 'probe_tokens_remaining', 'probe_scopes',
+  'probe_country', 'probe_currency',
+])
+
+// Quota and account facts the probe read from the provider's own response, in
+// the order they are worth reading: how much of the allowance is left, then what
+// the key can do, then where the account lives.
+const QUOTA_ROWS: { key: string; label: string; limitKey?: string }[] = [
+  { key: 'probe_rate_remaining', label: 'detail.rateRemaining', limitKey: 'probe_rate_limit' },
+  { key: 'probe_tokens_remaining', label: 'detail.tokensRemaining' },
+  { key: 'probe_scopes', label: 'detail.scopes' },
+  { key: 'probe_country', label: 'detail.country' },
+  { key: 'probe_currency', label: 'detail.currency' },
+]
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -106,6 +121,24 @@ export default function FindingDrawer({ finding: f, onClose, onStatus }: {
               </Field>
             )}
           </Section>
+
+          {QUOTA_ROWS.some(r => f.metadata?.[r.key]) && (
+            <>
+              <Divider />
+              <Section title={t('detail.quota')}>
+                {QUOTA_ROWS.filter(r => f.metadata?.[r.key]).map(r => (
+                  <Field key={r.key} label={t(r.label)}>
+                    <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums' }}>{f.metadata[r.key]}</Box>
+                    {r.limitKey && f.metadata[r.limitKey] && (
+                      <Box component="span" sx={{ color: 'text.secondary' }}> / {f.metadata[r.limitKey]}</Box>
+                    )}
+                  </Field>
+                ))}
+                <Box sx={{ fontSize: 11, color: 'text.disabled', mt: 1 }}>{t('detail.quotaNote')}</Box>
+              </Section>
+            </>
+          )}
+
           <Divider />
 
           <Section title={t('detail.where')}>

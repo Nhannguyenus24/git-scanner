@@ -2324,6 +2324,76 @@ const DICT: Record<string, Entry> = {
     fr: "Métadonnées",
   },
 
+  'detail.quota': {
+    en: "Quota & limits",
+    vi: "Hạn mức & giới hạn",
+    it: "Quota e limiti",
+    zh: "配额与限制",
+    es: "Cuota y límites",
+    de: "Kontingent & Limits",
+    fr: "Quota et limites",
+  },
+
+  'detail.rateRemaining': {
+    en: "Requests left",
+    vi: "Request còn lại",
+    it: "Richieste rimaste",
+    zh: "剩余请求",
+    es: "Peticiones restantes",
+    de: "Verbleibende Anfragen",
+    fr: "Requêtes restantes",
+  },
+
+  'detail.tokensRemaining': {
+    en: "Tokens left",
+    vi: "Token còn lại",
+    it: "Token rimasti",
+    zh: "剩余令牌",
+    es: "Tokens restantes",
+    de: "Verbleibende Tokens",
+    fr: "Jetons restants",
+  },
+
+  'detail.scopes': {
+    en: "Scopes",
+    vi: "Phạm vi quyền",
+    it: "Ambiti",
+    zh: "权限范围",
+    es: "Ámbitos",
+    de: "Berechtigungen",
+    fr: "Portées",
+  },
+
+  'detail.country': {
+    en: "Country",
+    vi: "Quốc gia",
+    it: "Paese",
+    zh: "国家",
+    es: "País",
+    de: "Land",
+    fr: "Pays",
+  },
+
+  'detail.currency': {
+    en: "Currency",
+    vi: "Tiền tệ",
+    it: "Valuta",
+    zh: "货币",
+    es: "Moneda",
+    de: "Währung",
+    fr: "Devise",
+  },
+
+  'detail.quotaNote': {
+    en: "Read from the provider during the liveness check; a snapshot at scan time.",
+    vi: "Đọc từ provider trong lúc kiểm tra live; là ảnh chụp tại thời điểm quét.",
+    it: "Letto dal provider durante il controllo di validità; istantanea al momento della scansione.",
+    zh: "在有效性检查时从提供方读取；为扫描时的快照。",
+    es: "Leído del proveedor durante la verificación de vigencia; una instantánea al escanear.",
+    de: "Beim Gültigkeitscheck vom Anbieter gelesen; Momentaufnahme zur Scan-Zeit.",
+    fr: "Lu auprès du fournisseur lors du test de validité ; un instantané au moment du scan.",
+  },
+
   'repos.empty': {
     en: 'No repositories match',
     vi: 'Không có kho nào khớp',
