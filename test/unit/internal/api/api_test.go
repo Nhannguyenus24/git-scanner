@@ -28,6 +28,31 @@ type fakeStore struct {
 	openFindings map[entity.ID][]entity.Finding
 	// notifyOff is inverted so the zero value leaves disclosure enabled.
 	notifyOff bool
+	// maskOff likewise: the zero value keeps masking on, as production does.
+	maskOff bool
+	owners  []string
+}
+
+func (s *fakeStore) GetSettings(context.Context) (store.Settings, error) {
+	return store.Settings{NotificationsEnabled: !s.notifyOff, MaskingEnabled: !s.maskOff, UnmaskOwners: s.owners}, nil
+}
+func (s *fakeStore) SetMaskingEnabled(_ context.Context, on bool) error {
+	s.maskOff = !on
+	return nil
+}
+func (s *fakeStore) AddUnmaskOwner(_ context.Context, owner string) error {
+	s.owners = append(s.owners, strings.ToLower(owner))
+	return nil
+}
+func (s *fakeStore) RemoveUnmaskOwner(_ context.Context, owner string) error {
+	out := s.owners[:0]
+	for _, o := range s.owners {
+		if o != strings.ToLower(owner) {
+			out = append(out, o)
+		}
+	}
+	s.owners = out
+	return nil
 }
 
 func (s *fakeStore) NotificationsEnabled(context.Context) (bool, error) { return !s.notifyOff, nil }

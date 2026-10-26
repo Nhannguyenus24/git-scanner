@@ -156,38 +156,3 @@ func (s *Server) discloseFindings(ctx context.Context, repoID entity.ID, request
 	}
 	return out, nil
 }
-
-type settingsResponse struct {
-	NotificationsEnabled bool `json:"notifications_enabled"`
-}
-
-func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	on, err := s.store.NotificationsEnabled(r.Context())
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, settingsResponse{NotificationsEnabled: on})
-}
-
-// handlePutSettings flips the disclosure switch. The body names the field
-// explicitly, so an empty or mistyped request cannot turn mail on by default.
-func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NotificationsEnabled *bool `json:"notifications_enabled"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		s.writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	if req.NotificationsEnabled == nil {
-		s.writeError(w, http.StatusBadRequest, errors.New("notifications_enabled is required"))
-		return
-	}
-	if err := s.store.SetNotificationsEnabled(r.Context(), *req.NotificationsEnabled); err != nil {
-		s.writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	s.log.Info("notifications switched", "enabled", *req.NotificationsEnabled)
-	writeJSON(w, http.StatusOK, settingsResponse{NotificationsEnabled: *req.NotificationsEnabled})
-}

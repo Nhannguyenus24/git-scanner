@@ -16,6 +16,7 @@ import (
 // fakeCatalog records the filter it was asked for and the triage it applied.
 type fakeCatalog struct {
 	filter   store.FindingFilter
+	sealed   []byte // returned on the row when the filter asks to reveal
 	statuses map[entity.ID]entity.FindingStatus
 	jobs     []store.JobSummary
 }
@@ -26,7 +27,11 @@ func (c *fakeCatalog) ListScanJobs(context.Context, int) ([]store.JobSummary, er
 
 func (c *fakeCatalog) SearchFindings(_ context.Context, f store.FindingFilter) ([]store.FindingRow, int, error) {
 	c.filter = f
-	return []store.FindingRow{{ID: "f1", RepoOwner: "o", RepoName: "r", Severity: "high"}}, 7, nil
+	row := store.FindingRow{ID: "f1", RepositoryID: "r1", RepoOwner: "o", RepoName: "r", Severity: "high", MaskedPreview: "sk_t…7890"}
+	if f.Reveal && c.sealed != nil {
+		row.Fingerprint, row.Sealed = "fp1", c.sealed
+	}
+	return []store.FindingRow{row}, 7, nil
 }
 
 func (c *fakeCatalog) SetFindingStatus(_ context.Context, id entity.ID, s entity.FindingStatus) error {

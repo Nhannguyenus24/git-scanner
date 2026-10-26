@@ -18,6 +18,7 @@ import (
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/scan"
+	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
@@ -37,6 +38,15 @@ type Worker struct {
 	db     *store.DB
 	disp   Enqueuer
 	log    *slog.Logger
+	sealer *secrets.Sealer // nil unless SECRET_SEAL_KEY is configured
+}
+
+// WithSealer lets the worker keep, sealed, the credentials found in
+// repositories whose owner is on the unmask list. Without it nothing is kept,
+// whatever the list says.
+func (w *Worker) WithSealer(s *secrets.Sealer) *Worker {
+	w.sealer = s
+	return w
 }
 
 // New builds a worker.
@@ -87,6 +97,13 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	_ = w.db.SetScanState(ctx, jobID, entity.ScanRunning, "")
 
 	sink := &storeSink{w: w, task: task}
+	if w.sealer != nil && repoErr == nil {
+		keep, err := w.db.IsUnmaskOwner(ctx, repo.Owner)
+		if err != nil {
+			return err
+		}
+		sink.keep = keep
+	}
 	res, err := w.engine.Scan(ctx, task.JobId, task.RepositoryId, task.CloneUrl, sink)
 	if err != nil {
 		w.log.Error("scan failed", append([]any{"job", task.JobId, "error", err}, meta...)...)
@@ -100,7 +117,7 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	w.log.Info("scan done", append([]any{
 		"job", task.JobId, "blobs", res.BlobsScanned,
 		"findings", sink.inserted, "reclassified", sink.reclassified,
-		"attributed", sink.attributed, "app_type", res.AppType,
+		"attributed", sink.attributed, "kept", sink.kept, "app_type", res.AppType,
 	}, meta...)...)
 
 	// The detected stack is worth keeping: it feeds severity scoring (plan.md
@@ -138,6 +155,11 @@ type storeSink struct {
 	inserted     int
 	reclassified int
 	attributed   int // existing rows given their introducing commit
+
+	// keep is set for an unmask-listed owner's repository; kept counts the
+	// values sealed, for the log line. Never the values themselves.
+	keep bool
+	kept int
 
 	// announce holds the findings stored by this delivery. They cannot be
 	// published as they are found: the event carries the repository's app type,
@@ -272,4 +294,21 @@ func (w *Worker) jobEnded(ctx context.Context, task *gpb.ScanTask) (bool, error)
 		return true, nil
 	}
 	return false, nil
+}
+
+// KeepsSecrets implements scan.SecretKeeper.
+func (s *storeSink) KeepsSecrets() bool { return s.keep }
+
+// KeepSecret seals the credential under its repository and fingerprint and
+// stores it. The plaintext goes no further than the sealer.
+func (s *storeSink) KeepSecret(ctx context.Context, f entity.Finding, secret string) error {
+	sealed, err := s.w.sealer.Seal(secret, store.SealedAAD(f.RepositoryID, f.Fingerprint))
+	if err != nil {
+		return err
+	}
+	if err := s.w.db.KeepSealedSecret(ctx, f.RepositoryID, f.Fingerprint, sealed); err != nil {
+		return err
+	}
+	s.kept++
+	return nil
 }

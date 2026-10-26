@@ -24,6 +24,7 @@ import (
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
+	"github.com/mservice/gitscanner/libs/id"
 	"github.com/mservice/gitscanner/libs/observability"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -226,4 +227,101 @@ func TestWorkerSkipsCancelledJob(t *testing.T) {
 	if got.State != entity.ScanCancelled || got.ReposScanned != 0 {
 		t.Errorf("job = %s with %d scanned, want cancelled with 0", got.State, got.ReposScanned)
 	}
+}
+
+// Only an unmask-listed owner's credentials are kept, and what is kept opens
+// back to the value the scan found. Another owner's repository, scanned by the
+// same worker, keeps nothing.
+func TestWorkerSealsOnlyUnmaskedOwners(t *testing.T) {
+	ctx := context.Background()
+	log := observability.NewLogger("test", "error")
+
+	db, err := store.Open(ctx, env(t, "POSTGRES_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	sealer, err := secrets.NewSealer("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasher, _ := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	engine := scan.NewEngine(
+		&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
+		scan.NewDetector(scan.BootstrapRuleset()), hasher)
+	worker := scanworker.New(engine, db, discardEnqueuer{}, log).WithSealer(sealer)
+
+	listed := "unmask-" + id.New().String()[:8]
+	if err := db.AddUnmaskOwner(ctx, listed); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.RemoveUnmaskOwner(context.Background(), listed) })
+
+	scanAs := func(owner string) entity.ID {
+		target, err := db.CreateTarget(ctx, entity.Target{Kind: entity.TargetRepo, Value: "https://github.com/" + owner + "/r.git"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := db.CreateScanJob(ctx, target.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.DeleteScanJob(context.Background(), job.ID) })
+		repo, err := db.UpsertRepository(ctx, entity.Repository{
+			TargetID: target.ID, Owner: owner, Name: "r-" + job.ID.String()[:8], CloneURL: "file://" + buildRepo(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := proto.Marshal(&gpb.ScanTask{JobId: job.ID.String(), RepositoryId: repo.ID.String(), CloneUrl: repo.CloneURL})
+		if err := worker.Handle(ctx, rabbit.Delivery{Body: body}); err != nil {
+			t.Fatal(err)
+		}
+		return repo.ID
+	}
+
+	sealedFor := func(repoID entity.ID) (fp string, sealed []byte, n int) {
+		rows, err := db.Pool().Query(ctx, `SELECT fingerprint, sealed FROM sealed_secrets WHERE repository_id = $1`, repoID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			if err := rows.Scan(&fp, &sealed); err != nil {
+				t.Fatal(err)
+			}
+			n++
+		}
+		return fp, sealed, n
+	}
+
+	fp, sealed, n := sealedFor(scanAs(strings.ToUpper(listed)))
+	if n == 0 {
+		t.Fatal("nothing kept for an unmask-listed owner")
+	}
+	repoRows, _, _ := db.SearchFindings(ctx, store.FindingFilter{Query: listed, Reveal: true})
+	if len(repoRows) == 0 {
+		t.Fatal("finding not found")
+	}
+	got, err := sealer.Open(sealed, store.SealedAAD(repoRows[0].RepositoryID, fp))
+	if err != nil {
+		t.Fatalf("kept value does not open: %v", err)
+	}
+	if !strings.HasPrefix(got, "sk_live_") {
+		t.Errorf("kept value is not the credential the scan found")
+	}
+
+	if _, _, n := sealedFor(scanAs("someone-else-" + id.New().String()[:8])); n != 0 {
+		t.Errorf("%d values kept for an owner not on the list", n)
+	}
+}
+
+type discardEnqueuer struct{}
+
+func (discardEnqueuer) EnqueueEnrich(context.Context, dispatch.EnrichRequest) error { return nil }
+func (discardEnqueuer) PublishFinding(context.Context, entity.Finding, string, string) error {
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/notify"
 	"github.com/mservice/gitscanner/internal/scan"
+	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/libs/config"
 )
 
@@ -45,10 +46,15 @@ var serveSpec = app.Spec{
 			return app.Parts{}, fmt.Errorf("api: publisher: %w", err)
 		}
 		queue := dispatch.New(publisher)
+		sealer, err := secrets.OptionalSealer(config.GetOr("SECRET_SEAL_KEY", ""))
+		if err != nil {
+			return app.Parts{}, fmt.Errorf("api: %w", err)
+		}
 		// The providers list is derived from the same bootstrap ruleset the
 		// scan-worker runs, so the dashboard shows exactly what the engine detects.
 		srv := api.NewServer(d.DB, queue, d.DB, d.Log).
 			WithCatalog(d.DB).
+			WithSealer(sealer).
 			WithOwnerLookup(github.New(config.GetOr("GITHUB_TOKEN", ""))).
 			WithNoticeLog(d.DB, notify.DisclosureInfo{
 				Project:   config.GetOr("DISCLOSURE_PROJECT", ""),

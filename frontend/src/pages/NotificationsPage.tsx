@@ -101,12 +101,6 @@ export default function NotificationsPage() {
   const settings = useResource(() => api.settings(), [api])
   const mailOn = settings.data?.notifications_enabled ?? false
 
-  const toggleMail = useCallback((on: boolean) => {
-    api.setSettings({ notifications_enabled: on })
-      .then(() => { notify(t(on ? 'repos.notify.on' : 'repos.notify.off'), on ? 'success' : 'info'); settings.reload() })
-      .catch(e => notify(e instanceof Error ? e.message : 'Error', 'error'))
-  }, [api, notify, t, settings])
-
   const resend = useCallback((n: NotificationRow) => {
     api.resendNotification(n.id)
       .then(() => { notify(t('notif.resent', { to: n.recipient })); setTimeout(res.reload, 1500) })
@@ -122,8 +116,8 @@ export default function NotificationsPage() {
   return (
     <>
       <PageHeader title={t('notif.title')} subtitle={t('notif.subtitle')}
-        actions={<FormControlLabel control={<Switch color="warning" checked={mailOn} disabled={settings.loading} onChange={e => toggleMail(e.target.checked)} />}
-          label={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><MailOutlineIcon fontSize="small" />{t('repos.notify.switch')}</Box>} />} />
+        actions={<Chip clickable component="a" href={href('settings')} variant="outlined" color={mailOn ? 'warning' : 'default'}
+          icon={<MailOutlineIcon fontSize="small" />} label={`${t('repos.notify.switch')}: ${t(mailOn ? 'settings.on' : 'settings.off')}`} />} />
 
       <Grid container spacing={2} sx={{ mb: 2 }}>
         {STATES.map(s => (

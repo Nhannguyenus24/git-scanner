@@ -15,6 +15,7 @@ import (
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
+	"github.com/mservice/gitscanner/libs/config"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
@@ -58,7 +59,14 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 		return app.Parts{}, fmt.Errorf("scan-worker: publisher: %w", err)
 	}
 
-	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log)
+	sealer, err := secrets.OptionalSealer(config.GetOr("SECRET_SEAL_KEY", ""))
+	if err != nil {
+		return app.Parts{}, fmt.Errorf("scan-worker: %w", err)
+	}
+	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log).WithSealer(sealer)
+	if sealer != nil {
+		d.Log.Warn("secret sealing is ON — credentials of unmask-listed owners are kept, encrypted")
+	}
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueScan, scanPrefetch, scanMaxRetry)
 	if err != nil {
