@@ -2174,6 +2174,156 @@ const DICT: Record<string, Entry> = {
     fr: "EN CLAIR",
   },
 
+  'detail.open': {
+    en: "View details",
+    vi: "Xem chi tiết",
+    it: "Dettagli",
+    zh: "查看详情",
+    es: "Ver detalles",
+    de: "Details",
+    fr: "Voir le détail",
+  },
+
+  'detail.credential': {
+    en: "Credential",
+    vi: "Credential",
+    it: "Credenziale",
+    zh: "凭证",
+    es: "Credencial",
+    de: "Zugangsdaten",
+    fr: "Identifiant",
+  },
+
+  'detail.masked': {
+    en: "Masked",
+    vi: "Đã che",
+    it: "Mascherato",
+    zh: "遮蔽值",
+    es: "Enmascarado",
+    de: "Maskiert",
+    fr: "Masqué",
+  },
+
+  'detail.value': {
+    en: "Full value",
+    vi: "Giá trị đầy đủ",
+    it: "Valore completo",
+    zh: "完整值",
+    es: "Valor completo",
+    de: "Voller Wert",
+    fr: "Valeur complète",
+  },
+
+  'detail.show': {
+    en: "Show",
+    vi: "Hiện",
+    it: "Mostra",
+    zh: "显示",
+    es: "Mostrar",
+    de: "Anzeigen",
+    fr: "Afficher",
+  },
+
+  'detail.hide': {
+    en: "Hide",
+    vi: "Ẩn",
+    it: "Nascondi",
+    zh: "隐藏",
+    es: "Ocultar",
+    de: "Verbergen",
+    fr: "Masquer",
+  },
+
+  'detail.category': {
+    en: "Category",
+    vi: "Nhóm",
+    it: "Categoria",
+    zh: "类别",
+    es: "Categoría",
+    de: "Kategorie",
+    fr: "Catégorie",
+  },
+
+  'detail.liveness': {
+    en: "Liveness",
+    vi: "Kiểm tra live",
+    it: "Validità",
+    zh: "有效性",
+    es: "Vigencia",
+    de: "Gültigkeit",
+    fr: "Validité",
+  },
+
+  'detail.where': {
+    en: "Where",
+    vi: "Vị trí",
+    it: "Dove",
+    zh: "位置",
+    es: "Dónde",
+    de: "Fundort",
+    fr: "Emplacement",
+  },
+
+  'detail.file': {
+    en: "File",
+    vi: "File",
+    it: "File",
+    zh: "文件",
+    es: "Archivo",
+    de: "Datei",
+    fr: "Fichier",
+  },
+
+  'detail.commit': {
+    en: "Commit",
+    vi: "Commit",
+    it: "Commit",
+    zh: "提交",
+    es: "Commit",
+    de: "Commit",
+    fr: "Commit",
+  },
+
+  'detail.author': {
+    en: "Author",
+    vi: "Tác giả",
+    it: "Autore",
+    zh: "作者",
+    es: "Autor",
+    de: "Autor",
+    fr: "Auteur",
+  },
+
+  'detail.committed': {
+    en: "Committed",
+    vi: "Commit lúc",
+    it: "Data commit",
+    zh: "提交时间",
+    es: "Fecha del commit",
+    de: "Committet",
+    fr: "Date du commit",
+  },
+
+  'detail.openFile': {
+    en: "Open the line on GitHub",
+    vi: "Mở dòng này trên GitHub",
+    it: "Apri la riga su GitHub",
+    zh: "在 GitHub 上打开此行",
+    es: "Abrir la línea en GitHub",
+    de: "Zeile auf GitHub öffnen",
+    fr: "Ouvrir la ligne sur GitHub",
+  },
+
+  'detail.metadata': {
+    en: "Metadata",
+    vi: "Metadata",
+    it: "Metadati",
+    zh: "元数据",
+    es: "Metadatos",
+    de: "Metadaten",
+    fr: "Métadonnées",
+  },
+
   'repos.empty': {
     en: 'No repositories match',
     vi: 'Không có kho nào khớp',
