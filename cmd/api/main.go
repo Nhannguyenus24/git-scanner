@@ -10,7 +10,10 @@ import (
 	"github.com/mservice/gitscanner/internal/api"
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/notify"
 	"github.com/mservice/gitscanner/internal/scan"
+	"github.com/mservice/gitscanner/libs/config"
 )
 
 func main() {
@@ -46,6 +49,12 @@ var serveSpec = app.Spec{
 		// scan-worker runs, so the dashboard shows exactly what the engine detects.
 		srv := api.NewServer(d.DB, queue, d.DB, d.Log).
 			WithCatalog(d.DB).
+			WithOwnerLookup(github.New(config.GetOr("GITHUB_TOKEN", ""))).
+			WithNoticeLog(d.DB, notify.DisclosureInfo{
+				Project:   config.GetOr("DISCLOSURE_PROJECT", ""),
+				Signature: config.GetOr("DISCLOSURE_SIGNATURE", ""),
+				InfoURL:   config.GetOr("DISCLOSURE_INFO_URL", ""),
+			}).
 			WithProviders(scan.BootstrapRuleset().Providers())
 
 		return app.Parts{HTTP: srv.Routes()}, nil

@@ -38,6 +38,7 @@ export default function AnalyticsPage() {
   const appMap = paletteFor(a.by_app_type.map(c => c.key), ch.categorical, ch.other)
   const sortSev = (cs: Count[]) => [...cs].sort((x, y) => SEV_ORDER.indexOf(x.key as Severity) - SEV_ORDER.indexOf(y.key as Severity))
   const statusColor = (k: string) => (k === 'open' ? ch.severity.critical : k === 'rotated' ? ch.categorical[0] : ch.other)
+  const noticeColor: Record<string, string> = { sent: ch.categorical[0], pending: ch.categorical[2], failed: ch.severity.critical, suppressed: ch.other }
   const probeColor: Record<string, string> = { live: ch.severity.critical, dead: ch.categorical[0], unverified: ch.other, error: ch.severity.medium }
 
   const toFindings = (p: Record<string, string>) => navigate(href('findings', undefined, { status: 'open', ...p }))
@@ -92,6 +93,15 @@ export default function AnalyticsPage() {
             {a.live_probes.length
               ? <Ring slices={countsToSlices(a.live_probes, k => probeColor[k] ?? ch.other, k => t(`probe.${k}`))} centerLabel={t('analytics.checked')} size={140} />
               : <Box sx={{ py: 3, color: 'text.secondary', fontSize: 13 }}>{t('analytics.liveEmpty')}</Box>}
+          </Figure>
+        </Grid>
+
+        <Grid item xs={12} md={5}>
+          <Figure title={t('analytics.notices')} caption={t('analytics.noticesCap', { a: num(o.notified_repos), b: num(o.awaiting_notice) })}>
+            {a.notifications.length
+              ? <BarList items={a.notifications} label={k => t(`notice.${k}`)} color={k => noticeColor[k] ?? ch.other}
+                  onClick={() => navigate(href('repositories'))} />
+              : <Box sx={{ py: 3, color: 'text.secondary', fontSize: 13 }}>{t('analytics.noticesEmpty')}</Box>}
           </Figure>
         </Grid>
       </Grid>

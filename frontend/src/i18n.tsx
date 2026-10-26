@@ -1594,6 +1594,346 @@ const DICT: Record<string, Entry> = {
     de: 'Zuletzt gescannt',
     fr: 'Dernier scan',
   },
+  'repos.notify.switch': {
+    en: 'Disclosure mail',
+    vi: 'Gửi mail thông báo',
+    it: 'Email di segnalazione',
+    zh: '披露邮件',
+    es: 'Correo de aviso',
+    de: 'Hinweis-Mails',
+    fr: 'E-mails de signalement',
+  },
+
+  'repos.notify.on': {
+    en: 'Disclosure mail turned on',
+    vi: 'Đã bật gửi mail thông báo',
+    it: 'Email di segnalazione attivate',
+    zh: '已开启披露邮件',
+    es: 'Correo de aviso activado',
+    de: 'Hinweis-Mails eingeschaltet',
+    fr: 'E-mails de signalement activés',
+  },
+
+  'repos.notify.off': {
+    en: 'Disclosure mail turned off',
+    vi: 'Đã tắt gửi mail thông báo',
+    it: 'Email di segnalazione disattivate',
+    zh: '已关闭披露邮件',
+    es: 'Correo de aviso desactivado',
+    de: 'Hinweis-Mails ausgeschaltet',
+    fr: 'E-mails de signalement désactivés',
+  },
+
+  'repos.notify.action': {
+    en: 'Notify',
+    vi: 'Gửi thông báo',
+    it: 'Segnala',
+    zh: '通知',
+    es: 'Avisar',
+    de: 'Benachrichtigen',
+    fr: 'Signaler',
+  },
+
+  'repos.notify.offTip': {
+    en: 'Turn on disclosure mail first',
+    vi: 'Bật gửi mail thông báo trước',
+    it: 'Attiva prima le email di segnalazione',
+    zh: '请先开启披露邮件',
+    es: 'Activa primero el correo de aviso',
+    de: 'Zuerst Hinweis-Mails einschalten',
+    fr: "Activez d'abord les e-mails de signalement",
+  },
+
+  'repos.notify.queued': {
+    en: 'Disclosure queued for {repo} → {to}',
+    vi: 'Đã xếp hàng gửi thông báo cho {repo} → {to}',
+    it: 'Segnalazione in coda per {repo} → {to}',
+    zh: '已为 {repo} 排队发送通知 → {to}',
+    es: 'Aviso en cola para {repo} → {to}',
+    de: 'Hinweis für {repo} eingereiht → {to}',
+    fr: 'Signalement en file pour {repo} → {to}',
+  },
+
+  'repos.col.notice': {
+    en: 'Notified',
+    vi: 'Đã thông báo',
+    it: 'Segnalato',
+    zh: '已通知',
+    es: 'Avisado',
+    de: 'Benachrichtigt',
+    fr: 'Signalé',
+  },
+
+  'notice.sent': {
+    en: 'sent',
+    vi: 'đã gửi',
+    it: 'inviata',
+    zh: '已发送',
+    es: 'enviado',
+    de: 'gesendet',
+    fr: 'envoyé',
+  },
+
+  'notice.pending': {
+    en: 'sending',
+    vi: 'đang gửi',
+    it: 'in invio',
+    zh: '发送中',
+    es: 'enviando',
+    de: 'wird gesendet',
+    fr: 'en cours',
+  },
+
+  'notice.failed': {
+    en: 'failed',
+    vi: 'lỗi',
+    it: 'fallita',
+    zh: '失败',
+    es: 'fallido',
+    de: 'fehlgeschlagen',
+    fr: 'échec',
+  },
+
+  'notice.suppressed': {
+    en: 'opted out',
+    vi: 'đã từ chối nhận',
+    it: 'esclusa',
+    zh: '已退订',
+    es: 'excluido',
+    de: 'abgemeldet',
+    fr: 'désinscrit',
+  },
+
+  'notice.none': {
+    en: 'not yet',
+    vi: 'chưa',
+    it: 'non ancora',
+    zh: '尚未',
+    es: 'aún no',
+    de: 'noch nicht',
+    fr: 'pas encore',
+  },
+
+  'analytics.notices': {
+    en: 'Disclosure mail',
+    vi: 'Mail thông báo',
+    it: 'Email di segnalazione',
+    zh: '披露邮件',
+    es: 'Correo de aviso',
+    de: 'Hinweis-Mails',
+    fr: 'E-mails de signalement',
+  },
+
+  'analytics.noticesCap': {
+    en: '{a} repositories contacted · {b} exposed and not yet notified',
+    vi: '{a} repo đã liên hệ · {b} repo lộ secret chưa được thông báo',
+    it: '{a} repository contattati · {b} esposti non ancora segnalati',
+    zh: '已联系 {a} 个仓库 · {b} 个暴露仓库尚未通知',
+    es: '{a} repositorios contactados · {b} expuestos sin avisar',
+    de: '{a} Repositories kontaktiert · {b} betroffen, noch nicht benachrichtigt',
+    fr: '{a} dépôts contactés · {b} exposés non encore signalés',
+  },
+
+  'analytics.noticesEmpty': {
+    en: 'No disclosure mail sent yet.',
+    vi: 'Chưa gửi mail thông báo nào.',
+    it: 'Nessuna email di segnalazione inviata.',
+    zh: '尚未发送披露邮件。',
+    es: 'Aún no se ha enviado ningún aviso.',
+    de: 'Noch keine Hinweis-Mail gesendet.',
+    fr: 'Aucun e-mail de signalement envoyé.',
+  },
+
+  'nav.notifications': {
+    en: "Notifications",
+    vi: "Thông báo",
+    it: "Notifiche",
+    zh: "通知",
+    es: "Avisos",
+    de: "Benachrichtigungen",
+    fr: "Notifications",
+  },
+
+  'common.close': {
+    en: "Close",
+    vi: "Đóng",
+    it: "Chiudi",
+    zh: "关闭",
+    es: "Cerrar",
+    de: "Schließen",
+    fr: "Fermer",
+  },
+
+  'notif.title': {
+    en: "Disclosure mail",
+    vi: "Mail thông báo",
+    it: "Email di segnalazione",
+    zh: "披露邮件",
+    es: "Correos de aviso",
+    de: "Hinweis-Mails",
+    fr: "E-mails de signalement",
+  },
+
+  'notif.subtitle': {
+    en: "Every disclosure sent to repository owners, and its outcome",
+    vi: "Mọi mail thông báo đã gửi cho chủ repo và kết quả",
+    it: "Ogni segnalazione inviata ai proprietari e il suo esito",
+    zh: "发送给仓库所有者的每封披露邮件及其结果",
+    es: "Cada aviso enviado a los propietarios y su resultado",
+    de: "Jeder Hinweis an Repository-Eigentümer und sein Ergebnis",
+    fr: "Chaque signalement envoyé aux propriétaires et son résultat",
+  },
+
+  'notif.search': {
+    en: "Repository or recipient…",
+    vi: "Repo hoặc người nhận…",
+    it: "Repository o destinatario…",
+    zh: "仓库或收件人…",
+    es: "Repositorio o destinatario…",
+    de: "Repository oder Empfänger…",
+    fr: "Dépôt ou destinataire…",
+  },
+
+  'notif.col.repository': {
+    en: "Repository",
+    vi: "Repo",
+    it: "Repository",
+    zh: "仓库",
+    es: "Repositorio",
+    de: "Repository",
+    fr: "Dépôt",
+  },
+
+  'notif.col.recipient': {
+    en: "Recipient",
+    vi: "Người nhận",
+    it: "Destinatario",
+    zh: "收件人",
+    es: "Destinatario",
+    de: "Empfänger",
+    fr: "Destinataire",
+  },
+
+  'notif.col.state': {
+    en: "Status",
+    vi: "Trạng thái",
+    it: "Stato",
+    zh: "状态",
+    es: "Estado",
+    de: "Status",
+    fr: "Statut",
+  },
+
+  'notif.col.findings': {
+    en: "Findings",
+    vi: "Phát hiện",
+    it: "Rilevamenti",
+    zh: "发现",
+    es: "Hallazgos",
+    de: "Funde",
+    fr: "Détections",
+  },
+
+  'notif.col.created': {
+    en: "Requested",
+    vi: "Yêu cầu lúc",
+    it: "Richiesta",
+    zh: "请求时间",
+    es: "Solicitado",
+    de: "Angefordert",
+    fr: "Demandé",
+  },
+
+  'notif.col.sent': {
+    en: "Sent",
+    vi: "Gửi lúc",
+    it: "Inviata",
+    zh: "发送时间",
+    es: "Enviado",
+    de: "Gesendet",
+    fr: "Envoyé",
+  },
+
+  'notif.view': {
+    en: "View mail",
+    vi: "Xem mail",
+    it: "Vedi email",
+    zh: "查看邮件",
+    es: "Ver correo",
+    de: "Mail ansehen",
+    fr: "Voir l'e-mail",
+  },
+
+  'notif.resend': {
+    en: "Resend",
+    vi: "Gửi lại",
+    it: "Reinvia",
+    zh: "重新发送",
+    es: "Reenviar",
+    de: "Erneut senden",
+    fr: "Renvoyer",
+  },
+
+  'notif.resent': {
+    en: "Resend queued → {to}",
+    vi: "Đã xếp hàng gửi lại → {to}",
+    it: "Reinvio in coda → {to}",
+    zh: "已排队重新发送 → {to}",
+    es: "Reenvío en cola → {to}",
+    de: "Erneuter Versand eingereiht → {to}",
+    fr: "Renvoi en file → {to}",
+  },
+
+  'notif.to': {
+    en: "To",
+    vi: "Gửi tới",
+    it: "A",
+    zh: "收件人",
+    es: "Para",
+    de: "An",
+    fr: "À",
+  },
+
+  'notif.plain': {
+    en: "Plain text",
+    vi: "Dạng text",
+    it: "Testo semplice",
+    zh: "纯文本",
+    es: "Texto plano",
+    de: "Nur Text",
+    fr: "Texte brut",
+  },
+
+  'notif.previewNote': {
+    en: "Re-rendered from the findings as they are now",
+    vi: "Render lại từ dữ liệu finding hiện tại",
+    it: "Rigenerata dai rilevamenti attuali",
+    zh: "根据当前发现重新生成",
+    es: "Regenerado con los hallazgos actuales",
+    de: "Aus den aktuellen Funden neu erzeugt",
+    fr: "Régénéré à partir des détections actuelles",
+  },
+
+  'notif.empty': {
+    en: "No disclosure mail yet",
+    vi: "Chưa có mail thông báo nào",
+    it: "Nessuna email di segnalazione",
+    zh: "尚无披露邮件",
+    es: "Aún no hay correos de aviso",
+    de: "Noch keine Hinweis-Mails",
+    fr: "Aucun e-mail de signalement",
+  },
+
+  'notif.emptyBody': {
+    en: "Turn on disclosure mail, then use Notify on a repository.",
+    vi: "Bật gửi mail thông báo rồi bấm \"Gửi thông báo\" ở một repo.",
+    it: "Attiva le email di segnalazione, poi usa Segnala su un repository.",
+    zh: "开启披露邮件，然后在仓库上点击通知。",
+    es: "Activa el correo de aviso y usa Avisar en un repositorio.",
+    de: "Hinweis-Mails einschalten, dann bei einem Repository „Benachrichtigen“ wählen.",
+    fr: "Activez les e-mails de signalement, puis utilisez Signaler sur un dépôt.",
+  },
+
   'repos.empty': {
     en: 'No repositories match',
     vi: 'Không có kho nào khớp',

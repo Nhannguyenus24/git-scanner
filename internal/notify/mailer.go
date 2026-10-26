@@ -1,21 +1,30 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
+	"net/mail"
 	"net/smtp"
-	"sort"
+	"net/textproto"
 	"strings"
+	"time"
 
-	"github.com/mservice/gitscanner/libs/entity"
+	"github.com/mservice/gitscanner/libs/id"
 )
 
-// Message is one outbound mail.
+// Message is one outbound mail. Body is the plain-text part every client can
+// read; HTML, when set, is sent alongside it as the preferred alternative.
 type Message struct {
 	To      string
 	Subject string
 	Body    string
+	HTML    string
 }
 
 // DisclosureInfo is the operator's identity and the project's description,
@@ -59,17 +68,22 @@ func (s *LogSender) Send(_ context.Context, m Message) error {
 	return nil
 }
 
-// SMTPSender delivers over SMTP.
+// SMTPSender delivers over SMTP. net/smtp upgrades to STARTTLS whenever the
+// server offers it, which Gmail's submission port (587) requires.
 type SMTPSender struct {
-	addr string
-	from string
-	auth smtp.Auth
+	addr     string
+	from     string // header form, may carry a display name
+	envelope string // bare address for MAIL FROM
+	auth     smtp.Auth
 }
 
 // NewSMTPSender builds a sender for addr ("host:port"). auth is used only when
 // user is non-empty, so an unauthenticated relay stays supported.
 func NewSMTPSender(addr, from, user, password string) *SMTPSender {
-	s := &SMTPSender{addr: addr, from: from}
+	s := &SMTPSender{addr: addr, from: from, envelope: from}
+	if a, err := mail.ParseAddress(from); err == nil {
+		s.envelope = a.Address
+	}
 	if user != "" {
 		host, _, found := strings.Cut(addr, ":")
 		if !found {
@@ -81,127 +95,69 @@ func NewSMTPSender(addr, from, user, password string) *SMTPSender {
 }
 
 // Send delivers one message.
+//
+// Date and Message-ID are set here because receiving filters score a mail
+// missing them as spam, and a disclosure in a spam folder is no disclosure.
 func (s *SMTPSender) Send(_ context.Context, m Message) error {
-	payload := []byte("From: " + s.from + "\r\n" +
-		"To: " + m.To + "\r\n" +
-		"Subject: " + m.Subject + "\r\n" +
-		"Content-Type: text/plain; charset=utf-8\r\n" +
-		"\r\n" + m.Body + "\r\n")
+	domain := "localhost"
+	if _, d, ok := strings.Cut(s.envelope, "@"); ok {
+		domain = d
+	}
 
-	if err := smtp.SendMail(s.addr, s.auth, s.from, []string{m.To}, payload); err != nil {
+	var buf bytes.Buffer
+	buf.WriteString("From: " + s.from + "\r\n" +
+		"To: " + m.To + "\r\n" +
+		"Subject: " + mime.QEncoding.Encode("utf-8", m.Subject) + "\r\n" +
+		"Date: " + time.Now().Format(time.RFC1123Z) + "\r\n" +
+		"Message-ID: <" + id.New().String() + "@" + domain + ">\r\n" +
+		"MIME-Version: 1.0\r\n")
+
+	if m.HTML == "" {
+		buf.WriteString("Content-Type: text/plain; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+		if err := writeQP(&buf, m.Body); err != nil {
+			return err
+		}
+	} else {
+		// multipart/alternative lists the plainest part first; clients render
+		// the last one they understand, so HTML wins and text is the fallback.
+		mw := multipart.NewWriter(&buf)
+		buf.WriteString("Content-Type: multipart/alternative; boundary=" + mw.Boundary() + "\r\n\r\n")
+		for _, part := range []struct{ ctype, content string }{
+			{"text/plain; charset=utf-8", m.Body},
+			{"text/html; charset=utf-8", m.HTML},
+		} {
+			w, err := mw.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {part.ctype},
+				"Content-Transfer-Encoding": {"quoted-printable"},
+			})
+			if err != nil {
+				return fmt.Errorf("notify: mime part: %w", err)
+			}
+			if err := writeQP(w, part.content); err != nil {
+				return err
+			}
+		}
+		if err := mw.Close(); err != nil {
+			return fmt.Errorf("notify: mime close: %w", err)
+		}
+	}
+
+	if err := smtp.SendMail(s.addr, s.auth, s.envelope, []string{m.To}, buf.Bytes()); err != nil {
 		return fmt.Errorf("notify: send mail: %w", err)
 	}
 	return nil
 }
 
-// RenderDisclosure builds the disclosure mail for a repository.
-//
-// The body carries only what the maintainer needs to find and rotate the
-// credential: the masked preview, the file and the line. It never contains the
-// secret itself, and per plan.md §0.3 it never contains a payment link, a
-// bounty request or any other ask — the mail exists to get the credential
-// rotated, and anything that reads as leverage would undermine that.
-func RenderDisclosure(repo entity.Repository, findings []entity.Finding, info DisclosureInfo) Message {
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "Hello,\n\n")
-	project := info.Project
-	if project == "" {
-		project = "an automated secret-scanning project"
+// writeQP encodes as quoted-printable, which keeps every line under SMTP's
+// 998-byte limit; long HTML lines sent as 8bit get truncated or rejected.
+func writeQP(w io.Writer, s string) error {
+	qp := quotedprintable.NewWriter(w)
+	if _, err := io.WriteString(qp, strings.ReplaceAll(s, "\n", "\r\n")); err != nil {
+		return fmt.Errorf("notify: encode body: %w", err)
 	}
-	fmt.Fprintf(&b, "I run %s. A scan of the public repository %s found %s that look like "+
-		"live credentials committed to its history. I am writing so you can rotate them "+
-		"before someone else finds and abuses them.\n\n",
-		project, repo.FullName(), plural(len(findings), "value", "values"))
-
-	fmt.Fprintf(&b, "What was found:\n\n")
-	for _, f := range sortedBySeverity(findings) {
-		fmt.Fprintf(&b, "  - %s", f.FilePath)
-		if f.LineNumber > 0 {
-			fmt.Fprintf(&b, ":%d", f.LineNumber)
-		}
-		fmt.Fprintf(&b, "\n    value:    %s\n", f.MaskedPreview)
-		fmt.Fprintf(&b, "    severity: %s\n", f.Severity)
-		if name := f.Metadata["provider_name"]; name != "" {
-			fmt.Fprintf(&b, "    provider: %s\n", name)
-		} else if f.ProviderSlug != "" {
-			fmt.Fprintf(&b, "    provider: %s\n", f.ProviderSlug)
-		}
-		for _, line := range enrichmentLines(f) {
-			fmt.Fprintf(&b, "    %s\n", line)
-		}
-		if f.ReachableFromHEAD {
-			fmt.Fprintf(&b, "    note:     still present on the default branch\n")
-		} else {
-			fmt.Fprintf(&b, "    note:     not on the default branch, but still present in history\n")
-		}
-		b.WriteString("\n")
+	if err := qp.Close(); err != nil {
+		return fmt.Errorf("notify: encode body: %w", err)
 	}
-
-	b.WriteString("Only a masked form of each value is shown above; the full values are not " +
-		"stored or included here.\n\n")
-	b.WriteString("What I suggest:\n\n")
-	b.WriteString("  1. Rotate the affected credentials at the provider. This is the step that " +
-		"matters -- a credential in public git history should be treated as compromised " +
-		"even after the file is changed.\n")
-	b.WriteString("  2. Remove the values from the repository, including history if you can.\n")
-	b.WriteString("  3. Consider a pre-commit secret scan to catch the next one earlier.\n\n")
-	b.WriteString("If these are test or placeholder values, or you would rather not receive " +
-		"this kind of notice, reply and I will suppress future mail for your address or " +
-		"domain.\n")
-
-	if info.InfoURL != "" {
-		fmt.Fprintf(&b, "\nMore about the project: %s\n", info.InfoURL)
-	}
-	if info.Signature != "" {
-		fmt.Fprintf(&b, "\n%s\n", info.Signature)
-	}
-
-	return Message{
-		To:      "",
-		Subject: fmt.Sprintf("Credentials found in public repository %s", repo.FullName()),
-		Body:    b.String(),
-	}
-}
-
-// sortedBySeverity orders findings most severe first so the mail leads with
-// what matters, without mutating the caller's slice.
-func sortedBySeverity(findings []entity.Finding) []entity.Finding {
-	out := make([]entity.Finding, len(findings))
-	copy(out, findings)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Severity > out[j].Severity })
-	return out
-}
-
-func plural(n int, one, many string) string {
-	if n == 1 {
-		return fmt.Sprintf("%d %s", n, one)
-	}
-	return fmt.Sprintf("%d %s", n, many)
-}
-
-// enrichmentLines turns the non-secret facts the enricher gathered into lines
-// for the mail: the provider category, whether a liveness probe found the key
-// still active, and any identity it read back (account, owner). It never emits a
-// secret — everything here is metadata the engine derived without the value.
-func enrichmentLines(f entity.Finding) []string {
-	var out []string
-	if c := f.Metadata["category"]; c != "" {
-		out = append(out, "category: "+c)
-	}
-	switch f.Metadata["probe_status"] {
-	case "live":
-		out = append(out, "status:   CONFIRMED LIVE by a check against the provider -- rotate this first")
-	case "dead":
-		out = append(out, "status:   the provider rejected it (already rotated or revoked)")
-	}
-	if id := f.Metadata["probe_owner"]; id != "" {
-		out = append(out, "account:  authenticates as "+id)
-	} else if id := f.Metadata["probe_account"]; id != "" {
-		out = append(out, "account:  "+id)
-	}
-	if a := f.Metadata["aws_account_id"]; a != "" {
-		out = append(out, "aws acct: "+a)
-	}
-	return out
+	return nil
 }

@@ -3,6 +3,7 @@ package notify_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mservice/gitscanner/internal/notify"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -61,5 +62,63 @@ func TestRenderDisclosureDefaultsAndDeadStatus(t *testing.T) {
 	}
 	if !strings.Contains(m.Body, "provider rejected it") {
 		t.Errorf("dead probe status not shown:\n%s", m.Body)
+	}
+}
+
+// The mail has to be checkable without trusting its sender: each finding links
+// to the line at the commit that introduced it.
+func TestRenderDisclosureLinksToTheCommit(t *testing.T) {
+	repo := entity.Repository{Owner: "octocat", Name: "demo", CloneURL: "https://github.com/octocat/demo.git"}
+	f := entity.Finding{
+		RuleID: "stripe-secret-key", Severity: entity.SeverityCritical, MaskedPreview: "sk_l…mn",
+		FilePath: "config/.env", LineNumber: 4, CommitSHA: "0123456789abcdef0123",
+		AuthorName: "Octo Cat", CommittedAt: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
+	}
+	body := notify.RenderDisclosure(repo, []entity.Finding{f}, notify.DisclosureInfo{}).Body
+
+	for _, w := range []string{
+		"https://github.com/octocat/demo/blob/0123456789abcdef0123/config/.env#L4",
+		"commit:   0123456789ab by Octo Cat on 2025-03-01",
+		"rule:     stripe-secret-key",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body missing %q\n---\n%s", w, body)
+		}
+	}
+}
+
+// An env file is dropped from history whole; a source file keeps its other
+// contents, so only the values are rewritten.
+func TestRenderDisclosureRemovalGuideFitsTheFile(t *testing.T) {
+	repo := entity.Repository{Owner: "a", Name: "b", CloneURL: "https://github.com/a/b.git"}
+	findings := []entity.Finding{
+		{RuleID: "x", Severity: entity.SeverityHigh, FilePath: ".env.production"},
+		{RuleID: "y", Severity: entity.SeverityHigh, FilePath: "src/main.go"},
+	}
+	body := notify.RenderDisclosure(repo, findings, notify.DisclosureInfo{}).Body
+
+	for _, w := range []string{
+		"git clone https://github.com/a/b.git && cd b",
+		"git filter-repo --invert-paths --path .env.production",
+		"echo '.env.production' >> .gitignore",
+		"git filter-repo --replace-text replacements.txt",
+		"Files involved: src/main.go",
+		"git push --force --all",
+	} {
+		if !strings.Contains(body, w) {
+			t.Errorf("body missing %q\n---\n%s", w, body)
+		}
+	}
+	if strings.Contains(body, "--path src/main.go") {
+		t.Error("guide tells the reader to delete a source file from history")
+	}
+	m := notify.RenderDisclosure(repo, findings, notify.DisclosureInfo{})
+	for _, part := range []string{m.Body, m.HTML} {
+		if strings.Contains(part, "$") {
+			t.Error("mail contains '$', which the solicitation check forbids")
+		}
+	}
+	if !strings.Contains(m.HTML, "git filter-repo --invert-paths --path .env.production") {
+		t.Error("HTML part lacks the removal commands")
 	}
 }

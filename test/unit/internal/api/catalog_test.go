@@ -61,6 +61,9 @@ func (c *fakeCatalog) FindingsByRule(_ context.Context, _ int) ([]store.Count, e
 func (c *fakeCatalog) LiveProbeCounts(context.Context) ([]store.Count, error) {
 	return []store.Count{{Key: "live", Count: 1}}, nil
 }
+func (c *fakeCatalog) NotificationCounts(context.Context) ([]store.Count, error) {
+	return []store.Count{{Key: "sent", Count: 1}}, nil
+}
 
 const knownFinding = entity.ID("01a16d46-dc0a-7979-899f-fae3af3961b2")
 

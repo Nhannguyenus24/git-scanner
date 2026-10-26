@@ -26,6 +26,7 @@ type Catalog interface {
 	FindingsByAppType(ctx context.Context) ([]store.Count, error)
 	FindingsByRule(ctx context.Context, limit int) ([]store.Count, error)
 	LiveProbeCounts(ctx context.Context) ([]store.Count, error)
+	NotificationCounts(ctx context.Context) ([]store.Count, error)
 }
 
 // WithCatalog enables the browsing and triage routes.
@@ -203,6 +204,16 @@ type repositoryResponse struct {
 	High          int        `json:"high"`
 	Medium        int        `json:"medium"`
 	Low           int        `json:"low"`
+	// Notification is the latest disclosure; absent when never contacted.
+	Notification *noticeResponse `json:"notification,omitempty"`
+}
+
+type noticeResponse struct {
+	State     string     `json:"state"`
+	Recipient string     `json:"recipient"`
+	Error     string     `json:"error,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	SentAt    *time.Time `json:"sent_at,omitempty"`
 }
 
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
@@ -213,12 +224,18 @@ func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) 
 	}
 	out := make([]repositoryResponse, 0, len(repos))
 	for _, x := range repos {
-		out = append(out, repositoryResponse{
+		resp := repositoryResponse{
 			ID: x.ID.String(), Owner: x.Owner, Name: x.Name, URL: x.CloneURL,
 			AppType: x.AppType, Stars: x.Stars, IsFork: x.IsFork, LastScannedAt: x.LastScannedAt,
 			Findings: x.Findings, Open: x.Open,
 			Critical: x.Critical, High: x.High, Medium: x.Medium, Low: x.Low,
-		})
+		}
+		if n := x.Notice; n != nil {
+			resp.Notification = &noticeResponse{
+				State: n.State, Recipient: n.Recipient, Error: n.Error, CreatedAt: n.CreatedAt, SentAt: n.SentAt,
+			}
+		}
+		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repositories": out})
 }
@@ -249,6 +266,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"exposed_repos":       o.ExposedRepos,
 		"active_scans":        o.ActiveJobs,
 		"candidates":          o.Candidates,
+		"notified_repos":      o.NotifiedRepos,
+		"awaiting_notice":     o.AwaitingNotice,
 		"by_severity":         counts(o.BySeverity),
 		"by_provider":         counts(o.ByProvider),
 		"by_status":           counts(o.ByStatus),
@@ -320,6 +339,11 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	notices, err := s.catalog.NotificationCounts(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	points := make([]map[string]any, 0, len(timeline))
 	for _, p := range timeline {
 		points = append(points, map[string]any{"period": p.Period, "findings": p.Findings})
@@ -332,10 +356,11 @@ func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"timeline":    points,
-		"by_app_type": counts(byApp),
-		"by_rule":     counts(byRule),
-		"live_probes": counts(probe),
+		"timeline":      points,
+		"by_app_type":   counts(byApp),
+		"by_rule":       counts(byRule),
+		"live_probes":   counts(probe),
+		"notifications": counts(notices),
 	})
 }
 

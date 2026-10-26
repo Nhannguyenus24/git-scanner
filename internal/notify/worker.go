@@ -36,6 +36,7 @@ type Store interface {
 	ListSuppressions(ctx context.Context) ([]string, error)
 	CreateNotification(ctx context.Context, n entity.Notification) (entity.Notification, error)
 	SetNotificationState(ctx context.Context, id entity.ID, state entity.NotificationState, errMsg string) error
+	NotificationsEnabled(ctx context.Context) (bool, error)
 }
 
 // Limiter is the shared send-rate cap.
@@ -83,6 +84,18 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 
 	w.log.Info("disclosure requested",
 		"repo", task.RepositoryId, "recipient", task.Recipient, "findings", len(findingIDs))
+
+	// The api refuses requests while the switch is off; this catches the ones
+	// queued before it was turned off. Dropped, not deferred: an operator who
+	// turned mail off does not expect a backlog to flush when it comes back on.
+	on, err := w.store.NotificationsEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	if !on {
+		w.log.Info("disclosure dropped, notifications are turned off", "repo", task.RepositoryId)
+		return nil
+	}
 
 	suppressed, err := w.suppressed(ctx, task.Recipient)
 	if err != nil {

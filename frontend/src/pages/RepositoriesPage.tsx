@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
@@ -13,6 +13,8 @@ import TableRow from '@mui/material/TableRow'
 import TextField from '@mui/material/TextField'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import Switch from '@mui/material/Switch'
+import Tooltip from '@mui/material/Tooltip'
+import MailOutlineIcon from '@mui/icons-material/MailOutline'
 import SearchIcon from '@mui/icons-material/Search'
 import { PageHeader } from '../components/Layout'
 import { Empty, LoadError, Loading } from '../components/States'
@@ -22,7 +24,8 @@ import { useResource } from '../hooks/useResource'
 import { useT } from '../i18n'
 import { href, navigate } from '../hooks/useRoute'
 import { useSettings } from '../store/settings'
-import type { Repository } from '../types'
+import { useToast } from '../store/toast'
+import type { Notice, Repository } from '../types'
 
 function Count({ n, color }: { n: number; color: string }) {
   return (
@@ -32,11 +35,42 @@ function Count({ n, color }: { n: number; color: string }) {
   )
 }
 
+const NOTICE_COLOR = { sent: 'success', pending: 'info', failed: 'error', suppressed: 'default' } as const
+
+/** Whether the repository was told, and when — the tooltip carries who and why. */
+function NoticeChip({ n }: { n?: Notice }) {
+  const { t } = useT()
+  if (!n) return <Box component="span" sx={{ color: 'text.disabled', fontSize: 12 }}>{t('notice.none')}</Box>
+  const when = n.sent_at ?? n.created_at
+  const tip = [n.recipient, timeAgo(when), n.error].filter(Boolean).join(' · ')
+  return (
+    <Tooltip title={tip}>
+      <Chip size="small" color={NOTICE_COLOR[n.state]} variant={n.state === 'sent' ? 'filled' : 'outlined'}
+        label={`${t(`notice.${n.state}`)}${n.state === 'sent' ? ` · ${timeAgo(when)}` : ''}`} />
+    </Tooltip>
+  )
+}
+
 export default function RepositoriesPage() {
   const { api } = useSettings()
   const { t } = useT()
   const sev = useTheme().chart.severity
+  const notify = useToast()
   const res = useResource(() => api.repositories(), [api], 10000)
+  const settings = useResource(() => api.settings(), [api])
+  const mailOn = settings.data?.notifications_enabled ?? false
+
+  const toggleMail = useCallback((on: boolean) => {
+    api.setSettings({ notifications_enabled: on })
+      .then(() => { notify(t(on ? 'repos.notify.on' : 'repos.notify.off'), on ? 'success' : 'info'); settings.reload() })
+      .catch(e => notify(e instanceof Error ? e.message : 'Error', 'error'))
+  }, [api, notify, t, settings])
+
+  const disclose = useCallback((r: Repository) => {
+    api.disclose(r.id)
+      .then(d => { notify(t('repos.notify.queued', { repo: `${r.owner}/${r.name}`, to: d.recipient })); setTimeout(res.reload, 1500) })
+      .catch(e => notify(e instanceof Error ? e.message : 'Error', 'error'))
+  }, [api, notify, t, res])
   const [q, setQ] = useState('')
   const [exposedOnly, setExposedOnly] = useState(true)
 
@@ -54,6 +88,8 @@ export default function RepositoriesPage() {
         <TextField placeholder={t('repos.filter')} value={q} onChange={e => setQ(e.target.value)} sx={{ flex: '1 1 260px' }}
           InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
         <FormControlLabel control={<Switch checked={exposedOnly} onChange={e => setExposedOnly(e.target.checked)} />} label={t('repos.onlyOpen')} />
+        <FormControlLabel control={<Switch color="warning" checked={mailOn} disabled={settings.loading} onChange={e => toggleMail(e.target.checked)} />}
+          label={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><MailOutlineIcon fontSize="small" />{t('repos.notify.switch')}</Box>} />
       </Card>
       <Card>
         {!repos.length ? <Empty title={t('repos.empty')} action={exposedOnly ? <Button onClick={() => setExposedOnly(false)}>{t('common.showAll')}</Button> : undefined} /> : (
@@ -69,6 +105,8 @@ export default function RepositoriesPage() {
                   <TableCell align="center">{t('repos.col.low')}</TableCell>
                   <TableCell align="right">{t('repos.col.openTotal')}</TableCell>
                   <TableCell>{t('repos.col.lastScanned')}</TableCell>
+                  <TableCell>{t('repos.col.notice')}</TableCell>
+                  <TableCell />
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -89,6 +127,18 @@ export default function RepositoriesPage() {
                     <TableCell align="center"><Count n={r.low} color={sev.low} /></TableCell>
                     <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{r.open} / {r.findings}</TableCell>
                     <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{timeAgo(r.last_scanned_at)}</TableCell>
+                    <TableCell><NoticeChip n={r.notification} /></TableCell>
+                    <TableCell align="right" onClick={e => e.stopPropagation()}>
+                      {r.open > 0 && r.notification?.state !== 'sent' && r.notification?.state !== 'pending' && (
+                        <Tooltip title={mailOn ? '' : t('repos.notify.offTip')}>
+                          <span>
+                            <Button size="small" startIcon={<MailOutlineIcon />} disabled={!mailOn} onClick={() => disclose(r)}>
+                              {t('repos.notify.action')}
+                            </Button>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
