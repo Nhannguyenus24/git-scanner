@@ -11,10 +11,12 @@ import (
 
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/probe"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
+	"github.com/mservice/gitscanner/libs/config"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
@@ -58,7 +60,11 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 		return app.Parts{}, fmt.Errorf("scan-worker: publisher: %w", err)
 	}
 
-	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log)
+	// Host attributes (language, owner type, last push) for repositories that
+	// arrived without them. GITHUB_TOKEN is optional, as for discovery; without
+	// it the reads stop at GitHub's unauthenticated limit and resume later.
+	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log).
+		WithRepoAttributes(github.New(config.GetOr("GITHUB_TOKEN", "")))
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueScan, scanPrefetch, scanMaxRetry)
 	if err != nil {

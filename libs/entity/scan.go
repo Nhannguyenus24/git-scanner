@@ -160,7 +160,21 @@ type Repository struct {
 	// questions and a finding's age is judged against this one.
 	RemoteCreatedAt *time.Time
 	// AppType is the detected stack (plan.md §4.3), feeding severity scoring.
-	AppType       string
+	AppType string
+
+	// Host-reported attributes, for analysis rather than detection: which
+	// ecosystems leak, whether individuals or organisations do, and whether a
+	// leaking repository is still maintained. MetadataFetchedAt is nil until
+	// they have been read from the host; a zero value in the fields below is
+	// "unknown" only while it is nil.
+	Language          string
+	Topics            []string
+	OwnerType         string // "User" or "Organization", as GitHub spells it
+	Archived          bool
+	SizeKB            int
+	PushedAt          *time.Time
+	MetadataFetchedAt *time.Time
+
 	LastScannedAt *time.Time
 	// HeadSHA at the last scan; lets the next run skip untouched repos.
 	HeadSHA   string

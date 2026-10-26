@@ -47,6 +47,7 @@ var serveSpec = app.Spec{
 		// scan-worker runs, so the dashboard shows exactly what the engine detects.
 		srv := api.NewServer(d.DB, queue, control, d.Log).
 			WithCatalog(d.DB).
+			WithInsights(d.DB).
 			WithProviders(scan.BootstrapRuleset().Providers())
 
 		return app.Parts{HTTP: srv.Routes()}, nil

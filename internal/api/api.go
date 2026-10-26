@@ -11,6 +11,7 @@
 //	notify.go  responsible-disclosure requests
 //	catalog.go dashboard browsing (overview, scans, findings, repositories,
 //	           candidates) and finding triage
+//	insights.go the analyst read model: exposure, reuse, response, precision
 package api
 
 import (
@@ -56,11 +57,12 @@ type Control interface {
 
 // Server holds the API dependencies and builds the router.
 type Server struct {
-	store   Store
-	queue   TaskQueue
+	store     Store
+	queue     TaskQueue
 	control   Control
 	catalog   Catalog             // optional: the dashboard's browsing and triage routes
 	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
+	insights  InsightsSource      // optional: the analyst read model
 	log       *slog.Logger
 }
 
@@ -97,6 +99,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/scans/{id}/rescan", s.handleRescan)
 	mux.HandleFunc("POST /v1/repositories/{id}/disclose", s.handleDisclose)
 	s.catalogRoutes(mux)
+	if s.insights != nil {
+		mux.HandleFunc("GET /v1/insights", s.handleInsights)
+	}
 	return mux
 }
 

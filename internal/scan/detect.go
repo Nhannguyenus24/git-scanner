@@ -60,7 +60,19 @@ var envAssign = regexp.MustCompile(`(?i)([A-Z][A-Z0-9_]{2,})\s*[:=]`)
 // Detect returns every credential found in blob. path is used only to skip
 // files that structurally cannot hold a real secret (plan.md §4.1 step 6).
 func (d *Detector) Detect(path string, blob []byte) []Match {
-	if isBinary(blob) || deniedPath(path) {
+	return d.DetectCounted(path, blob, nil)
+}
+
+// DetectCounted is Detect, also counting into st what each gate did. st may be
+// nil. It does not change what is detected: every counter sits beside a
+// decision that was already there.
+func (d *Detector) DetectCounted(path string, blob []byte, st *DetectStats) []Match {
+	if isBinary(blob) {
+		st.inc(statBlobBinary)
+		return nil
+	}
+	if deniedPath(path) {
+		st.inc(statBlobDeniedPath)
 		return nil
 	}
 
@@ -70,19 +82,28 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 
 	for _, rule := range d.rs.candidates(blob) {
 		for _, span := range rule.secretIndexes(blob) {
+			st.inc(statNamedCandidate)
 			lo, hi := span[0], span[1]
 			secret := string(blob[lo:hi])
 			if _, dup := seen[rule.ID+"\x00"+secret]; dup {
+				st.inc(statNamedDuplicate)
 				continue
 			}
 			if _, claimed := named[secret]; claimed {
+				st.inc(statNamedDuplicate)
 				continue // an earlier rule (by ID order) already reported this value
 			}
 			line := lineContaining(blob, lo)
-			if !rule.keywordsPresent(keywordWindow(blob, lo, hi)) || isPlaceholder(secret) {
+			if !rule.keywordsPresent(keywordWindow(blob, lo, hi)) {
+				st.inc(statNamedKeywordMissing)
+				continue
+			}
+			if isPlaceholder(secret) {
+				st.inc(statNamedPlaceholder)
 				continue
 			}
 			if namedSuppressed(rule.ID, path, blob, lo, hi, secret) {
+				st.inc(statNamedSuppressed)
 				continue
 			}
 			seen[rule.ID+"\x00"+secret] = struct{}{}
@@ -90,9 +111,11 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 			// Claimed before the local check, so the generic pass does not pick
 			// the password back out of a URL that was dropped for being local.
 			if hostScopedProviders[rule.Provider] && localURL(secret) {
+				st.inc(statNamedLocalURL)
 				continue
 			}
 
+			st.inc(statNamedReported)
 			matches = append(matches, Match{
 				RuleID:       rule.ID,
 				Provider:     rule.Provider,
@@ -110,9 +133,10 @@ func (d *Detector) Detect(path string, blob []byte) []Match {
 	// still has its own shape — but an unrecognised high-entropy string in one
 	// is almost always a stand-in.
 	if exampleFile(path) {
+		st.inc(statGenericSkippedExampleFile)
 		return matches
 	}
-	return append(matches, d.genericHighEntropy(path, blob, seen, named)...)
+	return append(matches, d.genericHighEntropy(path, blob, seen, named, st)...)
 }
 
 // highEntropyToken matches a long run of base64/hex-ish characters — the shape
@@ -153,39 +177,53 @@ func hasImageMagic(token string) bool {
 // genericHighEntropy is the catch-all detector for opaque credentials no rule
 // names (plan.md §4.1 step 5). A hit becomes a provider candidate downstream,
 // which is how the registry learns which services are still unmapped (§5.4).
-func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[string]struct{}) []Match {
+func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[string]struct{}, st *DetectStats) []Match {
 	var out []Match
 	for _, loc := range highEntropyToken.FindAllIndex(blob, -1) {
+		st.inc(statGenericToken)
 		token := string(blob[loc[0]:loc[1]])
 		if _, dup := seen["generic\x00"+token]; dup {
+			st.inc(statGenericDuplicate)
 			continue
 		}
 		if overlapsNamed(token, named) {
+			st.inc(statGenericDuplicate)
 			continue // a named rule already reported this value
 		}
-		if shannonEntropy(token) < d.minEntropy || isPlaceholder(token) || isFakeValue(token) {
+		if shannonEntropy(token) < d.minEntropy {
+			st.inc(statGenericLowEntropy)
+			continue
+		}
+		if isPlaceholder(token) || isFakeValue(token) {
+			st.inc(statGenericPlaceholder)
 			continue
 		}
 		before := blob[max(0, loc[0]-64):loc[0]]
 		if bytes.HasSuffix(before, []byte("${")) {
+			st.inc(statGenericVariableRef)
 			continue // a variable reference, not a value
 		}
 		if bytes.HasSuffix(before, []byte("base64,")) || hasImageMagic(token) {
+			st.inc(statGenericEmbeddedImage)
 			continue // an embedded image: a data: URI or a notebook's output cell
 		}
 		if inURLPath.Match(before) {
+			st.inc(statGenericURLPath)
 			continue // a CDN path or asset hash; credentials in URLs have named rules
 		}
 		// A wordy value assigned straight to a secret setting is a hardcoded
 		// secret, weak or not. Only elsewhere on the line is a word-shaped token
 		// taken for an identifier.
 		if looksLikeIdentifier(token) && !secretAssignment.Match(before) {
+			st.inc(statGenericIdentifier)
 			continue
 		}
 		if isTestPath(path) {
+			st.inc(statGenericTestPath)
 			continue // fixtures; a named rule still runs in test files
 		}
 		if publicIdentifier(token, blob[loc[1]:min(len(blob), loc[1]+40)]) {
+			st.inc(statGenericPublicIdentifier)
 			continue // a value designed to be public: publishable key, OAuth client id
 		}
 		line := contextAround(blob, loc[0], loc[1])
@@ -197,10 +235,12 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		key := assignmentKey(blob[max(0, loc[0]-96):loc[0]])
 		switch classifyKey(key) {
 		case keyPublic:
+			st.inc(statGenericPublicKey)
 			continue
 		case keySecret:
 		default:
 			if !secretKeyword.MatchString(line) {
+				st.inc(statGenericNoSecretKeyword)
 				continue
 			}
 		}
@@ -213,14 +253,18 @@ func (d *Detector) genericHighEntropy(path string, blob []byte, seen, named map[
 		// (caught by a named rule anyway) near a stray localhost is never hidden.
 		neigh := neighbourhood(blob, loc[0], loc[1])
 		if hostScopedKey(key) && allHostsDevLocal(neigh) {
+			st.inc(statGenericDevLocal)
 			continue
 		}
 		if exampleLine.MatchString(line) {
+			st.inc(statGenericExampleLine)
 			continue // documentation: `example = "eyJ…"`, **Example:**, e.g. …
 		}
 		if inJWT(blob, loc[0], loc[1]) || isJSONSegment(token) || jwtSecretContext(path, blob, loc[0], line) {
+			st.inc(statGenericJWT)
 			continue
 		}
+		st.inc(statGenericReported)
 		seen["generic\x00"+token] = struct{}{}
 		m := Match{
 			RuleID:       "generic-high-entropy",

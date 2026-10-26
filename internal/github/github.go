@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/mservice/gitscanner/libs/entity"
 )
 
 // Repo is the subset of a GitHub repository the scanner needs.
@@ -31,6 +33,18 @@ type Repo struct {
 	// CreatedAt is when the repository was created on GitHub, which is not the
 	// same as when this system first discovered it.
 	CreatedAt time.Time
+
+	// Details reports whether the fields below were in the response. The user
+	// and org listings and GetRepo return the full repository object; the
+	// random sample's /repositories endpoint returns a minimal one without them,
+	// and its zero values must not be stored as if they were known.
+	Details   bool
+	Language  string
+	Topics    []string
+	OwnerType string
+	Archived  bool
+	SizeKB    int
+	PushedAt  time.Time
 }
 
 // Page is one page of repositories plus the cursor to fetch the next one.
@@ -110,30 +124,9 @@ const maxPublicRepoID = 1_000_000_000
 func (c *Client) ListRandomRepos(ctx context.Context) (Page, error) {
 	since := rand.Int63n(maxPublicRepoID)
 	url := fmt.Sprintf("%s/repositories?since=%d&per_page=%d", c.baseURL, since, c.perPage)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Page{}, fmt.Errorf("github: build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return Page{}, fmt.Errorf("github: request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if err := checkStatus(resp); err != nil {
-		return Page{}, err
-	}
-
 	var raw []apiRepo
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return Page{}, fmt.Errorf("github: decode: %w", err)
+	if err := c.getJSON(ctx, url, &raw); err != nil {
+		return Page{}, err
 	}
 
 	out := Page{Repos: make([]Repo, 0, len(raw))}
@@ -168,9 +161,86 @@ type apiRepo struct {
 	Private       bool      `json:"private"`
 	Stargazers    int       `json:"stargazers_count"`
 	CreatedAt     time.Time `json:"created_at"`
+	PushedAt      time.Time `json:"pushed_at"`
+	Language      string    `json:"language"`
+	Topics        []string  `json:"topics"`
+	Archived      bool      `json:"archived"`
+	Size          int       `json:"size"` // KB, as GitHub reports it
 	Owner         struct {
 		Login string `json:"login"`
+		Type  string `json:"type"`
 	} `json:"owner"`
+}
+
+// full maps a complete repository object, as the listings and GetRepo return
+// it. The random sample's minimal object is mapped separately, without Details.
+func (r apiRepo) full() Repo {
+	owner := r.Owner.Login
+	if owner == "" && r.FullName != "" {
+		owner, _, _ = splitFullName(r.FullName)
+	}
+	return Repo{
+		Owner: owner, Name: r.Name, CloneURL: r.CloneURL,
+		DefaultBranch: r.DefaultBranch, IsFork: r.Fork,
+		IsPrivate: r.Private, Stars: r.Stargazers, CreatedAt: r.CreatedAt,
+		Details: true, Language: r.Language, Topics: r.Topics, OwnerType: r.Owner.Type,
+		Archived: r.Archived, SizeKB: r.Size, PushedAt: r.PushedAt,
+	}
+}
+
+// ApplyAttributes copies the host-reported attributes onto repo and stamps when
+// they were read. A Repo without Details leaves repo untouched, so the random
+// sample's empty fields are never stored as known values.
+func (r Repo) ApplyAttributes(repo *entity.Repository, fetchedAt time.Time) {
+	if !r.Details {
+		return
+	}
+	repo.Language, repo.Topics, repo.OwnerType = r.Language, r.Topics, r.OwnerType
+	repo.Archived, repo.SizeKB = r.Archived, r.SizeKB
+	if !r.PushedAt.IsZero() {
+		pushed := r.PushedAt
+		repo.PushedAt = &pushed
+	}
+	repo.MetadataFetchedAt = &fetchedAt
+}
+
+// GetRepo reads one repository's full object. It exists for repositories that
+// arrived without one — the random sample and direct single-repo scans — so
+// their attributes can be filled in once.
+func (c *Client) GetRepo(ctx context.Context, owner, name string) (Repo, error) {
+	var raw apiRepo
+	if err := c.getJSON(ctx, fmt.Sprintf("%s/repos/%s/%s", c.baseURL, owner, name), &raw); err != nil {
+		return Repo{}, err
+	}
+	return raw.full(), nil
+}
+
+// getJSON issues an authenticated GET and decodes a 2xx body into v. Non-2xx
+// statuses come back as checkStatus's typed errors.
+func (c *Client) getJSON(ctx context.Context, url string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("github: build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("github: request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := checkStatus(resp); err != nil {
+		return err
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("github: decode: %w", err)
+	}
+	return nil
 }
 
 // listRepos fetches one page. The cursor is the page number, so resuming a
@@ -187,42 +257,14 @@ func (c *Client) listRepos(ctx context.Context, path, cursor string) (Page, erro
 
 	url := fmt.Sprintf("%s%s?per_page=%d&page=%d&type=owner&sort=updated",
 		c.baseURL, path, c.perPage, page)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Page{}, fmt.Errorf("github: build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return Page{}, fmt.Errorf("github: request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if err := checkStatus(resp); err != nil {
-		return Page{}, err
-	}
-
 	var raw []apiRepo
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return Page{}, fmt.Errorf("github: decode: %w", err)
+	if err := c.getJSON(ctx, url, &raw); err != nil {
+		return Page{}, err
 	}
 
 	out := Page{Repos: make([]Repo, 0, len(raw))}
 	for _, r := range raw {
-		owner := r.Owner.Login
-		if owner == "" && r.FullName != "" {
-			owner, _, _ = splitFullName(r.FullName)
-		}
-		out.Repos = append(out.Repos, Repo{
-			Owner: owner, Name: r.Name, CloneURL: r.CloneURL,
-			DefaultBranch: r.DefaultBranch, IsFork: r.Fork,
-			IsPrivate: r.Private, Stars: r.Stargazers, CreatedAt: r.CreatedAt,
-		})
+		out.Repos = append(out.Repos, r.full())
 	}
 
 	// A full page means there is probably another; a short page ends the walk.

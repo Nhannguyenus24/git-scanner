@@ -85,6 +85,30 @@ export interface Provider {
 }
 
 export interface Count { key: string; count: number }
+
+/** The analyst read model from GET /v1/insights. Medians are null when there is
+ *  nothing to take one of — "no data", not zero days. */
+export interface Insights {
+  attributes:     { known: number; repositories: number }
+  by_language:    Count[]
+  by_owner_type:  Count[]
+  repo_activity:  { key: string; repos: number; findings: number; at_head: number }[]
+  by_file_kind:   Count[]
+  rule_precision: { rule: string; total: number; open: number; rotated: number; ignored: number; false_positive: number }[]
+  reuse:          { secrets: number; repos: number; top: { preview: string; provider: string; repos: number; forks: number }[] }
+  key_types:      { provider: string; key_type: string; count: number }[]
+  modes:          Count[]
+  exposure:       { key: string; at_head: number; removed: number }[]
+  median_days_to_removal: number | null
+  removed_but_open:       number
+  commit_context: Count[]
+  disclosure: {
+    repos: number; findings: number; live_at_disclosure: number
+    went_dead: number; still_live: number; rotated: number
+    median_days_to_dead: number | null
+  }
+  detection: { repositories: number; counters: Record<string, number> }
+}
 export interface TimePoint { period: string; findings: number }
 
 export interface Analytics {

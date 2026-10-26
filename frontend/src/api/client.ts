@@ -1,5 +1,5 @@
 import type {
-  Analytics, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
+  Analytics, Candidate, Finding, FindingFilter, FindingStatus, Insights, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
 export interface VersionResponse { service: string; version: string; commit: string; go_version: string }
@@ -34,6 +34,7 @@ export function createClient(rawBase: string) {
     version:      ()                                     => r<VersionResponse>('GET', '/v1/version'),
     overview:     ()                                     => r<Overview>('GET', '/v1/overview'),
     analytics:    ()                                     => r<Analytics>('GET', '/v1/analytics'),
+    insights:     ()                                     => r<Insights>('GET', '/v1/insights'),
     listScans:    (limit = 100)                          => r<{ scans: ScanSummary[] }>('GET', `/v1/scans?limit=${limit}`),
     getScan:      (id: string)                           => r<ScanJob>('GET', `/v1/scans/${id}`),
     scanRepo:     (url: string)                          => r<ScanJob>('POST', '/v1/scans/repo', { url }),

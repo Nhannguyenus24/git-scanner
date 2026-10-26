@@ -7,6 +7,7 @@ import ListItemIcon from '@mui/material/ListItemIcon'
 import ListItemText from '@mui/material/ListItemText'
 import DashboardIcon from '@mui/icons-material/SpaceDashboardOutlined'
 import InsightsIcon from '@mui/icons-material/InsightsOutlined'
+import QueryStatsIcon from '@mui/icons-material/QueryStatsOutlined'
 import RadarIcon from '@mui/icons-material/RadarOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import FolderIcon from '@mui/icons-material/FolderOutlined'
@@ -21,6 +22,7 @@ import { useT } from '../i18n'
 const NAV = [
   { page: 'overview',     icon: <DashboardIcon fontSize="small" /> },
   { page: 'analytics',    icon: <InsightsIcon fontSize="small" /> },
+  { page: 'insights',     icon: <QueryStatsIcon fontSize="small" /> },
   { page: 'scans',        icon: <RadarIcon fontSize="small" /> },
   { page: 'findings',     icon: <KeyIcon fontSize="small" /> },
   { page: 'repositories', icon: <FolderIcon fontSize="small" /> },

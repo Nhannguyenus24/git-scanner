@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -50,8 +51,8 @@ func (db *DB) InsertFinding(ctx context.Context, f entity.Finding) (FindingWrite
 			id, scan_job_id, repository_id, rule_id, provider_slug,
 			fingerprint, masked_preview, blob_oid, commit_sha, file_path, line_number,
 			author_name, author_email, committed_at, reachable_from_head,
-			severity, status, metadata)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			severity, status, metadata, removed_commit_sha, removed_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 		ON CONFLICT (fingerprint, repository_id) DO UPDATE SET
 			rule_id       = EXCLUDED.rule_id,
 			provider_slug = EXCLUDED.provider_slug,
@@ -65,7 +66,8 @@ func (db *DB) InsertFinding(ctx context.Context, f entity.Finding) (FindingWrite
 		f.ID, f.ScanJobID, f.RepositoryID, f.RuleID, f.ProviderSlug,
 		f.Fingerprint, f.MaskedPreview, f.BlobOID, f.CommitSHA, f.FilePath, f.LineNumber,
 		f.AuthorName, f.AuthorEmail, nullTime(f.CommittedAt), f.ReachableFromHEAD,
-		f.Severity.String(), string(f.Status), f.Metadata).Scan(&fresh)
+		f.Severity.String(), string(f.Status), f.Metadata,
+		f.RemovedCommitSHA, nullTime(f.RemovedAt)).Scan(&fresh)
 
 	// A conflict whose WHERE excluded it updates nothing and so returns no row.
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -159,4 +161,70 @@ func (db *DB) BackfillAttribution(ctx context.Context, f entity.Finding) (bool, 
 		return false, fmt.Errorf("store: backfill attribution: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// refreshedMetadata lists the metadata keys a rescan may overwrite on a row it
+// did not insert: the facts that change over time (whether the credential is
+// still live, how it left the tree) as opposed to the detection facts fixed at
+// insert, which only reclassification may replace.
+var refreshedMetadata = []string{"intro_commit_kind", "removal_commit_kind"}
+
+// RefreshFinding brings an already-stored finding's time-varying state up to
+// date from a rescan: whether it is still reachable from HEAD, the commit that
+// removed it, and the latest probe outcome.
+//
+// Without it these were frozen at first sight. InsertFinding's conflict arm is
+// deliberately limited to reclassification, so a credential deleted from the
+// default branch kept reporting itself "at HEAD" forever, and a probe on rescan
+// never reached the row. This is a separate write for the same reason
+// BackfillAttribution is.
+//
+// A removal is only ever set or cleared, never blanked by a scan that failed to
+// look it up: it is cleared when the finding is back at HEAD, and replaced only
+// by a non-empty one.
+func (db *DB) RefreshFinding(ctx context.Context, f entity.Finding) error {
+	patch := map[string]string{}
+	for _, k := range refreshedMetadata {
+		if v, ok := f.Metadata[k]; ok {
+			patch[k] = v
+		}
+	}
+	for k, v := range f.Metadata {
+		if strings.HasPrefix(k, "probe_") {
+			patch[k] = v
+		}
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE findings SET
+			reachable_from_head = $3,
+			removed_commit_sha = CASE WHEN $3 THEN '' WHEN $4 <> '' THEN $4 ELSE removed_commit_sha END,
+			removed_at         = CASE WHEN $3 THEN NULL WHEN $4 <> '' THEN $5 ELSE removed_at END,
+			metadata = (CASE WHEN $3 THEN metadata - 'removal_commit_kind' ELSE metadata END) || $6
+		WHERE fingerprint = $1 AND repository_id = $2`,
+		f.Fingerprint, f.RepositoryID, f.ReachableFromHEAD,
+		f.RemovedCommitSHA, nullTime(f.RemovedAt), patch)
+	if err != nil {
+		return fmt.Errorf("store: refresh finding: %w", err)
+	}
+	return nil
+}
+
+// RecordProbe appends a finding's liveness outcome from this job to its probe
+// history. The finding is looked up by its idempotency key rather than f.ID,
+// because a rescan builds a fresh id for a row that already exists under
+// another. A finding the scan did not probe records nothing.
+func (db *DB) RecordProbe(ctx context.Context, jobID entity.ID, f entity.Finding) error {
+	outcome := f.Metadata["probe_status"]
+	if outcome == "" {
+		return nil
+	}
+	_, err := db.pool.Exec(ctx, `
+		INSERT INTO probe_results (finding_id, scan_job_id, outcome)
+		SELECT id, $3, $4 FROM findings WHERE fingerprint = $1 AND repository_id = $2
+		ON CONFLICT (finding_id, scan_job_id) DO UPDATE SET outcome = EXCLUDED.outcome, probed_at = now()`,
+		f.Fingerprint, f.RepositoryID, jobID, outcome)
+	if err != nil {
+		return fmt.Errorf("store: record probe: %w", err)
+	}
+	return nil
 }

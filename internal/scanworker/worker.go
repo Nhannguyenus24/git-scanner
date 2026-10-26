@@ -8,14 +8,17 @@ package scanworker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -30,17 +33,43 @@ type Enqueuer interface {
 	PublishFinding(ctx context.Context, f entity.Finding, repoFullName, appType string) error
 }
 
+// RepoAttributes reads a repository's host attributes. Satisfied by the GitHub
+// client; narrowed so the worker can be tested without the network.
+type RepoAttributes interface {
+	GetRepo(ctx context.Context, owner, name string) (github.Repo, error)
+}
+
+// attributesTimeout bounds the one attribute read a scan may make. The scan
+// does not depend on it, so a slow API must not hold the clone back.
+const attributesTimeout = 10 * time.Second
+
 // Worker handles one scan task at a time within a RabbitMQ consumer.
 type Worker struct {
 	engine *scan.Engine
 	db     *store.DB
 	disp   Enqueuer
 	log    *slog.Logger
+
+	attrs RepoAttributes // nil: attributes are only what discovery stored
+
+	// attrsPausedUntil is set when GitHub rate-limits an attribute read, so the
+	// deliveries that follow skip the call instead of each spending a request to
+	// learn the same thing. Guarded by mu: the consumer runs deliveries
+	// concurrently.
+	mu               sync.Mutex
+	attrsPausedUntil time.Time
 }
 
 // New builds a worker.
 func New(engine *scan.Engine, db *store.DB, disp Enqueuer, log *slog.Logger) *Worker {
 	return &Worker{engine: engine, db: db, disp: disp, log: log}
+}
+
+// WithRepoAttributes lets the worker fill in host attributes for repositories
+// discovered without them — the random sample and direct repo scans.
+func (w *Worker) WithRepoAttributes(a RepoAttributes) *Worker {
+	w.attrs = a
+	return w
 }
 
 // Handle processes one ScanTask delivery. It is the rabbit.Handler for
@@ -67,6 +96,8 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	repo, repoErr := w.db.GetRepository(ctx, repoID)
 	if repoErr != nil {
 		w.log.Debug("repository metadata unavailable", "repo_id", task.RepositoryId, "error", repoErr)
+	} else {
+		w.fillAttributes(ctx, &repo)
 	}
 	meta := repoLogFields(task, repo, repoErr)
 	w.log.Info("scan started", append([]any{"job", task.JobId}, meta...)...)
@@ -86,6 +117,14 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	if res.AttributionErr != nil {
 		w.log.Warn("findings stored without commit attribution",
 			append([]any{"job", task.JobId, "error", res.AttributionErr}, meta...)...)
+	}
+	if res.RemovalErr != nil {
+		w.log.Warn("findings stored without their removal commit",
+			append([]any{"job", task.JobId, "error", res.RemovalErr}, meta...)...)
+	}
+	// Counters for tuning; losing them is not worth failing a scan over.
+	if err := w.db.SetRepositoryScanStats(ctx, repoID, res.Stats); err != nil {
+		w.log.Warn("scan stats not stored", append([]any{"job", task.JobId, "error", err}, meta...)...)
 	}
 	w.log.Info("scan done", append([]any{
 		"job", task.JobId, "blobs", res.BlobsScanned,
@@ -151,6 +190,14 @@ func (s *storeSink) Emit(ctx context.Context, f entity.Finding) error {
 		if filled {
 			s.attributed++
 		}
+		// And its time-varying state — still at HEAD, removed by which commit,
+		// live or not — is this scan's, not the first scan's.
+		if err := s.w.db.RefreshFinding(ctx, f); err != nil {
+			return err
+		}
+	}
+	if err := s.w.db.RecordProbe(ctx, entity.ID(s.task.JobId), f); err != nil {
+		return err
 	}
 
 	switch write {
@@ -186,6 +233,48 @@ func (w *Worker) publishFindings(ctx context.Context, sink *storeSink, repoFullN
 		}
 	}
 	return nil
+}
+
+// fillAttributes reads and stores a repository's host attributes if they are
+// not known yet. It is best-effort throughout: the scan does not need them,
+// so a failure is logged and the scan goes ahead.
+//
+// Without a token GitHub allows 60 requests an hour, which a random sample uses
+// up quickly. A rate-limit answer therefore pauses attribute reads for as long
+// as GitHub asks, rather than every following scan spending a request to be
+// told the same.
+func (w *Worker) fillAttributes(ctx context.Context, repo *entity.Repository) {
+	if w.attrs == nil || repo.MetadataFetchedAt != nil {
+		return
+	}
+	w.mu.Lock()
+	paused := time.Now().Before(w.attrsPausedUntil)
+	w.mu.Unlock()
+	if paused {
+		return
+	}
+
+	actx, cancel := context.WithTimeout(ctx, attributesTimeout)
+	defer cancel()
+	gh, err := w.attrs.GetRepo(actx, repo.Owner, repo.Name)
+	var rl *github.RateLimitError
+	switch {
+	case errors.As(err, &rl):
+		w.mu.Lock()
+		w.attrsPausedUntil = time.Now().Add(rl.RetryAfter)
+		w.mu.Unlock()
+		w.log.Info("repository attribute reads paused: rate limited",
+			"repo", repo.FullName(), "retry_after", rl.RetryAfter.String())
+		return
+	case err != nil:
+		w.log.Warn("repository attributes unavailable", "repo", repo.FullName(), "error", err)
+		return
+	}
+
+	gh.ApplyAttributes(repo, time.Now())
+	if err := w.db.SetRepositoryAttributes(ctx, *repo); err != nil {
+		w.log.Warn("repository attributes not stored", "repo", repo.FullName(), "error", err)
+	}
 }
 
 // repoName is the owner/name the finding events carry, or empty when the

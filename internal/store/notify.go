@@ -94,14 +94,16 @@ func (db *DB) GetRepository(ctx context.Context, repoID entity.ID) (entity.Repos
 	const q = `
 		SELECT id, target_id, owner, name, clone_url, default_branch,
 		       is_fork, is_private, stars, app_type, head_sha,
-		       remote_created_at, last_scanned_at, created_at
+		       remote_created_at, last_scanned_at, created_at,
+		       language, topics, owner_type, archived, size_kb, pushed_at, metadata_fetched_at
 		FROM repositories WHERE id = $1`
 
 	var r entity.Repository
 	err := db.pool.QueryRow(ctx, q, repoID).Scan(
 		&r.ID, &r.TargetID, &r.Owner, &r.Name, &r.CloneURL, &r.DefaultBranch,
 		&r.IsFork, &r.IsPrivate, &r.Stars, &r.AppType, &r.HeadSHA,
-		&r.RemoteCreatedAt, &r.LastScannedAt, &r.CreatedAt)
+		&r.RemoteCreatedAt, &r.LastScannedAt, &r.CreatedAt,
+		&r.Language, &r.Topics, &r.OwnerType, &r.Archived, &r.SizeKB, &r.PushedAt, &r.MetadataFetchedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return entity.Repository{}, ErrNotFound
 	}

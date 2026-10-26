@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -253,6 +254,9 @@ func (w *Worker) enqueueRepos(ctx context.Context, task *gpb.DiscoveryTask, repo
 			created := r.CreatedAt
 			repo.RemoteCreatedAt = &created
 		}
+		// The user and org listings return the full object, so its attributes
+		// are stored here and the scan worker need not ask GitHub again.
+		r.ApplyAttributes(&repo, time.Now())
 
 		stored, err := w.store.UpsertRepository(ctx, repo)
 		if err != nil {

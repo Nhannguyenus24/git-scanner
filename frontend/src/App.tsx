@@ -6,6 +6,7 @@ import { href, navigate, useRoute } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
 import FindingsPage from './pages/FindingsPage'
 import HelpPage from './pages/HelpPage'
+import InsightsPage from './pages/InsightsPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
 import ProvidersPage from './pages/ProvidersPage'
@@ -44,6 +45,7 @@ export default function App() {
     case 'findings':     body = <FindingsPage route={route.id && route.page === 'repositories'
                             ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
     case 'analytics':    body = <AnalyticsPage />; break
+    case 'insights':     body = <InsightsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
     case 'providers':    body = <ProvidersPage />; break
