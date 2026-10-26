@@ -32,12 +32,12 @@ cmd/<service>/main.go   one per service — a declaration, ~15 lines, no logic
 internal/
   app/                  the one bootstrap: config → connect → build → serve → drain
   api/                  REST handlers
-  scan/                 scan engine and its Redis state (blob index, pause/cursor)
+  scan/                 scan engine
   store/                Postgres pool and migrations
 libs/                   shared, importable conventions
   entity/               domain types + validation, stdlib only
   proto/                wire format for queue and stream messages (buf)
-  rabbit/ redis/        transport conventions over the drivers
+  rabbit/               transport conventions over the driver
   config/               environment loading and validation
   observability/        logger and /healthz, /readyz
   lifecycle/            signal handling and ordered shutdown
@@ -75,8 +75,8 @@ Enforced by `depguard` in `make lint` — see [plan.md](plan.md) §3.2.
   `internal/app` wires it.
 
 Domain code depends on the narrowest interface it needs, defined where it is
-used (for example `internal/scan` takes `goredis.Cmdable`, not a concrete
-client), so it can be tested without the real backend.
+used (for example `internal/discovery` takes a `Pauser`, not the concrete
+store), so it can be tested without the real backend.
 
 ### Adding a service
 
@@ -103,13 +103,12 @@ make help          # every target
 
 ### Running against local infrastructure
 
-Postgres, RabbitMQ and Redis are expected to be running already (the values are
+Postgres and RabbitMQ are expected to be running already (the values are
 in [spec.md](spec.md)). To run a service directly:
 
 ```bash
 export POSTGRES_URL='postgresql://postgres:postgres123@localhost:5432/app_db'
 export RABBITMQ_URL='amqp://admin:admin123@localhost:5672/'
-export REDIS_URL='redis://:redis123@localhost:6379/0'
 
 go run ./cmd/api
 curl localhost:8080/readyz

@@ -23,10 +23,10 @@ import (
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
 
-// Pauser reports whether a job has been asked to pause. Backed by the Redis
-// control flags the API sets (plan.md §8).
+// Pauser reports whether a job has been asked to pause. Backed by the flag the
+// API sets on the job row (plan.md §8).
 type Pauser interface {
-	PauseRequested(ctx context.Context, jobID string) (bool, error)
+	PauseRequested(ctx context.Context, jobID entity.ID) (bool, error)
 }
 
 // Store is the database surface discovery needs.
@@ -73,7 +73,7 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	_ = w.store.SetScanState(ctx, jobID, entity.ScanRunning, "")
 
 	// An operator may pause between pages; honour it before doing more work.
-	paused, err := w.pause.PauseRequested(ctx, task.JobId)
+	paused, err := w.pause.PauseRequested(ctx, jobID)
 	if err != nil {
 		return err
 	}

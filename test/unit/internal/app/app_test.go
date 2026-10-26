@@ -18,7 +18,7 @@ func testEnv(t *testing.T) {
 	t.Setenv("HTTP_ADDR", "127.0.0.1:0")
 	t.Setenv("LOG_LEVEL", "error")
 	t.Setenv("SHUTDOWN_TIMEOUT", "2s")
-	for _, k := range []string{"POSTGRES_URL", "RABBITMQ_URL", "REDIS_URL"} {
+	for _, k := range []string{"POSTGRES_URL", "RABBITMQ_URL"} {
 		t.Setenv(k, "")
 	}
 }

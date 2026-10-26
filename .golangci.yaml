@@ -38,7 +38,7 @@ linters:
             - pkg: github.com/rabbitmq/amqp091-go
               desc: "use libs/rabbit via app.Deps"
             - pkg: github.com/redis/go-redis
-              desc: "use libs/redis via app.Deps"
+              desc: "only internal/probe talks to Redis, to validate leaked credentials"
 
         # libs/entity is standard library only, so it never becomes the module
         # that drags a driver into every build.

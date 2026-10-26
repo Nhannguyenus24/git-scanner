@@ -18,10 +18,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
-	"github.com/mservice/gitscanner/libs/redis"
 )
 
 // uniqueViolation is the Postgres SQLSTATE for a unique constraint breach. Here
@@ -99,7 +99,7 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	// the repository had already been contacted, and silently drop the mail.
 	// Taking the token first means a rate-limited delivery leaves no trace.
 	if retryAfter, err := w.limit.Take(ctx, 1); err != nil {
-		if errors.Is(err, redis.ErrRateLimited) {
+		if errors.Is(err, store.ErrRateLimited) {
 			w.log.Info("mail rate cap reached, deferring",
 				"repo", task.RepositoryId, "retry_after", retryAfter)
 			return fmt.Errorf("notify: rate limited, retry after %s", retryAfter)

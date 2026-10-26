@@ -23,7 +23,6 @@ type Common struct {
 
 	PostgresURL string
 	RabbitURL   string
-	RedisURL    string
 
 	OTLPEndpoint    string // empty disables tracing export
 	ShutdownTimeout time.Duration
@@ -57,7 +56,6 @@ func LoadCommon(serviceName string) (Common, error) {
 		HTTPAddr:     getDefault("HTTP_ADDR", ":8080"),
 		PostgresURL:  os.Getenv("POSTGRES_URL"),
 		RabbitURL:    os.Getenv("RABBITMQ_URL"),
-		RedisURL:     os.Getenv("REDIS_URL"),
 		OTLPEndpoint: os.Getenv("OTLP_ENDPOINT"),
 		ScratchDir:   os.Getenv("SCRATCH_DIR"),
 		ProbeSecrets: GetBool("PROBE_SECRETS", false),
