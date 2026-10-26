@@ -1,5 +1,5 @@
 export type ScanState     = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled'
-export type TargetKind    = 'repo' | 'user' | 'org'
+export type TargetKind    = 'repo' | 'user' | 'org' | 'random'
 export type Severity      = 'critical' | 'high' | 'medium' | 'low' | 'info'
 export type FindingStatus = 'open' | 'rotated' | 'false_positive' | 'ignored'
 

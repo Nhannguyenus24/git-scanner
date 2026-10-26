@@ -76,6 +76,32 @@ func (db *DB) UpsertRepository(ctx context.Context, r entity.Repository) (entity
 	return r, nil
 }
 
+// ExistingRepoFullNames returns which of the given "owner/name" identifiers
+// already have a repository row. Random discovery uses it to skip repositories
+// it has scanned before, so a long-running sample never scans the same repo
+// twice even when two random pages overlap.
+func (db *DB) ExistingRepoFullNames(ctx context.Context, fullNames []string) (map[string]struct{}, error) {
+	seen := make(map[string]struct{}, len(fullNames))
+	if len(fullNames) == 0 {
+		return seen, nil
+	}
+	rows, err := db.pool.Query(ctx,
+		`SELECT owner || '/' || name FROM repositories WHERE owner || '/' || name = ANY($1)`,
+		fullNames)
+	if err != nil {
+		return nil, fmt.Errorf("store: existing repo names: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fn string
+		if err := rows.Scan(&fn); err != nil {
+			return nil, fmt.Errorf("store: scan existing repo name: %w", err)
+		}
+		seen[fn] = struct{}{}
+	}
+	return seen, rows.Err()
+}
+
 // SetScanState moves a job to a new state, recording start and finish times.
 // It rejects a move the state machine forbids (plan.md entity.CanTransition),
 // so a buggy worker cannot resurrect a completed job.

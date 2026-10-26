@@ -39,6 +39,7 @@ export function createClient(rawBase: string) {
     scanRepo:     (url: string)                          => r<ScanJob>('POST', '/v1/scans/repo', { url }),
     scanUser:     (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/user', { name, include_forks }),
     scanOrg:      (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/org',  { name, include_forks }),
+    scanRandom:   (count: number, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/random', { count, include_forks }),
     pause:        (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/pause`),
     resume:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/resume`),
     cancel:       (id: string)                           => r<unknown>('POST', `/v1/scans/${id}/cancel`),

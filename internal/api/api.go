@@ -75,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/scans/repo", s.handleScanRepo)
 	mux.HandleFunc("POST /v1/scans/user", s.handleScanUser)
 	mux.HandleFunc("POST /v1/scans/org", s.handleScanOrg)
+	mux.HandleFunc("POST /v1/scans/random", s.handleScanRandom)
 	mux.HandleFunc("GET /v1/scans/{id}", s.handleGetScan)
 	mux.HandleFunc("DELETE /v1/scans/{id}", s.handleDeleteScan)
 	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)

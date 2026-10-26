@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"google.golang.org/protobuf/proto"
 
@@ -34,6 +35,7 @@ type Store interface {
 	AddReposTotal(ctx context.Context, jobID entity.ID, n int) error
 	SetScanCursor(ctx context.Context, jobID entity.ID, cursor string) error
 	SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanState, errMsg string) error
+	ExistingRepoFullNames(ctx context.Context, fullNames []string) (map[string]struct{}, error)
 }
 
 // Dispatcher enqueues the scan tasks discovery produces and the continuation
@@ -86,7 +88,90 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	if task.Kind == string(entity.TargetAllowlist) {
 		return w.expandAllowlist(ctx, &task)
 	}
+	if task.Kind == string(entity.TargetRandom) {
+		return w.expandRandom(ctx, &task)
+	}
 	return w.expandPage(ctx, &task)
+}
+
+// expandRandom enqueues scans for one page of randomly sampled public
+// repositories, then republishes itself to fetch the next page — until the
+// requested count is reached, or forever when the count is zero. It is the
+// dev-only precision-testing path (see entity.TargetRandom); the target is not
+// an authorized set, which is why nothing here is allowed near disclosure.
+//
+// Value carries the requested count ("0"/"" = forever); Cursor carries how many
+// repos have been enqueued so far, so a redelivery resumes the tally rather than
+// restarting it.
+func (w *Worker) expandRandom(ctx context.Context, task *gpb.DiscoveryTask) error {
+	jobID := entity.ID(task.JobId)
+
+	want, _ := strconv.Atoi(task.Value) // 0 or unparseable => forever
+	done, _ := strconv.Atoi(task.Cursor)
+	if want > 0 && done >= want {
+		w.log.Info("random discovery complete", "job", task.JobId, "enqueued", done)
+		return nil
+	}
+
+	page, err := w.gh.ListRandomRepos(ctx)
+	if err != nil {
+		// Rate-limit or transient: return unacked for broker backoff, as the
+		// paged path does. Progress already recorded in the cursor survives.
+		return err
+	}
+
+	// Drop repos already stored so the same repo is never scanned twice, even
+	// when two random pages overlap (the no-duplicates requirement).
+	candidates := make([]github.Repo, 0, len(page.Repos))
+	fullNames := make([]string, 0, len(page.Repos))
+	for _, r := range page.Repos {
+		if r.Owner == "" || r.Name == "" {
+			continue
+		}
+		fullNames = append(fullNames, r.Owner+"/"+r.Name)
+		candidates = append(candidates, r)
+	}
+	existing, err := w.store.ExistingRepoFullNames(ctx, fullNames)
+	if err != nil {
+		return err
+	}
+	fresh := make([]github.Repo, 0, len(candidates))
+	for _, r := range candidates {
+		if _, dup := existing[r.Owner+"/"+r.Name]; dup {
+			continue
+		}
+		fresh = append(fresh, r)
+	}
+
+	// Never overshoot the requested count.
+	if want > 0 && done+len(fresh) > want {
+		fresh = fresh[:want-done]
+	}
+
+	enqueued, err := w.enqueueRepos(ctx, task, fresh)
+	if err != nil {
+		return err
+	}
+	done += enqueued
+	if err := w.store.AddReposTotal(ctx, jobID, enqueued); err != nil {
+		return err
+	}
+	cursor := strconv.Itoa(done)
+	if err := w.store.SetScanCursor(ctx, jobID, cursor); err != nil {
+		return err
+	}
+	w.log.Info("random discovery page done", "job", task.JobId,
+		"enqueued", enqueued, "total", done, "want", want)
+
+	if want > 0 && done >= want {
+		w.log.Info("random discovery complete", "job", task.JobId, "enqueued", done)
+		return nil // completion follows when the scans themselves finish
+	}
+	// More to do (or forever): continue in a fresh delivery so this one does not
+	// hold a prefetch slot while the whole sample runs.
+	next := requestFromTask(task)
+	next.Cursor = cursor
+	return w.disp.EnqueueDiscovery(ctx, next)
 }
 
 // expandPage lists one page of a user's or org's repositories, enqueues a scan

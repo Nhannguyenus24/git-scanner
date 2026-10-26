@@ -204,6 +204,7 @@ const DICT: Record<string, Entry> = {
   'dialog.repo':      { en: 'Repository', vi: 'Kho' },
   'dialog.user':      { en: 'User', vi: 'Người dùng' },
   'dialog.org':       { en: 'Org', vi: 'Tổ chức' },
+  'dialog.random':    { en: 'Random', vi: 'Ngẫu nhiên' },
   'dialog.cloneUrl':  { en: 'Clone URL (HTTPS)', vi: 'URL clone (HTTPS)' },
   'dialog.login':     { en: 'GitHub login', vi: 'Tài khoản GitHub' },
   'dialog.includeForks': { en: 'Include forked repositories', vi: 'Gồm cả kho fork' },
@@ -212,6 +213,10 @@ const DICT: Record<string, Entry> = {
   'dialog.help.repo': { en: 'Must be an HTTPS clone URL (no SSH, no credentials in the URL)', vi: 'Phải là URL clone HTTPS (không SSH, không chứa credential trong URL)' },
   'dialog.help.user': { en: 'Alphanumeric + hyphens, 1–39 characters', vi: 'Chữ, số và gạch nối, 1–39 ký tự' },
   'dialog.help.org':  { en: 'Alphanumeric + hyphens, 1–39 characters', vi: 'Chữ, số và gạch nối, 1–39 ký tự' },
+  'dialog.count':     { en: 'Number of repositories', vi: 'Số lượng kho' },
+  'dialog.forever':   { en: 'Run forever (until paused or cancelled)', vi: 'Chạy mãi (đến khi tạm dừng/huỷ)' },
+  'dialog.countInvalid': { en: 'Enter a positive whole number', vi: 'Nhập số nguyên dương' },
+  'dialog.help.random': { en: 'Randomly sampled public repos — for testing detection only', vi: 'Kho công khai lấy ngẫu nhiên — chỉ để kiểm thử dò quét' },
 }
 
 function lookup(key: string, lang: Lang, vars?: Record<string, string | number>): string {
