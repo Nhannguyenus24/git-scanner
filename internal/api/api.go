@@ -48,10 +48,10 @@ type TaskQueue interface {
 	EnqueueNotify(ctx context.Context, req dispatch.NotifyRequest) error
 }
 
-// Control is the pause/resume flag surface, backed by Redis (plan.md §8).
+// Control is the pause/resume flag surface, a column on the job row (plan.md §8).
 type Control interface {
-	RequestPause(ctx context.Context, jobID string) error
-	ClearPause(ctx context.Context, jobID string) error
+	RequestPause(ctx context.Context, jobID entity.ID) error
+	ClearPause(ctx context.Context, jobID entity.ID) error
 }
 
 // Server holds the API dependencies and builds the router.

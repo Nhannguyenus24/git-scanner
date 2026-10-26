@@ -123,8 +123,8 @@ func (q *fakeQueue) EnqueueNotify(_ context.Context, req dispatch.NotifyRequest)
 
 type fakeControl struct{ paused, cleared int }
 
-func (c *fakeControl) RequestPause(context.Context, string) error { c.paused++; return nil }
-func (c *fakeControl) ClearPause(context.Context, string) error   { c.cleared++; return nil }
+func (c *fakeControl) RequestPause(context.Context, entity.ID) error { c.paused++; return nil }
+func (c *fakeControl) ClearPause(context.Context, entity.ID) error   { c.cleared++; return nil }
 
 func newServer(t *testing.T) (*api.Server, *fakeStore, *fakeQueue) {
 	t.Helper()

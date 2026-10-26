@@ -13,7 +13,7 @@ import (
 )
 
 // Prefetch is modest and is not the thing that bounds the send rate: one
-// delivery is one mail, and the Redis token bucket — shared by every replica —
+// delivery is one mail, and the Postgres token bucket — shared by every replica —
 // is what actually caps how fast mail leaves (plan.md §13.5). Prefetch only
 // decides how many requests this pod holds while waiting for tokens.
 const (
@@ -27,7 +27,7 @@ const (
 func main() {
 	app.Main(app.Spec{
 		Name:  "notifier",
-		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
+		Needs: app.Needs{Postgres: true, Rabbit: true},
 		Build: build,
 	})
 }
@@ -44,7 +44,7 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 
 	// One key for every replica, so scaling out raises throughput but never the
 	// rate at which strangers receive mail.
-	bucket := d.Redis.NewBucket("notify:mail", float64(cap), window)
+	bucket := d.DB.NewBucket("notify:mail", float64(cap), window)
 
 	sender := newSender(d)
 	info := notify.DisclosureInfo{

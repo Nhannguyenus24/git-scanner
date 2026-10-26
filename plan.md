@@ -66,7 +66,6 @@ stable release in `go.mod` with a `toolchain` directive.
 | HTTP | `go-chi/chi/v5`, `log/slog`, OpenTelemetry |
 | Postgres | `pgx/v5` + `sqlc`, `golang-migrate` |
 | RabbitMQ | `rabbitmq/amqp091-go` |
-| Redis | `redis/go-redis/v9` |
 | SMTP | `wneessen/go-mail` |
 | Git | `git` binary over `cat-file --batch` pipes, behind an interface |
 
@@ -91,7 +90,7 @@ What did *not* change is the need for idempotency. RabbitMQ is at-least-once
 just as Kafka was, so the dedupe tables behind the rollups (§10) remain load
 bearing.
 
-Infrastructure (Postgres, RabbitMQ, Redis) is already deployed in Docker — see
+Infrastructure (Postgres, RabbitMQ) is already deployed in Docker — see
 connection values in [spec.md](spec.md).
 
 ---
@@ -122,7 +121,6 @@ gitscanner/                      module github.com/mservice/gitscanner
     entity/        domain types + validation, zero I/O
     proto/         buf workspace: proto/ definitions, gen/ generated Go
     rabbit/        reconnect, confirms, prefetch, DLX backoff, cancellable consumer
-    redis/         connection, distributed token bucket, pub/sub
     observability/ slog + OTel wiring, health probes
     config/        env loading and validation
     lifecycle/     signal handling, ordered shutdown
@@ -179,10 +177,10 @@ buys independent evolution of the two.
 
 ### 3.4 Keep the transport libraries thin
 
-`libs/rabbit` and `libs/redis` encode **our conventions** — queue and
+`libs/rabbit` encodes **our conventions** — queue and
 queue naming, proto serialization, trace headers, consumer-group setup, retry and
-DLQ topology, graceful shutdown (§13.3), OTel spans. They do not attempt to hide
-franz-go, amqp091 or go-redis.
+DLQ topology, graceful shutdown (§13.3), OTel spans. It does not attempt to hide
+amqp091.
 
 A wrapper that re-exports every driver option is strictly worse than the driver: it
 carries the same complexity plus a layer to debug through. When a service needs
@@ -205,7 +203,9 @@ content hundreds of times.
 1. `git clone --mirror` into a scratch dir with a per-job disk quota and guaranteed
    cleanup on every exit path.
 2. `git rev-list --objects --all` → dedupe blob OIDs → drop OIDs already scanned in
-   a prior run (recorded in Redis). Incremental rescans become nearly free.
+   a prior run. Incremental rescans become nearly free. (Not implemented: the
+   Redis-backed index was never wired in and went with Redis; a revival belongs
+   in Postgres.)
 3. Stream contents through a single long-lived `git cat-file --batch` process.
    Skip binaries (sniff first 512 bytes) and blobs over ~10 MB.
 4. **Literal prefilter before regex.** Running ~400 regexes over every blob is the
@@ -378,7 +378,7 @@ A definition version is immutable: `draft → test → published → deprecated`
 - **test** runs the version against stored fixtures. Fixtures are **synthetic keys
   only** — never a real leaked credential from the findings table.
 - **publish** bumps a global `registry_version` and announces it on the
-  `registry.events` queue, with a Redis pub/sub nudge for low latency.
+  `registry.events` queue.
 - Workers rebuild the Aho-Corasick automaton and compiled regex set **off to the
   side**, then swap it in with `atomic.Pointer`. No lock, no dropped in-flight task.
 - Workers report their active `registry_version` in the heartbeat, so a rollout is
@@ -473,14 +473,15 @@ GET    /v1/analytics/providers
 
 Registry endpoints: §5.5. Auth: API key or JWT, scoped per tenant.
 
-**Pause/resume.** The worker checks a Redis flag each batch, flushes its cursor to
+**Pause/resume.** The worker checks `scan_jobs.pause_requested` each batch, flushes its cursor to
 `scan_jobs`, and acks. Resume re-enqueues from the stored cursor.
 
 ---
 
 ## 9. GitHub client
 
-- Token pool with per-token buckets in Redis (5000 req/hr each)
+- Token pool with per-token buckets (5000 req/hr each), on the shared Postgres
+  bucket the notifier uses
 - Secondary rate limit handling; honour `Retry-After`
 - ETag conditional requests
 - GraphQL for user and org repo enumeration — one query rather than N REST calls
@@ -526,7 +527,7 @@ definitions, so the catalog does not start empty.
 
 ## 12. Testing
 
-- `testcontainers-go` for integration tests against real Postgres / Rabbit / Redis.
+- `testcontainers-go` for integration tests against real Postgres / Rabbit.
 - Build a **labeled fixture repo early** — known secrets at known commits, plus known
   decoys. False-positive rate is the metric that decides whether anyone trusts the
   tool; it needs to be measurable from Phase 1.
@@ -685,7 +686,8 @@ a pod that is mid-scan and forces the requeue path constantly.
 to 10 replicas multiplies the send rate by 10 and the domain gets blocklisted —
 exactly the outcome the cap exists to prevent.
 
-The limiter must be a **shared token bucket in Redis**, with the suppression-list
+The limiter must be a **shared token bucket** — a locked row in Postgres
+(`rate_buckets`), which every replica serialises on — with the suppression-list
 check inside the same atomic operation as the send claim. Keep `notifier` at a low
 fixed replica count anyway; it is not throughput-bound.
 
@@ -725,7 +727,7 @@ node credentials. Route probe traffic through an egress proxy that enforces the
 
 ### 13.9 Registry rollout across pods
 
-§5.6 distributes definition versions over RabbitMQ and Redis pub/sub, which works
+§5.6 distributes definition versions over RabbitMQ, which works
 across replicas unchanged. Two K8s-specific requirements:
 
 - A pod starting after a publish has missed the notification, so startup must load
@@ -763,7 +765,7 @@ k3d cluster create gitscanner \
 - `--registry-create` starts a registry reachable as `localhost:5050` from the Mac
   and `k3d-gitscanner-registry:5000` from inside the cluster. No `kind load`, no
   remote registry, and image pulls stay fast enough for an edit-run loop.
-- `--network` joins the cluster to the network where Postgres, RabbitMQ and Redis
+- `--network` joins the cluster to the network where Postgres and RabbitMQ
   are already running, so pods resolve them **by container name**. Confirm the
   network with `docker network ls` and the registry host with `k3d registry list`.
 

@@ -117,16 +117,20 @@ func (s *Server) startDiscovery(w http.ResponseWriter, r *http.Request, kind ent
 }
 
 // handlePause asks a running job to stop at its next checkpoint. It sets the
-// Redis flag the workers poll; the state flips to paused when a worker observes
-// it, so the response reports "pause requested" rather than an immediate stop.
+// flag the workers poll; the state flips to paused when a worker observes it,
+// so the response reports "pause requested" rather than an immediate stop.
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := entity.ID(r.PathValue("id"))
 	if err := s.control.RequestPause(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, errors.New("scan not found"))
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.log.Info("pause requested", "job", id)
-	writeJSON(w, http.StatusAccepted, map[string]string{"id": id, "pause": "requested"})
+	s.log.Info("pause requested", "job", id.String())
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id.String(), "pause": "requested"})
 }
 
 // handleResume clears the pause flag and re-enqueues discovery from the stored
@@ -150,7 +154,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.control.ClearPause(ctx, job.ID.String()); err != nil {
+	if err := s.control.ClearPause(ctx, job.ID); err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}

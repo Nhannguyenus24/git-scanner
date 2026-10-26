@@ -59,7 +59,7 @@ serve probes → ready → run → unready → drain → close.
 ```go
 app.Main(app.Spec{
     Name:  "scan-worker",
-    Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
+    Needs: app.Needs{Postgres: true, Rabbit: true},
     Build: build,
 })
 
@@ -85,13 +85,13 @@ that must not drift, and it lives in one place for that reason.
 
 | Store | Holds | Why there |
 |---|---|---|
-| Postgres | targets, jobs, repositories, findings, provider catalog, rollups | the system of record; anything that must survive and be queried |
+| Postgres | targets, jobs and their pause flag, repositories, findings, provider catalog, rollups, the shared mail rate bucket | the system of record; anything that must survive and be queried |
 | RabbitMQ | task dispatch and the finding stream, both with retry and dead-letter | bounded by prefetch, so queue depth is a real scaling signal |
-| Redis | pause flags, the shared mail rate cap, blob index | small, hot, shared across replicas |
 
-The Redis cap matters architecturally: a per-process limiter would multiply the
-send rate by the replica count, which is precisely the failure the cap exists to
-prevent (plan.md §13.5).
+The shared rate bucket (`store.Bucket`, one locked row per key) matters
+architecturally: a per-process limiter would multiply the send rate by the
+replica count, which is precisely the failure the cap exists to prevent
+(plan.md §13.5).
 
 ## Package boundaries
 

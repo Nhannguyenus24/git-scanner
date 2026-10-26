@@ -11,7 +11,6 @@ import (
 	"github.com/mservice/gitscanner/libs/lifecycle"
 	"github.com/mservice/gitscanner/libs/observability"
 	"github.com/mservice/gitscanner/libs/rabbit"
-	"github.com/mservice/gitscanner/libs/redis"
 )
 
 // Needs lists which backends a service uses. Connecting to everything
@@ -19,7 +18,6 @@ import (
 type Needs struct {
 	Postgres bool
 	Rabbit   bool
-	Redis    bool
 }
 
 // validate reports every missing connection setting at once, before anything
@@ -31,9 +29,6 @@ func (n Needs) validate(cfg config.Common) error {
 	}
 	if n.Rabbit && cfg.RabbitURL == "" {
 		errs = append(errs, errors.New("RABBITMQ_URL is required"))
-	}
-	if n.Redis && cfg.RedisURL == "" {
-		errs = append(errs, errors.New("REDIS_URL is required"))
 	}
 	return errors.Join(errs...)
 }
@@ -47,7 +42,6 @@ type Deps struct {
 
 	DB     *store.DB
 	Rabbit *rabbit.Conn
-	Redis  *redis.Client
 }
 
 // connect dials every backend in needs and registers its readiness check. On
@@ -74,15 +68,6 @@ func connect(ctx context.Context, cfg config.Common, log *slog.Logger, needs Nee
 		d.Health.AddCheck("postgres", db.Ping)
 	}
 
-	if needs.Redis {
-		rc, err := redis.New(ctx, cfg.RedisURL)
-		if err != nil {
-			return fail(err)
-		}
-		d.Redis = rc
-		d.Health.AddCheck("redis", rc.Ping)
-	}
-
 	if needs.Rabbit {
 		rc, err := rabbit.Connect(ctx, cfg.RabbitURL, log)
 		if err != nil {
@@ -105,9 +90,6 @@ func (d *Deps) closers() []lifecycle.Component {
 	var cs []lifecycle.Component
 	if d.Rabbit != nil {
 		cs = append(cs, lifecycle.Component{Name: "rabbit", Stop: ignoreCtx(d.Rabbit.Close)})
-	}
-	if d.Redis != nil {
-		cs = append(cs, lifecycle.Component{Name: "redis", Stop: ignoreCtx(d.Redis.Close)})
 	}
 	if d.DB != nil {
 		cs = append(cs, lifecycle.Component{Name: "postgres", Stop: ignoreCtx(d.DB.Close)})

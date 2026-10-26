@@ -10,7 +10,6 @@ import (
 	"github.com/mservice/gitscanner/internal/discovery"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
-	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/libs/config"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
@@ -26,7 +25,7 @@ const (
 func main() {
 	app.Main(app.Spec{
 		Name:  "discovery-worker",
-		Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
+		Needs: app.Needs{Postgres: true, Rabbit: true},
 		Build: build,
 	})
 }
@@ -41,9 +40,7 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	// limit exhausts after a few hundred requests (plan.md §9).
 	gh := github.New(config.GetOr("GITHUB_TOKEN", ""))
 	disp := dispatch.New(publisher)
-	control := scan.NewControl(d.Redis.Raw())
-
-	worker := discovery.New(gh, d.DB, disp, control, d.Log)
+	worker := discovery.New(gh, d.DB, disp, d.DB, d.Log)
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueDiscovery, discoveryPrefetch, discoveryMaxRetry)
 	if err != nil {

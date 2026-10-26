@@ -15,9 +15,6 @@ infra:
   rabbitmq:
     host: rabbitmq.infra.internal
     port: 5672
-  redis:
-    host: redis.infra.internal
-    port: 6379
 
 # Name of the Secret holding connection URLs and crypto keys. Created by External
 # Secrets or Sealed Secrets, never committed (plan.md §13.7).
@@ -89,7 +86,7 @@ services:
       maxReplicas: 10
 
   notifier:
-    # Deliberately not autoscaled. The send cap is a shared Redis bucket
+    # Deliberately not autoscaled. The send cap is a shared Postgres bucket
     # (plan.md §13.5) and this workload is not throughput-bound, so extra
     # replicas buy nothing and raise the blast radius of a bug.
     replicas: 1

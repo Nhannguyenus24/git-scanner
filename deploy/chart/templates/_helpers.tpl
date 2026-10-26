@@ -35,9 +35,4 @@ backends run in the cluster or on the developer's Docker host (plan.md §13.2).
     secretKeyRef:
       name: {{ .root.Values.secretName }}
       key: RABBITMQ_URL
-- name: REDIS_URL
-  valueFrom:
-    secretKeyRef:
-      name: {{ .root.Values.secretName }}
-      key: REDIS_URL
 {{- end }}

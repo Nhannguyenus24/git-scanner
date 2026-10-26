@@ -81,7 +81,7 @@ test: ## Run unit tests with the race detector
 	go test -race -count=1 ./test/unit/...
 
 .PHONY: test-integration
-test-integration: ## Run integration tests against real backends (needs REDIS_URL, ...)
+test-integration: ## Run integration tests against real backends (needs POSTGRES_URL, ...)
 	go test -race -count=1 -tags=integration ./test/integration/...
 
 .PHONY: cover
@@ -182,14 +182,12 @@ frontend-build: ## Build frontend for production into frontend/dist
 
 INFRA_POSTGRES  ?= postgresql://postgres:postgres123@localhost:5432/app_db
 INFRA_RABBIT    ?= amqp://admin:admin123@localhost:5672/
-INFRA_REDIS     ?= redis://:redis123@localhost:6379/0
 RUN_LOG_DIR     ?= /tmp/gitscanner-logs
 
 .PHONY: run-local
 run-local: build ## Build and start all six services locally (no k8s). Logs → RUN_LOG_DIR.
 	@mkdir -p $(RUN_LOG_DIR)
 	@export POSTGRES_URL='$(INFRA_POSTGRES)' RABBITMQ_URL='$(INFRA_RABBIT)' \
-	        REDIS_URL='$(INFRA_REDIS)' \
 	        PROBE_SECRETS='$(PROBE_SECRETS)' \
 	        LOG_LEVEL=debug ENV=dev; \
 	port=8080; \

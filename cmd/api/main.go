@@ -29,7 +29,7 @@ func main() {
 
 var serveSpec = app.Spec{
 	Name:  "api",
-	Needs: app.Needs{Postgres: true, Rabbit: true, Redis: true},
+	Needs: app.Needs{Postgres: true, Rabbit: true},
 	Build: func(ctx context.Context, d *app.Deps) (app.Parts, error) {
 		// In Kubernetes the hook has already migrated and this is a no-op under
 		// the advisory lock; running directly, it saves a separate step.
@@ -42,10 +42,9 @@ var serveSpec = app.Spec{
 			return app.Parts{}, fmt.Errorf("api: publisher: %w", err)
 		}
 		queue := dispatch.New(publisher)
-		control := scan.NewControl(d.Redis.Raw())
 		// The providers list is derived from the same bootstrap ruleset the
 		// scan-worker runs, so the dashboard shows exactly what the engine detects.
-		srv := api.NewServer(d.DB, queue, control, d.Log).
+		srv := api.NewServer(d.DB, queue, d.DB, d.Log).
 			WithCatalog(d.DB).
 			WithProviders(scan.BootstrapRuleset().Providers())
 

@@ -40,7 +40,7 @@ paths:
     get:
       tags: [meta]
       summary: Readiness probe
-      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ, Redis) are reachable.
+      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ) are reachable.
       operationId: getReadiness
       responses:
         "200":
@@ -211,7 +211,7 @@ paths:
       tags: [scans]
       summary: Request pause
       description: |
-        Sets a Redis flag the workers poll. The job's `state` flips to `paused`
+        Sets a flag on the job that the workers poll. The job's `state` flips to `paused`
         when a worker observes the flag at its next checkpoint — it is not
         immediate. Only valid for a `running` job.
       operationId: pauseScan
@@ -231,6 +231,8 @@ paths:
                   pause:
                     type: string
                     example: requested
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 

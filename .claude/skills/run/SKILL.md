@@ -10,7 +10,7 @@ Kubernetes path and are not needed here.
 
 ## Infrastructure is already on the machine
 
-Postgres, RabbitMQ and Redis run as pre-existing containers that this
+Postgres and RabbitMQ run as pre-existing containers that this
 repository does not own. **There is deliberately no docker-compose file here —
 do not add one.** An earlier attempt was removed precisely because it duplicated
 infrastructure the developer already runs.
@@ -19,7 +19,6 @@ infrastructure the developer already runs.
 |----------|------|-------------------------------------|
 | postgres | 5432 | `postgres` / `postgres123`, db `app_db` |
 | rabbitmq | 5672 | `admin` / `admin123` (UI on 15672) |
-| redis    | 6379 | password `redis123` |
 
 Confirm they are up before blaming the services:
 
@@ -159,7 +158,6 @@ make stop-local
 make run-local \
   INFRA_POSTGRES='postgresql://user:pass@host:5432/db' \
   INFRA_RABBIT='amqp://user:pass@host:5672/' \
-  INFRA_REDIS='redis://:pass@host:6379/0' \
   RUN_LOG_DIR=/your/log/path
 ```
 

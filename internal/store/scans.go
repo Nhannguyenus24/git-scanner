@@ -136,6 +136,45 @@ func (db *DB) SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanS
 	})
 }
 
+// RequestPause asks the worker holding jobID to stop at its next page
+// (plan.md §8). The state stays as it is until a worker observes the request.
+func (db *DB) RequestPause(ctx context.Context, jobID entity.ID) error {
+	return db.setPauseRequested(ctx, jobID, true)
+}
+
+// ClearPause withdraws a pause request so a resumed job is not paused again.
+func (db *DB) ClearPause(ctx context.Context, jobID entity.ID) error {
+	return db.setPauseRequested(ctx, jobID, false)
+}
+
+func (db *DB) setPauseRequested(ctx context.Context, jobID entity.ID, v bool) error {
+	tag, err := db.pool.Exec(ctx,
+		`UPDATE scan_jobs SET pause_requested = $2, updated_at = now() WHERE id = $1`, jobID, v)
+	if err != nil {
+		return fmt.Errorf("store: set pause requested: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// PauseRequested reports whether an operator asked jobID to pause. A job that no
+// longer exists reports false, so discovery for a deleted job is not retried
+// into the dead-letter queue over a missing row.
+func (db *DB) PauseRequested(ctx context.Context, jobID entity.ID) (bool, error) {
+	var paused bool
+	err := db.pool.QueryRow(ctx,
+		`SELECT pause_requested FROM scan_jobs WHERE id = $1`, jobID).Scan(&paused)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: pause requested: %w", err)
+	}
+	return paused, nil
+}
+
 // SetRepositoryAppType records the stack a scan detected in a repository.
 //
 // It is written here rather than at discovery because nothing short of walking

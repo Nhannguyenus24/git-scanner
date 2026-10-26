@@ -8,7 +8,7 @@ test/
   unit/          fast, no network, no backends     make test
     internal/    tests for internal/<pkg>
     libs/        tests for libs/<pkg>
-  integration/   real Postgres / RabbitMQ / Redis,
+  integration/   real Postgres / RabbitMQ,
                  behind the `integration` build tag  make test-integration
 ```
 
@@ -30,6 +30,6 @@ test/
 
 ```bash
 make test               # unit tests, race detector on
-make test-integration   # export REDIS_URL=... (and others) first
+make test-integration   # export POSTGRES_URL=... (and others) first
 make cover              # coverage of internal/ and libs/ → coverage.html
 ```

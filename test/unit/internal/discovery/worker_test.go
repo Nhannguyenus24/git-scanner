@@ -97,7 +97,7 @@ func (d *fakeDisp) EnqueueDiscovery(_ context.Context, req dispatch.DiscoveryReq
 
 type fakePause struct{ paused bool }
 
-func (p *fakePause) PauseRequested(context.Context, string) (bool, error) { return p.paused, nil }
+func (p *fakePause) PauseRequested(context.Context, entity.ID) (bool, error) { return p.paused, nil }
 
 func deliver(t *testing.T, task *gpb.DiscoveryTask) rabbit.Delivery {
 	t.Helper()

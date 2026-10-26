@@ -19,7 +19,6 @@ image:
 infra:
   postgres:  { host: host.k3d.internal, port: 5432 }
   rabbitmq:  { host: host.k3d.internal, port: 5672 }
-  redis:     { host: host.k3d.internal, port: 6379 }
 
 services:
   api:
