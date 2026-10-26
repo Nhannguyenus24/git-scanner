@@ -75,6 +75,15 @@ export interface Repository {
   low:              number
 }
 
+/** A provider the detection engine can attribute a finding to, as the API
+ *  derives it from the live ruleset. `severity` is the most serious of the
+ *  provider's rules; `rules` is how many target it. */
+export interface Provider {
+  slug:     string
+  severity: Severity
+  rules:    number
+}
+
 export interface Count { key: string; count: number }
 export interface TimePoint { period: string; findings: number }
 

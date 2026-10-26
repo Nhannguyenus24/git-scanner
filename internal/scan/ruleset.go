@@ -44,6 +44,71 @@ func NewRuleset(version int64, rules []*Rule) *Ruleset {
 // Version is the registry version this ruleset was built from.
 func (rs *Ruleset) Version() int64 { return rs.version }
 
+// ProviderInfo summarises one provider's coverage in a ruleset: how many rules
+// attribute to it and the most serious severity any of them carries. It backs
+// the dashboard's "supported providers" list, so the list is derived from the
+// live ruleset and cannot drift from what the engine actually detects.
+type ProviderInfo struct {
+	Slug     string
+	Rules    int
+	Severity string
+}
+
+// Providers returns the distinct providers this ruleset can attribute a finding
+// to, ordered by slug. A rule carried under several literals is counted once.
+func (rs *Ruleset) Providers() []ProviderInfo {
+	seen := map[*Rule]struct{}{}
+	agg := map[string]*ProviderInfo{}
+	add := func(r *Rule) {
+		if _, dup := seen[r]; dup {
+			return
+		}
+		seen[r] = struct{}{}
+		p := agg[r.Provider]
+		if p == nil {
+			p = &ProviderInfo{Slug: r.Provider}
+			agg[r.Provider] = p
+		}
+		p.Rules++
+		if severityRank(r.Severity) > severityRank(p.Severity) {
+			p.Severity = r.Severity
+		}
+	}
+	for _, r := range rs.alwaysRules {
+		add(r)
+	}
+	// Map iteration order is random, but dedup-by-pointer and the final sort by
+	// slug make the result deterministic regardless of the order rules arrive.
+	for _, rules := range rs.literals {
+		for _, r := range rules {
+			add(r)
+		}
+	}
+	out := make([]ProviderInfo, 0, len(agg))
+	for _, p := range agg {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out
+}
+
+// severityRank orders severities so Providers can pick the most serious one; an
+// unrecognised or empty string ranks below every real level.
+func severityRank(s string) int {
+	switch s {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
 // candidates returns the rules worth evaluating against blob: every rule whose
 // literal the prefilter found, plus every literal-free rule. The result is
 // deduplicated and ordered by rule ID so detection is deterministic.

@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/libs/buildinfo"
 	"github.com/mservice/gitscanner/libs/entity"
 )
@@ -57,9 +58,19 @@ type Control interface {
 type Server struct {
 	store   Store
 	queue   TaskQueue
-	control Control
-	catalog Catalog // optional: the dashboard's browsing and triage routes
-	log     *slog.Logger
+	control   Control
+	catalog   Catalog             // optional: the dashboard's browsing and triage routes
+	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
+	log       *slog.Logger
+}
+
+// WithProviders registers the providers the detection engine can attribute a
+// finding to, so the dashboard can list them. The list is derived from the
+// active ruleset (scan.Ruleset.Providers), which keeps it in lockstep with what
+// the engine detects rather than a copy that drifts.
+func (s *Server) WithProviders(ps []scan.ProviderInfo) *Server {
+	s.providers = ps
+	return s
 }
 
 // NewServer wires the API. Either dependency may be nil in a degraded mode, but
@@ -72,6 +83,7 @@ func NewServer(store Store, queue TaskQueue, control Control, log *slog.Logger) 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/version", s.handleVersion)
+	mux.HandleFunc("GET /v1/providers", s.handleListProviders)
 	mux.HandleFunc("POST /v1/scans/repo", s.handleScanRepo)
 	mux.HandleFunc("POST /v1/scans/user", s.handleScanUser)
 	mux.HandleFunc("POST /v1/scans/org", s.handleScanOrg)
@@ -93,6 +105,24 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 		Service string `json:"service"`
 		buildinfo.Info
 	}{Service: "api", Info: buildinfo.Get()})
+}
+
+type providerResponse struct {
+	Slug     string `json:"slug"`
+	Severity string `json:"severity"`
+	Rules    int    `json:"rules"`
+}
+
+// handleListProviders returns the detection catalogue — the providers a finding
+// can be attributed to — so the dashboard can show what is supported. An
+// unconfigured server (WithProviders never called) returns an empty list rather
+// than a 404, so the page renders cleanly in a degraded deployment.
+func (s *Server) handleListProviders(w http.ResponseWriter, _ *http.Request) {
+	out := make([]providerResponse, 0, len(s.providers))
+	for _, p := range s.providers {
+		out = append(out, providerResponse{Slug: p.Slug, Severity: p.Severity, Rules: p.Rules})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"providers": out})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
