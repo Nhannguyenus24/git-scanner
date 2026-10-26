@@ -5,13 +5,15 @@
 //
 // It only ever lists repositories for an authorized target — a user, an org, or
 // repos granted to an installation (plan.md §0.1). It never crawls all of
-// GitHub.
+// GitHub, with one deliberate dev-only exception, ListRandomRepos, used to
+// sample unseen repositories while tuning detection precision.
 package github
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,6 +47,10 @@ type Page struct {
 type Lister interface {
 	ListUserRepos(ctx context.Context, user, cursor string) (Page, error)
 	ListOrgRepos(ctx context.Context, org, cursor string) (Page, error)
+	// ListRandomRepos returns one page of randomly sampled public repositories.
+	// Unlike the others this is NOT an authorized target (see the dev-only
+	// caveat on entity.TargetRandom); it exists for precision testing.
+	ListRandomRepos(ctx context.Context) (Page, error)
 }
 
 // Client is the REST-backed Lister.
@@ -90,14 +96,76 @@ func (c *Client) ListOrgRepos(ctx context.Context, org, cursor string) (Page, er
 	return c.listRepos(ctx, "/orgs/"+org+"/repos", cursor)
 }
 
+// maxPublicRepoID is a rough upper bound on GitHub's public repository id space.
+// A random `since` below it lands the listing somewhere unpredictable, which is
+// what gives the sample its spread; an id past the real maximum just returns a
+// short page, which the caller tolerates.
+const maxPublicRepoID = 1_000_000_000
+
+// ListRandomRepos returns one page of public repositories starting just after a
+// randomly chosen id, via GET /repositories?since=<random>. The public-repo list
+// object is minimal — it carries id, full_name and fork but no clone_url — so
+// the clone URL is derived from full_name. Each call reseeds from a fresh random
+// point, so repeated calls spread across GitHub rather than crawling forward.
+func (c *Client) ListRandomRepos(ctx context.Context) (Page, error) {
+	since := rand.Int63n(maxPublicRepoID)
+	url := fmt.Sprintf("%s/repositories?since=%d&per_page=%d", c.baseURL, since, c.perPage)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Page{}, fmt.Errorf("github: build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return Page{}, fmt.Errorf("github: request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := checkStatus(resp); err != nil {
+		return Page{}, err
+	}
+
+	var raw []apiRepo
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return Page{}, fmt.Errorf("github: decode: %w", err)
+	}
+
+	out := Page{Repos: make([]Repo, 0, len(raw))}
+	for _, r := range raw {
+		owner, name := r.Owner.Login, r.Name
+		if (owner == "" || name == "") && r.FullName != "" {
+			owner, name, _ = splitFullName(r.FullName)
+		}
+		cloneURL := r.CloneURL
+		if cloneURL == "" && r.FullName != "" {
+			cloneURL = "https://github.com/" + r.FullName + ".git"
+		}
+		out.Repos = append(out.Repos, Repo{
+			Owner: owner, Name: name, CloneURL: cloneURL,
+			IsFork: r.Fork, IsPrivate: r.Private,
+		})
+	}
+	// NextCursor stays empty: the random walk has no linear "next page". The
+	// discovery worker decides whether to ask for another page from its own
+	// count/forever bookkeeping, not from this cursor.
+	return out, nil
+}
+
 // apiRepo mirrors the fields of the REST repository object we read.
 type apiRepo struct {
-	Name          string `json:"name"`
-	FullName      string `json:"full_name"`
-	CloneURL      string `json:"clone_url"`
-	DefaultBranch string `json:"default_branch"`
-	Fork          bool   `json:"fork"`
-	Private       bool   `json:"private"`
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	FullName      string    `json:"full_name"`
+	CloneURL      string    `json:"clone_url"`
+	DefaultBranch string    `json:"default_branch"`
+	Fork          bool      `json:"fork"`
+	Private       bool      `json:"private"`
 	Stargazers    int       `json:"stargazers_count"`
 	CreatedAt     time.Time `json:"created_at"`
 	Owner         struct {

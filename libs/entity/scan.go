@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,6 +17,13 @@ const (
 	TargetUser      TargetKind = "user"
 	TargetOrg       TargetKind = "org"
 	TargetAllowlist TargetKind = "allowlist"
+	// TargetRandom scans randomly sampled public repositories. It deliberately
+	// breaks the plan.md §0.1 rule that a bulk target is a bounded, authorized
+	// set: it exists only to exercise the detector against unseen repositories
+	// while tuning precision, and must not be used where disclosure mail or
+	// liveness probing is enabled. Value carries the requested count as a
+	// decimal string; "0" means run until paused ("forever").
+	TargetRandom TargetKind = "random"
 )
 
 // Target is the thing a scan expands from. Per plan.md §0.1 a bulk target is
@@ -48,6 +56,13 @@ func (t Target) Validate() error {
 		for _, u := range t.Allowlist {
 			if err := validateRepoURL(u); err != nil {
 				errs = append(errs, err)
+			}
+		}
+	case TargetRandom:
+		// Value is the requested repository count; "0" (or empty) means forever.
+		if t.Value != "" {
+			if n, err := strconv.Atoi(t.Value); err != nil || n < 0 {
+				errs = append(errs, fmt.Errorf("random target count must be a non-negative integer, got %q", t.Value))
 			}
 		}
 	default:

@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/store"
@@ -12,6 +13,60 @@ import (
 type scanTargetRequest struct {
 	Name         string `json:"name"` // GitHub login (user or org)
 	IncludeForks bool   `json:"include_forks"`
+}
+
+// scanRandomRequest starts a dev-only scan over randomly sampled public repos.
+// Count is how many to scan; 0 (or omitted) runs until the job is paused or
+// cancelled ("forever").
+type scanRandomRequest struct {
+	Count        int  `json:"count"`
+	IncludeForks bool `json:"include_forks"`
+}
+
+// handleScanRandom starts a discovery scan over randomly sampled public
+// repositories. This is a precision-testing aid and deliberately not an
+// authorized target (see entity.TargetRandom); it must not run where disclosure
+// or probing is enabled.
+func (s *Server) handleScanRandom(w http.ResponseWriter, r *http.Request) {
+	var req scanRandomRequest
+	if err := decodeJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Count < 0 {
+		s.writeError(w, http.StatusBadRequest, errors.New("count must not be negative"))
+		return
+	}
+
+	count := strconv.Itoa(req.Count)
+	target := entity.Target{Kind: entity.TargetRandom, Value: count}
+	if err := target.Validate(); err != nil {
+		s.writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	ctx := r.Context()
+	target, err := s.store.CreateTarget(ctx, target)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	job, err := s.store.CreateScanJob(ctx, target.ID)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := s.queue.EnqueueDiscovery(ctx, dispatch.DiscoveryRequest{
+		JobID: job.ID, TargetID: target.ID, Kind: string(entity.TargetRandom),
+		Value: count, IncludeForks: req.IncludeForks,
+	}); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.log.Info("random discovery queued", "job", job.ID.String(), "count", req.Count)
+	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
 // handleScanUser starts a discovery scan over a user's repositories (plan.md §8).

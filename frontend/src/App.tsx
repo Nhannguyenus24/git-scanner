@@ -27,7 +27,8 @@ export default function App() {
   const startScan = async (kind: TargetKind, value: string, forks: boolean) => {
     const job = kind === 'repo' ? await api.scanRepo(value)
       : kind === 'user' ? await api.scanUser(value, forks)
-      : await api.scanOrg(value, forks)
+      : kind === 'org' ? await api.scanOrg(value, forks)
+      : await api.scanRandom(Number(value) || 0, forks)
     notify(t('toast.scanQueued', { kind, value }))
     navigate(href('scans', job.id))
   }
