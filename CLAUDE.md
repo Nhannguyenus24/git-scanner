@@ -65,6 +65,12 @@ counter bump share one transaction.
 unattributed catch-all, never one provider another. Without it, improving a rule
 changes nothing on any repository already scanned.
 
+**`scan/history.go` — `consolidate` merges copies of one credential.** A secret
+kept across several versions of a file is matched once per blob. The store keys
+on the fingerprint, so without the merge the row described one copy while every
+other copy rewrote its HEAD reachability and removal: a key still at HEAD was
+marked gone, and a removal was paired with a later introduction.
+
 **Clone is `--bare`, not `--mirror`.** `--mirror` fetches `refs/*`, which on
 GitHub includes one ref per pull request ever opened — gigabytes of other
 people's fork commits, which are also not the target's history and were never

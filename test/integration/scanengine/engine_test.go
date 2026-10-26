@@ -177,3 +177,150 @@ func TestIntroductionsWalkToTheEnd(t *testing.T) {
 		}
 	}
 }
+
+// The historical AWS key in buildRepo was deleted by the second commit; the
+// engine must name that commit as its removal, classify both commits, and
+// leave the Stripe key, still at HEAD, with no removal at all.
+func TestEngineTracksRemovalOnRealRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repoDir, commits := buildRepo(t)
+	h, err := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := scan.NewEngine(&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
+		scan.NewDetector(scan.BootstrapRuleset()), h)
+
+	var s sink
+	res, err := eng.Scan(context.Background(), "job", "repo", "file://"+repoDir, &s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RemovalErr != nil {
+		t.Fatalf("removal: %v", res.RemovalErr)
+	}
+	byRule := map[string]entity.Finding{}
+	for _, f := range s.f {
+		byRule[f.RuleID] = f
+	}
+
+	aws := byRule["aws-access-key-id"]
+	if aws.RemovedCommitSHA != commits[1] || aws.RemovedAt.IsZero() {
+		t.Errorf("aws removed by %q at %v, want %s", aws.RemovedCommitSHA, aws.RemovedAt, commits[1])
+	}
+	if got := aws.Metadata["intro_commit_kind"]; got != "initial" {
+		t.Errorf("aws intro kind = %q, want initial (root commit)", got)
+	}
+	if got := aws.Metadata["removal_commit_kind"]; got != "normal" {
+		t.Errorf("aws removal kind = %q, want normal", got)
+	}
+
+	stripe := byRule["stripe-secret-key"]
+	if stripe.RemovedCommitSHA != "" || !stripe.RemovedAt.IsZero() {
+		t.Errorf("stripe at HEAD has removal %q", stripe.RemovedCommitSHA)
+	}
+	if _, ok := stripe.Metadata["removal_commit_kind"]; ok {
+		t.Error("stripe at HEAD must carry no removal kind")
+	}
+	if got := stripe.Metadata["intro_commit_kind"]; got != "normal" {
+		t.Errorf("stripe intro kind = %q, want normal", got)
+	}
+	if res.Stats["blobs_scanned"] == 0 || res.Stats["named_reported"] != 2 {
+		t.Errorf("stats = %v, want blobs_scanned > 0 and named_reported = 2", res.Stats)
+	}
+}
+
+// Removals follows the default branch's first-parent line: a direct cleanup
+// commit is classified as one, a removal that arrived through a merge is
+// attributed to the merge, and a credential only ever on an unmerged branch
+// has no removal because it never left the default branch.
+func TestRemovalsFollowTheDefaultBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	git("init", "-q", "-b", "main")
+	write("a.env", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM2\n")
+	write("b.env", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM3\n")
+	write("keep.txt", "x\n")
+	git("add", "-A")
+	git("commit", "-qm", "Initial commit")
+
+	_ = os.Remove(filepath.Join(dir, "a.env"))
+	git("add", "-A")
+	git("commit", "-qm", "Remove leaked API key")
+	cleanup := git("rev-parse", "HEAD")
+
+	git("switch", "-qc", "fix")
+	_ = os.Remove(filepath.Join(dir, "b.env"))
+	git("add", "-A")
+	git("commit", "-qm", "drop file")
+	git("switch", "-q", "main")
+	git("merge", "-q", "--no-ff", "-m", "Merge branch 'fix'", "fix")
+	merge := git("rev-parse", "HEAD")
+
+	git("switch", "-qc", "side")
+	write("c.env", "AWS_ACCESS_KEY_ID=AKIAQYLPMN5HHHFPZAM4\n")
+	git("add", "-A")
+	git("commit", "-qm", "side work")
+	git("switch", "-q", "main")
+
+	h, err := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := scan.NewEngine(&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
+		scan.NewDetector(scan.BootstrapRuleset()), h)
+	var s sink
+	res, err := eng.Scan(context.Background(), "job", "repo", "file://"+dir, &s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RemovalErr != nil {
+		t.Fatalf("removal: %v", res.RemovalErr)
+	}
+
+	byPath := map[string]entity.Finding{}
+	for _, f := range s.f {
+		byPath[f.FilePath] = f
+	}
+	if len(byPath) != 3 {
+		t.Fatalf("findings by path = %v, want a.env, b.env, c.env", byPath)
+	}
+	cases := []struct{ path, sha, kind string }{
+		{"a.env", cleanup, "cleanup"},
+		{"b.env", merge, "merge"},
+		{"c.env", "", ""},
+	}
+	for _, c := range cases {
+		f := byPath[c.path]
+		if f.ReachableFromHEAD {
+			t.Errorf("%s: reachable from HEAD, want gone", c.path)
+		}
+		if f.RemovedCommitSHA != c.sha {
+			t.Errorf("%s: removed by %q, want %q", c.path, f.RemovedCommitSHA, c.sha)
+		}
+		if got := f.Metadata["removal_commit_kind"]; got != c.kind {
+			t.Errorf("%s: removal kind = %q, want %q", c.path, got, c.kind)
+		}
+	}
+}

@@ -50,22 +50,84 @@ type Prober interface {
 }
 
 // extractOffline derives non-secret metadata from the credential alone, with no
-// network access. It returns the keys to merge into a finding's metadata.
+// network access. It returns the keys to merge into a finding's metadata:
+//
+//   - key_type: which kind of credential the provider issued (a GitHub
+//     fine-grained token, a Slack bot token, an OpenAI project key), read from
+//     its prefix. The kind decides the blast radius more than the provider does.
+//   - mode: live or test, for providers that issue both.
+//   - region: the datacentre a key is pinned to, where the key spells it out.
+//   - aws_account_id: the account an AWS access key id belongs to.
+//
+// Stripe's mode was stored as stripe_mode before mode was general; readers fall
+// back to it for findings stored then.
 func extractOffline(provider, secret string) map[string]string {
+	meta := map[string]string{}
+	for _, kt := range keyTypes[provider] {
+		if strings.HasPrefix(secret, kt.prefix) {
+			meta["key_type"] = kt.keyType
+			break
+		}
+	}
+	if m := credentialMode(provider, secret); m != "" {
+		meta["mode"] = m
+	}
 	switch provider {
 	case "aws":
 		if id, ok := awsAccountID(secret); ok {
-			return map[string]string{"aws_account_id": id}
+			meta["aws_account_id"] = id
 		}
-	case "stripe":
-		if strings.Contains(secret, "_live_") {
-			return map[string]string{"stripe_mode": "live"}
-		}
-		if strings.Contains(secret, "_test_") {
-			return map[string]string{"stripe_mode": "test"}
+	case "mailchimp":
+		// The key ends in its datacentre, -us1 … -us21, which is also the API host.
+		if i := strings.LastIndex(secret, "-"); i >= 0 {
+			meta["region"] = secret[i+1:]
 		}
 	}
-	return nil
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+// keyTypes maps a provider to the prefixes that distinguish its credential
+// kinds. Within a provider the first match wins, so a prefix that extends
+// another (sk-proj- and sk-) must come before it.
+var keyTypes = map[string][]struct{ prefix, keyType string }{
+	"aws":          {{"AKIA", "long-term"}, {"ASIA", "temporary"}},
+	"github":       {{"github_pat_", "fine-grained-pat"}, {"ghp_", "classic-pat"}, {"gho_", "oauth"}, {"ghu_", "user-to-server"}, {"ghs_", "server-to-server"}},
+	"slack":        {{"https://hooks.slack.com/", "webhook"}, {"xoxb-", "bot"}, {"xoxp-", "user"}, {"xoxa-", "app"}, {"xoxr-", "refresh"}, {"xoxs-", "session"}},
+	"openai":       {{"sk-proj-", "project"}, {"sk-svcacct-", "service-account"}, {"sk-admin-", "admin"}, {"sk-", "legacy"}},
+	"anthropic":    {{"sk-ant-admin", "admin"}, {"sk-ant-api", "api"}},
+	"google":       {{"AIza", "api-key"}, {"GOCSPX-", "oauth-client-secret"}, {"1//0", "refresh-token"}, {"6L", "recaptcha-secret"}},
+	"stripe":       {{"sk_", "secret-key"}, {"rk_", "restricted-key"}},
+	"digitalocean": {{"dop_v1_", "personal"}, {"doo_v1_", "oauth"}, {"dor_v1_", "refresh"}, {"dot_v1_", "temporary"}},
+	"shopify":      {{"shpat_", "app-access-token"}, {"shpca_", "custom-app"}, {"shppa_", "private-app"}, {"shpss_", "shared-secret"}},
+	"square":       {{"sq0atp-", "access-token"}, {"sq0csp-", "oauth-secret"}},
+	"sentry":       {{"sntrys_", "org-auth-token"}, {"sntryu_", "user-auth-token"}},
+	"doppler":      {{"dp.pt.", "personal"}, {"dp.st.", "service"}, {"dp.ct.", "cli"}, {"dp.sa.", "service-account"}, {"dp.scim.", "scim"}, {"dp.audit.", "audit"}},
+	"planetscale":  {{"pscale_pw_", "password"}, {"pscale_tkn_", "service-token"}},
+	"vault":        {{"hvs.", "service"}, {"hvb.", "batch"}, {"hvr.", "recovery"}},
+	"tailscale":    {{"tskey-auth-", "auth"}, {"tskey-api-", "api"}, {"tskey-client-", "oauth-client"}},
+	"grafana":      {{"glsa_", "service-account"}, {"glc_", "cloud-access-policy"}},
+}
+
+// credentialMode reports live or test for providers whose keys say which.
+func credentialMode(provider, secret string) string {
+	switch provider {
+	case "stripe", "razorpay":
+		if strings.Contains(secret, "_live_") {
+			return "live"
+		}
+		if strings.Contains(secret, "_test_") {
+			return "test"
+		}
+	case "flutterwave":
+		if strings.HasPrefix(secret, "FLWSECK_TEST-") {
+			return "test"
+		}
+		return "live"
+	}
+	return ""
 }
 
 // awsBase32 is RFC 4648 base32 without padding, which is how an access key id is

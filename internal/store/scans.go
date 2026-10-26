@@ -54,9 +54,13 @@ func (db *DB) UpsertRepository(ctx context.Context, r entity.Repository) (entity
 	if r.ID == "" {
 		r.ID = id.New()
 	}
+	// The host attributes are written only when this caller read them
+	// (metadata_fetched_at set). A direct scan or the random sample upserts the
+	// same row without them, and must not blank what an earlier read stored.
 	const q = `
-		INSERT INTO repositories (id, target_id, owner, name, clone_url, default_branch, is_fork, is_private, stars, app_type, remote_created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		INSERT INTO repositories (id, target_id, owner, name, clone_url, default_branch, is_fork, is_private, stars, app_type, remote_created_at,
+			language, topics, owner_type, archived, size_kb, pushed_at, metadata_fetched_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		ON CONFLICT (owner, name) DO UPDATE SET
 			clone_url = EXCLUDED.clone_url,
 			default_branch = EXCLUDED.default_branch,
@@ -65,11 +69,19 @@ func (db *DB) UpsertRepository(ctx context.Context, r entity.Repository) (entity
 			stars = EXCLUDED.stars,
 			-- COALESCE so a caller that does not carry the remote date, such as a
 			-- direct single-repo scan, cannot blank one discovery already stored.
-			remote_created_at = COALESCE(EXCLUDED.remote_created_at, repositories.remote_created_at)
+			remote_created_at = COALESCE(EXCLUDED.remote_created_at, repositories.remote_created_at),
+			language   = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.language   ELSE EXCLUDED.language   END,
+			topics     = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.topics     ELSE EXCLUDED.topics     END,
+			owner_type = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.owner_type ELSE EXCLUDED.owner_type END,
+			archived   = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.archived   ELSE EXCLUDED.archived   END,
+			size_kb    = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.size_kb    ELSE EXCLUDED.size_kb    END,
+			pushed_at  = CASE WHEN EXCLUDED.metadata_fetched_at IS NULL THEN repositories.pushed_at  ELSE EXCLUDED.pushed_at  END,
+			metadata_fetched_at = COALESCE(EXCLUDED.metadata_fetched_at, repositories.metadata_fetched_at)
 		RETURNING id`
 	err := db.pool.QueryRow(ctx, q,
 		r.ID, r.TargetID, r.Owner, r.Name, r.CloneURL, orDefault(r.DefaultBranch, "main"),
-		r.IsFork, r.IsPrivate, r.Stars, r.AppType, r.RemoteCreatedAt).Scan(&r.ID)
+		r.IsFork, r.IsPrivate, r.Stars, r.AppType, r.RemoteCreatedAt,
+		r.Language, nonNilStrings(r.Topics), r.OwnerType, r.Archived, r.SizeKB, r.PushedAt, r.MetadataFetchedAt).Scan(&r.ID)
 	if err != nil {
 		return entity.Repository{}, fmt.Errorf("store: upsert repository: %w", err)
 	}
@@ -152,6 +164,50 @@ func (db *DB) SetRepositoryAppType(ctx context.Context, repoID entity.ID, appTyp
 		return fmt.Errorf("store: set repository app type: %w", err)
 	}
 	return nil
+}
+
+// SetRepositoryAttributes stores host-reported attributes read after the fact,
+// for a repository discovered without them. r must carry MetadataFetchedAt;
+// without it there is nothing to record.
+func (db *DB) SetRepositoryAttributes(ctx context.Context, r entity.Repository) error {
+	if r.MetadataFetchedAt == nil {
+		return nil
+	}
+	_, err := db.pool.Exec(ctx, `
+		UPDATE repositories SET
+			language = $2, topics = $3, owner_type = $4, archived = $5,
+			size_kb = $6, pushed_at = $7, metadata_fetched_at = $8
+		WHERE id = $1`,
+		r.ID, r.Language, nonNilStrings(r.Topics), r.OwnerType, r.Archived,
+		r.SizeKB, r.PushedAt, r.MetadataFetchedAt)
+	if err != nil {
+		return fmt.Errorf("store: set repository attributes: %w", err)
+	}
+	return nil
+}
+
+// SetRepositoryScanStats replaces a repository's detection counters with those
+// of its latest scan. They describe that scan, so a rescan overwrites rather
+// than adds; summing across repositories is the reader's job.
+func (db *DB) SetRepositoryScanStats(ctx context.Context, repoID entity.ID, stats map[string]int) error {
+	if stats == nil {
+		stats = map[string]int{}
+	}
+	_, err := db.pool.Exec(ctx,
+		`UPDATE repositories SET scan_stats = $2 WHERE id = $1`, repoID, stats)
+	if err != nil {
+		return fmt.Errorf("store: set repository scan stats: %w", err)
+	}
+	return nil
+}
+
+// nonNilStrings keeps a missing list as an empty array, so a NOT NULL text[]
+// column never receives NULL.
+func nonNilStrings(xs []string) []string {
+	if xs == nil {
+		return []string{}
+	}
+	return xs
 }
 
 // RecordScanResult updates a job's progress counters after a repository scan.

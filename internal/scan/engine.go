@@ -59,6 +59,13 @@ type Result struct {
 	// author and date: a finding missing its provenance is worth far more than
 	// no finding, so this is reported rather than failing the scan.
 	AttributionErr error
+	// RemovalErr is the same for the commits that took findings out of the
+	// default branch: reported, never fatal.
+	RemovalErr error
+
+	// Stats counts blobs skipped and candidates each detection gate dropped
+	// (see DetectStats), plus blobs_scanned. Only non-zero counters appear.
+	Stats map[string]int
 }
 
 // Scan clones cloneURL, walks its history and emits a finding per detected
@@ -81,17 +88,13 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 
 	var res Result
 	app := newAppTypeDetector()
+	stats := &DetectStats{}
 
 	// Findings are held until the walk ends, because attributing them needs a
 	// pass over history that is only worth making once, for every blob that
 	// produced one. They are few — the secret itself is already reduced to a
 	// fingerprint — so holding them costs little.
-	type held struct {
-		f        entity.Finding
-		secret   string
-		probeURL string // when set, validate this instead of secret (split-var DB creds)
-	}
-	var pending []held
+	var pending []heldFinding
 	findings := func() []entity.Finding {
 		out := make([]entity.Finding, len(pending))
 		for i := range pending {
@@ -108,24 +111,39 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		app.observe(b.Path)
 
 		_, reachable := headOIDs[b.OID]
-		for _, m := range e.det.Detect(b.Path, b.Data) {
-			pending = append(pending, held{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret, probeURL: m.ProbeURL})
+		for _, m := range e.det.DetectCounted(b.Path, b.Data, stats) {
+			pending = append(pending, heldFinding{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret, probeURL: m.ProbeURL})
 		}
 		return nil
 	})
 	if err != nil {
 		return res, err
 	}
+	res.Stats = stats.Map()
+	res.Stats["blobs_scanned"] = res.BlobsScanned
+	if sr, ok := repo.(SkipReporter); ok {
+		for k, v := range sr.SkippedBlobs() {
+			if v != 0 {
+				res.Stats[k] = v
+			}
+		}
+	}
 
 	// Attribution works on the finding rows; it does not need the secret.
 	attrs := findings()
 	res.AttributionErr = attribute(ctx, repo, attrs)
+	if ctx.Err() == nil {
+		res.RemovalErr = trackRemovals(ctx, repo, attrs, len(headOIDs) > 0)
+	}
 	for i := range pending {
 		pending[i].f = attrs[i]
 	}
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}
+	// One finding per credential from here on, matching the store's key, and so
+	// one probe per credential rather than one per copy of the file.
+	pending = consolidate(pending)
 
 	// Live probing, if enabled, is the last thing done with the secret in scope;
 	// only its non-secret result is written back into the finding.
@@ -181,6 +199,10 @@ func attribute(ctx context.Context, repo Repo, fs []entity.Finding) error {
 		if c.Path != "" {
 			fs[i].FilePath = c.Path
 		}
+		if fs[i].Metadata == nil {
+			fs[i].Metadata = map[string]string{}
+		}
+		fs[i].Metadata["intro_commit_kind"] = introKind(c)
 	}
 	if err != nil {
 		return fmt.Errorf("scan: attribute findings: %w", err)

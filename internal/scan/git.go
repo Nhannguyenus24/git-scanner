@@ -27,6 +27,14 @@ type Commit struct {
 	AuthorEmail string
 	When        time.Time
 	Path        string
+
+	// Root is true for a commit with no parent: the repository's first.
+	Root bool
+	// Subject is the first line of the commit message. It is read only to
+	// classify the commit (initial import, secret cleanup) and is never stored
+	// or logged: a message is free text, and "remove key sk_live_…" is exactly
+	// the kind of message that holds the credential it describes.
+	Subject string
 }
 
 // Repo is the read-only view of a cloned repository the engine needs. Keeping
@@ -140,6 +148,8 @@ type gitRepo struct {
 	dir     string
 	maxBlob int
 	env     []string
+
+	oversize int // blobs Blobs skipped for exceeding maxBlob
 }
 
 func (r *gitRepo) Close() error { return os.RemoveAll(r.dir) }
@@ -206,9 +216,12 @@ func (r *gitRepo) Blobs(ctx context.Context, fn func(Blob) error) error {
 	}()
 
 	for _, oid := range oids {
-		blob, err := readBatchObject(out, oid, pathOf[oid], r.maxBlob)
+		blob, oversize, err := readBatchObject(out, oid, pathOf[oid], r.maxBlob)
 		if err != nil {
 			return err
+		}
+		if oversize {
+			r.oversize++
 		}
 		if blob == nil { // skipped (too large or not a blob)
 			continue
@@ -241,7 +254,9 @@ func (r *gitRepo) listBlobs(ctx context.Context) (map[string]string, []string, e
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
 		oid, path, _ := strings.Cut(sc.Text(), " ")
-		if path == "" { // commits and trees have no path; only blobs carry one
+		// Commits and the root tree have no path. Subdirectory trees do, so they
+		// are fed to cat-file too and dropped there by type.
+		if path == "" {
 			continue
 		}
 		if _, seen := pathOf[oid]; !seen {
@@ -256,31 +271,42 @@ func (r *gitRepo) listBlobs(ctx context.Context) (map[string]string, []string, e
 }
 
 // readBatchObject reads one `cat-file --batch` record: a header line
-// "<oid> <type> <size>\n", then <size> bytes, then a trailing newline.
-func readBatchObject(out *bufio.Reader, oid, path string, maxBlob int) (*Blob, error) {
+// "<oid> <type> <size>\n", then <size> bytes, then a trailing newline. It
+// returns a nil blob for an object it skips, and reports whether the skip was
+// a blob over the size limit — content never scanned, as opposed to a tree.
+func readBatchObject(out *bufio.Reader, oid, path string, maxBlob int) (*Blob, bool, error) {
 	header, err := out.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("scan: read cat-file header for %s: %w", oid, err)
+		return nil, false, fmt.Errorf("scan: read cat-file header for %s: %w", oid, err)
 	}
 	fields := strings.Fields(strings.TrimSpace(header))
 	if len(fields) != 3 {
-		return nil, fmt.Errorf("scan: unexpected cat-file header %q", header)
+		return nil, false, fmt.Errorf("scan: unexpected cat-file header %q", header)
 	}
 	size, err := strconv.Atoi(fields[2])
 	if err != nil {
-		return nil, fmt.Errorf("scan: bad object size %q: %w", fields[2], err)
+		return nil, false, fmt.Errorf("scan: bad object size %q: %w", fields[2], err)
 	}
 
 	// Always consume size+1 bytes (payload + trailing newline) so the stream
 	// stays aligned even when we skip this blob.
 	payload := make([]byte, size+1)
 	if _, err := readFull(out, payload); err != nil {
-		return nil, fmt.Errorf("scan: read object %s: %w", oid, err)
+		return nil, false, fmt.Errorf("scan: read object %s: %w", oid, err)
 	}
-	if fields[1] != "blob" || size > maxBlob {
-		return nil, nil
+	if fields[1] != "blob" {
+		return nil, false, nil
 	}
-	return &Blob{OID: oid, Path: path, Data: payload[:size]}, nil
+	if size > maxBlob {
+		return nil, true, nil
+	}
+	return &Blob{OID: oid, Path: path, Data: payload[:size]}, false, nil
+}
+
+// SkippedBlobs reports blobs the walk never handed to the detector, by reason.
+// It satisfies the engine's optional skip reporter.
+func (r *gitRepo) SkippedBlobs() map[string]int {
+	return map[string]int{"blobs_oversize": r.oversize}
 }
 
 func readFull(out *bufio.Reader, buf []byte) (int, error) {
@@ -336,7 +362,7 @@ func (r *gitRepo) Introductions(ctx context.Context, oids map[string]struct{}) (
 	// cancelled before Wait or Wait never returns.
 	logCtx, cancel := context.WithCancel(ctx)
 	cmd := r.git(logCtx, "log", "--all", "--reverse", "--root", "--raw", "--no-abbrev",
-		"--no-renames", "--format=%x00%H%x1f%an%x1f%ae%x1f%aI")
+		"--no-renames", "--format="+commitFormat)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
@@ -401,12 +427,99 @@ func (r *gitRepo) Introductions(ctx context.Context, oids map[string]struct{}) (
 	return found, nil
 }
 
-// parseCommitHeader reads "<sha>\x1f<name>\x1f<email>\x1f<iso date>".
+// Removals finds, for each wanted blob, the commit on the default branch that
+// last took it out of the tree — deleted the file or replaced its content.
+//
+// It walks HEAD's first-parent history only. That is the line everyone who
+// clones the repository sees: a removal on some other branch did not make the
+// credential any less exposed, and a blob that was never on the default branch
+// has no removal to report and is absent from the result. With --first-parent,
+// -m shows a merge commit's diff against the mainline parent, so a removal that
+// arrived through a merge is attributed to the merge.
+//
+// The last removal wins, not the first: a blob deleted from one path can live
+// on under another until a later commit removes that too. That means reading
+// the whole first-parent log, so the caller asks only for blobs it knows are
+// gone from HEAD.
+func (r *gitRepo) Removals(ctx context.Context, oids map[string]struct{}) (map[string]Commit, error) {
+	found := make(map[string]Commit, len(oids))
+	if len(oids) == 0 {
+		return found, nil
+	}
+
+	// As in Introductions: if reading stops before EOF, git may be blocked on a
+	// full pipe, so it must be cancelled before Wait.
+	logCtx, cancel := context.WithCancel(ctx)
+	cmd := r.git(logCtx, "log", "HEAD", "--first-parent", "-m", "--reverse", "--raw", "--no-abbrev",
+		"--no-renames", "--format="+commitFormat)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("scan: log stdout: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("scan: start log: %w", err)
+	}
+
+	var cur Commit
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "\x00") {
+			cur = parseCommitHeader(line[1:])
+			continue
+		}
+		meta, path, ok := strings.Cut(line, "\t")
+		if !ok || !strings.HasPrefix(meta, ":") {
+			continue
+		}
+		f := strings.Fields(meta)
+		if len(f) < 5 {
+			continue
+		}
+		oldOID, newOID := f[2], f[3]
+		if _, want := oids[oldOID]; !want || newOID == oldOID {
+			continue
+		}
+		c := cur
+		c.Path = path
+		found[oldOID] = c
+	}
+	scanErr := sc.Err()
+	if scanErr != nil {
+		cancel()
+	}
+	waitErr := cmd.Wait()
+	cancel()
+
+	if err := ctx.Err(); err != nil {
+		return found, err
+	}
+	if scanErr != nil {
+		return found, fmt.Errorf("scan: read log: %w", scanErr)
+	}
+	if waitErr != nil {
+		return found, fmt.Errorf("scan: git log HEAD: %w", waitErr)
+	}
+	return found, nil
+}
+
+// commitFormat is the per-commit header both history walks print: a NUL marker
+// line, then sha, author name, email, ISO date, parent shas and subject,
+// separated by the unit separator, which a commit message does not contain.
+const commitFormat = "%x00%H%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%s"
+
+// parseCommitHeader reads a commitFormat header.
 func parseCommitHeader(s string) Commit {
-	f := strings.SplitN(s, "\x1f", 4)
-	for len(f) < 4 {
+	f := strings.SplitN(s, "\x1f", 6)
+	for len(f) < 6 {
 		f = append(f, "")
 	}
 	when, _ := time.Parse(time.RFC3339, f[3])
-	return Commit{SHA: f[0], AuthorName: f[1], AuthorEmail: f[2], When: when}
+	return Commit{
+		SHA: f[0], AuthorName: f[1], AuthorEmail: f[2], When: when,
+		Root: strings.TrimSpace(f[4]) == "", Subject: f[5],
+	}
 }

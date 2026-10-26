@@ -48,6 +48,12 @@ type Finding struct {
 	// It is a severity input (plan.md §0.2), not a reason to ignore the finding:
 	// history is public either way and the credential still needs rotating.
 	ReachableFromHEAD bool
+	// RemovedCommitSHA and RemovedAt name the default-branch commit that took
+	// the credential out, for a finding no longer reachable from HEAD. Together
+	// with CommittedAt they bound how long it sat in the tree everyone clones.
+	// Empty when it is still there or was never on the default branch.
+	RemovedCommitSHA string
+	RemovedAt        time.Time
 
 	Severity   Severity
 	Status     FindingStatus
