@@ -1,5 +1,5 @@
 import type {
-  Analytics, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
+  AppSettings, Analytics, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
 export interface VersionResponse { service: string; version: string; commit: string; go_version: string }
@@ -50,7 +50,12 @@ export function createClient(rawBase: string) {
     repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),
     candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
     providers:    ()                                     => r<{ providers: Provider[] }>('GET', '/v1/providers'),
-    disclose:     (repoId: string)                       => r<unknown>('POST', `/v1/repositories/${repoId}/disclose`),
+    disclose:     (repoId: string)                       => r<{ recipient: string; findings: number }>('POST', `/v1/repositories/${repoId}/disclose`, {}),
+    settings:     ()                                     => r<AppSettings>('GET', '/v1/settings'),
+    setSettings:  (s: AppSettings)                       => r<AppSettings>('PUT', '/v1/settings', s),
+    notifications: (f: NotificationFilter)               => r<{ notifications: NotificationRow[]; total: number; by_state: Count[] }>('GET', `/v1/notifications${query(f)}`),
+    notificationMessage: (id: string)                    => r<NotificationMessage>('GET', `/v1/notifications/${id}/message`),
+    resendNotification:  (id: string)                    => r<unknown>('POST', `/v1/notifications/${id}/resend`),
   }
 }
 

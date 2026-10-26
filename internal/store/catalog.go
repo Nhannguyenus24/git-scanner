@@ -200,6 +200,16 @@ type RepositorySummary struct {
 	High          int
 	Medium        int
 	Low           int
+	Notice        *RepositoryNotice // latest disclosure; nil when never contacted
+}
+
+// RepositoryNotice is the most recent disclosure attempt for a repository.
+type RepositoryNotice struct {
+	State     string
+	Recipient string
+	Error     string
+	CreatedAt time.Time
+	SentAt    *time.Time
 }
 
 // ListRepositories returns every repository, the most exposed first.
@@ -212,9 +222,15 @@ func (db *DB) ListRepositories(ctx context.Context) ([]RepositorySummary, error)
 		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'critical'),
 		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'high'),
 		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'medium'),
-		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity IN ('low', 'info'))
-		FROM repositories r LEFT JOIN findings f ON f.repository_id = r.id
-		GROUP BY r.id
+		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity IN ('low', 'info')),
+		       n.state, n.recipient, n.error, n.created_at, n.sent_at
+		FROM repositories r
+		LEFT JOIN findings f ON f.repository_id = r.id
+		LEFT JOIN LATERAL (
+			SELECT state, recipient, error, created_at, sent_at FROM notifications
+			WHERE repository_id = r.id ORDER BY created_at DESC LIMIT 1
+		) n ON true
+		GROUP BY r.id, n.state, n.recipient, n.error, n.created_at, n.sent_at
 		ORDER BY 11 DESC, 12 DESC, 10 DESC, r.owner, r.name`
 	rows, err := db.pool.Query(ctx, q)
 	if err != nil {
@@ -225,11 +241,19 @@ func (db *DB) ListRepositories(ctx context.Context) ([]RepositorySummary, error)
 	var out []RepositorySummary
 	for rows.Next() {
 		var r RepositorySummary
+		var state, recipient, nerr *string
+		var created, sent *time.Time
 		if err := rows.Scan(
 			&r.ID, &r.Owner, &r.Name, &r.CloneURL, &r.AppType, &r.Stars, &r.IsFork,
 			&r.LastScannedAt, &r.Findings, &r.Open, &r.Critical, &r.High, &r.Medium, &r.Low,
+			&state, &recipient, &nerr, &created, &sent,
 		); err != nil {
 			return nil, fmt.Errorf("store: repository row: %w", err)
+		}
+		if state != nil {
+			r.Notice = &RepositoryNotice{
+				State: *state, Recipient: *recipient, Error: *nerr, CreatedAt: *created, SentAt: sent,
+			}
 		}
 		out = append(out, r)
 	}
@@ -255,6 +279,8 @@ type Overview struct {
 	ByStatus          []Count
 	ByState           []Count // scan jobs
 	ReachableFromHEAD int     // open findings still present at HEAD
+	NotifiedRepos     int     // repositories with a disclosure sent or pending
+	AwaitingNotice    int     // exposed repositories never successfully contacted
 }
 
 // GetOverview computes the dashboard totals in one round trip per breakdown.
@@ -269,10 +295,15 @@ func (db *DB) GetOverview(ctx context.Context) (Overview, error) {
 		       (SELECT count(*) FROM repositories),
 		       (SELECT count(DISTINCT repository_id) FROM findings WHERE status = 'open'),
 		       (SELECT count(*) FROM scan_jobs WHERE state IN ('queued', 'running', 'paused')),
-		       (SELECT count(*) FROM provider_candidates WHERE status IN ('new', 'triaged'))`
+		       (SELECT count(*) FROM provider_candidates WHERE status IN ('new', 'triaged')),
+		       (SELECT count(DISTINCT repository_id) FROM notifications WHERE state IN ('pending', 'sent')),
+		       (SELECT count(DISTINCT f.repository_id) FROM findings f
+		         WHERE f.status = 'open' AND NOT EXISTS (
+		           SELECT 1 FROM notifications n
+		           WHERE n.repository_id = f.repository_id AND n.state IN ('pending', 'sent', 'suppressed')))`
 	if err := db.pool.QueryRow(ctx, totals).Scan(
 		&o.Findings, &o.OpenFindings, &o.ReachableFromHEAD, &o.Repositories,
-		&o.ExposedRepos, &o.ActiveJobs, &o.Candidates,
+		&o.ExposedRepos, &o.ActiveJobs, &o.Candidates, &o.NotifiedRepos, &o.AwaitingNotice,
 	); err != nil {
 		return Overview{}, fmt.Errorf("store: overview totals: %w", err)
 	}
@@ -412,4 +443,11 @@ func (db *DB) LiveProbeCounts(ctx context.Context) ([]Count, error) {
 		SELECT metadata->>'probe_status', count(*) FROM findings
 		WHERE metadata ? 'probe_status'
 		GROUP BY 1 ORDER BY 2 DESC`)
+}
+
+// NotificationCounts breaks disclosure attempts down by outcome, for the
+// analytics view. Every attempt counts, so a failed send that later succeeded
+// appears under both.
+func (db *DB) NotificationCounts(ctx context.Context) ([]Count, error) {
+	return db.counts(ctx, `SELECT state, count(*) FROM notifications GROUP BY 1 ORDER BY 2 DESC`)
 }

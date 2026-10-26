@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -164,4 +167,98 @@ func collectFindings(rows pgx.Rows) ([]entity.Finding, error) {
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// NotificationFilter narrows the disclosure log.
+type NotificationFilter struct {
+	State  string
+	Query  string // substring of the repository or the recipient
+	Limit  int
+	Offset int
+}
+
+// NotificationRow is one disclosure attempt with the repository it was about.
+type NotificationRow struct {
+	ID           entity.ID
+	RepositoryID entity.ID
+	RepoOwner    string
+	RepoName     string
+	Recipient    string
+	Findings     int
+	State        string
+	Error        string
+	CreatedAt    time.Time
+	SentAt       *time.Time
+}
+
+// ListNotifications returns one page of the disclosure log, newest first, and
+// the total matching count so the caller can page.
+func (db *DB) ListNotifications(ctx context.Context, f NotificationFilter) ([]NotificationRow, int, error) {
+	var where []string
+	var args []any
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if f.State != "" {
+		where = append(where, "n.state = "+arg(f.State))
+	}
+	if f.Query != "" {
+		p := arg("%" + escapeLike(f.Query) + "%")
+		where = append(where, "(n.recipient ILIKE "+p+" OR (r.owner || '/' || r.name) ILIKE "+p+")")
+	}
+	cond := ""
+	if len(where) > 0 {
+		cond = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	limit, offset := arg(clampLimit(f.Limit, 50, 500)), arg(max(f.Offset, 0))
+	q := `
+		SELECT n.id, n.repository_id, r.owner, r.name, n.recipient,
+		       cardinality(n.finding_ids), n.state, n.error, n.created_at, n.sent_at,
+		       count(*) OVER ()
+		FROM notifications n JOIN repositories r ON r.id = n.repository_id
+		` + cond + `
+		ORDER BY n.created_at DESC, n.id
+		LIMIT ` + limit + ` OFFSET ` + offset
+
+	rows, err := db.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: list notifications: %w", err)
+	}
+	defer rows.Close()
+
+	var out []NotificationRow
+	total := 0
+	for rows.Next() {
+		var r NotificationRow
+		if err := rows.Scan(&r.ID, &r.RepositoryID, &r.RepoOwner, &r.RepoName, &r.Recipient,
+			&r.Findings, &r.State, &r.Error, &r.CreatedAt, &r.SentAt, &total); err != nil {
+			return nil, 0, fmt.Errorf("store: notification row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
+}
+
+// GetNotification loads one disclosure, with the findings it covered.
+func (db *DB) GetNotification(ctx context.Context, nID entity.ID) (entity.Notification, error) {
+	var n entity.Notification
+	var state string
+	var findingIDs []string
+	err := db.pool.QueryRow(ctx, `
+		SELECT id, repository_id, recipient, finding_ids::text[], state, error, sent_at, created_at
+		FROM notifications WHERE id = $1`, nID).Scan(
+		&n.ID, &n.RepositoryID, &n.Recipient, &findingIDs, &state, &n.Error, &n.SentAt, &n.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return entity.Notification{}, ErrNotFound
+	}
+	if err != nil {
+		return entity.Notification{}, fmt.Errorf("store: get notification: %w", err)
+	}
+	n.State = entity.NotificationState(state)
+	for _, f := range findingIDs {
+		n.FindingIDs = append(n.FindingIDs, entity.ID(f))
+	}
+	return n, nil
 }

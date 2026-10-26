@@ -73,7 +73,43 @@ export interface Repository {
   high:             number
   medium:           number
   low:              number
+  /** The latest disclosure mail; absent when the repository was never contacted. */
+  notification?:    Notice
 }
+
+export type NoticeState = 'pending' | 'sent' | 'failed' | 'suppressed'
+
+export interface Notice {
+  state:      NoticeState
+  recipient:  string
+  error?:     string
+  created_at: string
+  sent_at?:   string
+}
+
+export interface AppSettings { notifications_enabled: boolean }
+
+/** One disclosure attempt, as the notifications log lists it. */
+export interface NotificationRow {
+  id:          string
+  repository:  RepoRef
+  recipient:   string
+  findings:    number
+  state:       NoticeState
+  error?:      string
+  created_at:  string
+  sent_at?:    string
+}
+
+export interface NotificationFilter {
+  state?:  NoticeState | ''
+  q?:      string
+  limit?:  number
+  offset?: number
+}
+
+/** A disclosure re-rendered from the findings it covered. */
+export interface NotificationMessage { to: string; subject: string; text: string; html: string }
 
 /** A provider the detection engine can attribute a finding to, as the API
  *  derives it from the live ruleset. `severity` is the most serious of the
@@ -92,6 +128,7 @@ export interface Analytics {
   by_app_type:  Count[]
   by_rule:      Count[]
   live_probes:  Count[]
+  notifications: Count[]
 }
 
 export interface Overview {
@@ -102,6 +139,8 @@ export interface Overview {
   exposed_repos:       number
   active_scans:        number
   candidates:          number
+  notified_repos:      number
+  awaiting_notice:     number
   by_severity:         Count[]
   by_provider:         Count[]
   by_status:           Count[]

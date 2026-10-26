@@ -3,32 +3,27 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
-	"strings"
+	"time"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 )
 
-// pickRecipient chooses the most frequent real committer email across the
-// findings, ignoring GitHub's noreply privacy addresses and anything that does
-// not look like an address. It returns "" when there is no usable email, which
-// the caller surfaces as a validation error.
-func pickRecipient(findings []entity.Finding) string {
-	count := map[string]int{}
-	var best string
-	for _, f := range findings {
-		e := strings.ToLower(strings.TrimSpace(f.AuthorEmail))
-		if e == "" || strings.Contains(e, "noreply") || !strings.Contains(e, "@") || !strings.Contains(e, ".") {
-			continue
-		}
-		count[e]++
-		if count[e] > count[best] {
-			best = e
-		}
-	}
-	return best
+// OwnerLookup finds the address of the account that owns a repository.
+// Satisfied by the GitHub client.
+type OwnerLookup interface {
+	OwnerEmail(ctx context.Context, owner, repo string) (string, error)
+}
+
+// WithOwnerLookup enables recipient resolution for disclosures that do not
+// name one. Without it such requests are rejected.
+func (s *Server) WithOwnerLookup(o OwnerLookup) *Server {
+	s.owners = o
+	return s
 }
 
 // discloseRequest asks for one disclosure mail about a repository. FindingIDs
@@ -55,17 +50,23 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 	repoID := entity.ID(r.PathValue("id"))
 	ctx := r.Context()
 
+	// Checked here as well as in the notifier, so an operator who forgot the
+	// switch learns it from the response rather than from a silent drop.
+	on, err := s.store.NotificationsEnabled(ctx)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !on {
+		s.writeError(w, http.StatusConflict, errors.New("notifications are turned off"))
+		return
+	}
+
 	repo, err := s.store.GetRepository(ctx, repoID)
 	if errors.Is(err, store.ErrNotFound) {
 		s.writeError(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	open, err := s.store.ListOpenFindingsByRepository(ctx, repoID)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -81,12 +82,31 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// With no recipient given, fall back to the email of whoever committed the
-	// leaked credentials — the person this notice is for, from data the scan
-	// already has. GitHub's privacy addresses are not real inboxes, so they are
-	// not used. The operator can always pass an explicit recipient instead.
-	if req.Recipient == "" {
-		req.Recipient = pickRecipient(open)
+	// With no recipient given, write to the repository's owner: the one person
+	// who can rotate the credential and rewrite the history. The committer is
+	// not used — on a team repository that is a member, who may have no rights
+	// over either. The operator can always pass an explicit recipient instead.
+	if req.Recipient == "" && s.owners != nil {
+		email, err := s.owners.OwnerEmail(ctx, repo.Owner, repo.Name)
+		// Throttling is the operator's to fix (a token, or a wait), so it is
+		// reported as such rather than hidden behind a generic 5xx.
+		var rl *github.RateLimitError
+		if errors.As(err, &rl) {
+			s.writeError(w, http.StatusTooManyRequests, fmt.Errorf(
+				"GitHub rate limit reached looking up the owner of %s; retry in %s or set GITHUB_TOKEN",
+				repo.FullName(), rl.RetryAfter.Round(time.Minute)))
+			return
+		}
+		if err != nil {
+			s.writeError(w, http.StatusBadGateway, fmt.Errorf("look up owner of %s: %w", repo.FullName(), err))
+			return
+		}
+		if email == "" {
+			s.writeError(w, http.StatusUnprocessableEntity,
+				fmt.Errorf("%s publishes no email on GitHub; pass a recipient explicitly", repo.Owner))
+			return
+		}
+		req.Recipient = email
 	}
 
 	// Validate the whole notification rather than the address alone, so the API
@@ -135,4 +155,39 @@ func (s *Server) discloseFindings(ctx context.Context, repoID entity.ID, request
 		out = append(out, f.ID)
 	}
 	return out, nil
+}
+
+type settingsResponse struct {
+	NotificationsEnabled bool `json:"notifications_enabled"`
+}
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	on, err := s.store.NotificationsEnabled(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsResponse{NotificationsEnabled: on})
+}
+
+// handlePutSettings flips the disclosure switch. The body names the field
+// explicitly, so an empty or mistyped request cannot turn mail on by default.
+func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NotificationsEnabled *bool `json:"notifications_enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		s.writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.NotificationsEnabled == nil {
+		s.writeError(w, http.StatusBadRequest, errors.New("notifications_enabled is required"))
+		return
+	}
+	if err := s.store.SetNotificationsEnabled(r.Context(), *req.NotificationsEnabled); err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.log.Info("notifications switched", "enabled", *req.NotificationsEnabled)
+	writeJSON(w, http.StatusOK, settingsResponse{NotificationsEnabled: *req.NotificationsEnabled})
 }

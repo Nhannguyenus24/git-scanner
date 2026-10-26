@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/mservice/gitscanner/internal/api"
@@ -25,6 +26,14 @@ type fakeStore struct {
 	targets  map[entity.ID]entity.Target
 	// openFindings is keyed by repository id, for the disclosure handler.
 	openFindings map[entity.ID][]entity.Finding
+	// notifyOff is inverted so the zero value leaves disclosure enabled.
+	notifyOff bool
+}
+
+func (s *fakeStore) NotificationsEnabled(context.Context) (bool, error) { return !s.notifyOff, nil }
+func (s *fakeStore) SetNotificationsEnabled(_ context.Context, on bool) error {
+	s.notifyOff = !on
+	return nil
 }
 
 func newFakeStore() *fakeStore {
@@ -245,36 +254,47 @@ func TestPauseResumeCancel(t *testing.T) {
 	}
 }
 
-// With no recipient in the request, disclosure falls back to the email of
-// whoever committed the leaked credential — from data the scan already holds.
-func TestDiscloseDerivesRecipientFromCommitter(t *testing.T) {
+type fakeOwners struct {
+	email string
+	asked string
+}
+
+func (o *fakeOwners) OwnerEmail(_ context.Context, owner, _ string) (string, error) {
+	o.asked = owner
+	return o.email, nil
+}
+
+// With no recipient in the request, the mail goes to the repository's owner —
+// not to whoever committed the value, who on a team repository is a member.
+func TestDiscloseWritesToTheOwner(t *testing.T) {
 	srv, st, q := newServer(t)
+	owners := &fakeOwners{email: "owner@example.com"}
+	srv.WithOwnerLookup(owners)
 	repoID := id.New()
 	st.repos[repoID] = entity.Repository{Owner: "octocat", Name: "demo"}
-	st.openFindings[repoID] = []entity.Finding{
-		{ID: id.New(), AuthorEmail: "dev@example.com"},
-		{ID: id.New(), AuthorEmail: "dev@example.com"},
-		{ID: id.New(), AuthorEmail: "octocat@users.noreply.github.com"}, // privacy address, ignored
-	}
+	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "member@example.com"}}
 
 	rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
-	if q.lastNotify.Recipient != "dev@example.com" {
-		t.Errorf("recipient = %q, want dev@example.com", q.lastNotify.Recipient)
+	if owners.asked != "octocat" || q.lastNotify.Recipient != "owner@example.com" {
+		t.Errorf("asked %q, recipient %q; want owner octocat and owner@example.com", owners.asked, q.lastNotify.Recipient)
 	}
 }
 
-// With no recipient and no usable committer email, the request is rejected
-// rather than guessed at.
-func TestDiscloseRejectsWhenNoRecipientDerivable(t *testing.T) {
-	srv, st, _ := newServer(t)
+// An owner with no published address is reported, not guessed at.
+func TestDiscloseRejectsWhenOwnerHasNoEmail(t *testing.T) {
+	srv, st, q := newServer(t)
+	srv.WithOwnerLookup(&fakeOwners{})
 	repoID := id.New()
 	st.repos[repoID] = entity.Repository{Owner: "a", Name: "b"}
-	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "bot@users.noreply.github.com"}}
-	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`); rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "member@example.com"}}
+	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+	if q.lastNotify.Recipient != "" {
+		t.Errorf("queued to %q", q.lastNotify.Recipient)
 	}
 }
 
@@ -342,5 +362,42 @@ func TestRescanNotFound(t *testing.T) {
 	srv, _, _ := newServer(t)
 	if rec := do(srv, http.MethodPost, "/v1/scans/"+id.New().String()+"/rescan", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// The switch is checked before anything is queued, so turning mail off cannot
+// be undone by a request already in flight at the api.
+func TestDiscloseRefusedWhenNotificationsOff(t *testing.T) {
+	srv, st, q := newServer(t)
+	repoID := id.New()
+	st.repos[repoID] = entity.Repository{Owner: "octocat", Name: "demo"}
+	st.openFindings[repoID] = []entity.Finding{{ID: id.New(), AuthorEmail: "dev@example.com"}}
+	st.notifyOff = true
+
+	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", `{}`); rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+	if q.lastNotify.Recipient != "" {
+		t.Errorf("a disclosure was queued while notifications were off")
+	}
+}
+
+func TestSettingsRoundTrip(t *testing.T) {
+	srv, st, _ := newServer(t)
+
+	if rec := do(srv, http.MethodPut, "/v1/settings", `{"notifications_enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("put status = %d, body %s", rec.Code, rec.Body)
+	}
+	if !st.notifyOff {
+		t.Fatal("switch not turned off")
+	}
+	rec := do(srv, http.MethodGet, "/v1/settings", "")
+	if !strings.Contains(rec.Body.String(), `"notifications_enabled":false`) {
+		t.Errorf("get body = %s", rec.Body)
+	}
+
+	// A body without the field must not flip the switch either way.
+	if rec := do(srv, http.MethodPut, "/v1/settings", `{}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("empty put status = %d, want 400", rec.Code)
 	}
 }

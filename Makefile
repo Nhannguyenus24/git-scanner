@@ -187,7 +187,10 @@ RUN_LOG_DIR     ?= /tmp/gitscanner-logs
 .PHONY: run-local
 run-local: build ## Build and start all six services locally (no k8s). Logs → RUN_LOG_DIR.
 	@mkdir -p $(RUN_LOG_DIR)
-	@export POSTGRES_URL='$(INFRA_POSTGRES)' RABBITMQ_URL='$(INFRA_RABBIT)' \
+	@# .env.local (gitignored) carries machine-local secrets such as SMTP_PASSWORD
+	@# and GITHUB_TOKEN; sourced by the shell, not make, so values may hold '$$'.
+	@set -a; [ -f .env.local ] && . ./.env.local; set +a; \
+	export POSTGRES_URL='$(INFRA_POSTGRES)' RABBITMQ_URL='$(INFRA_RABBIT)' \
 	        PROBE_SECRETS='$(PROBE_SECRETS)' \
 	        LOG_LEVEL=debug ENV=dev; \
 	port=8080; \

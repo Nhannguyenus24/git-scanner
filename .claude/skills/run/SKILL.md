@@ -137,6 +137,20 @@ make run-local PROBE_SECRETS=true
 Without `GITHUB_TOKEN` the GitHub API allows 60 requests an hour, which bulk
 discovery exhausts quickly. Export one for anything beyond a few repositories.
 
+## Machine-local secrets: `.env.local`
+
+`make run-local` sources `.env.local` (gitignored) before starting the
+services; `.env.example` lists the keys. That is where `GITHUB_TOKEN` and the
+SMTP settings live, so they never reach the command line or the transcript.
+
+## Disclosure mail
+
+Mail is off until switched on — the "Disclosure mail" switch on the
+Repositories page, or `PUT /v1/settings {"notifications_enabled":true}`. While
+off, the api refuses `disclose` with 409 and the notifier drops anything already
+queued. Without `SMTP_ADDR` the notifier logs the mail instead of sending it,
+which is the safe way to read a rendered disclosure.
+
 ## Frontend
 
 ```bash
