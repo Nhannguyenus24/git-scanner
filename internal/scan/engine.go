@@ -45,6 +45,15 @@ type Sink interface {
 	Emit(ctx context.Context, f entity.Finding) error
 }
 
+// SecretKeeper is implemented by a sink that keeps the credentials it is given,
+// sealed, for the unmask-list test flow. The engine hands over the raw value
+// only when KeepsSecrets reports true for this scan, and only after sealing
+// is the sink's job — the engine never stores anything itself.
+type SecretKeeper interface {
+	KeepsSecrets() bool
+	KeepSecret(ctx context.Context, f entity.Finding, secret string) error
+}
+
 // Result summarises one repository scan.
 type Result struct {
 	BlobsScanned  int
@@ -144,11 +153,18 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		}
 	}
 
+	keeper, keep := sink.(SecretKeeper)
+	keep = keep && keeper.KeepsSecrets()
 	for _, pf := range pending {
 		if err := sink.Emit(ctx, pf.f); err != nil {
 			return res, fmt.Errorf("scan: emit finding: %w", err)
 		}
 		res.FindingsCount++
+		if keep {
+			if err := keeper.KeepSecret(ctx, pf.f, pf.secret); err != nil {
+				return res, fmt.Errorf("scan: keep secret: %w", err)
+			}
+		}
 	}
 
 	res.AppType = app.result()

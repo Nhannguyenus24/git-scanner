@@ -60,12 +60,6 @@ export default function RepositoriesPage() {
   const settings = useResource(() => api.settings(), [api])
   const mailOn = settings.data?.notifications_enabled ?? false
 
-  const toggleMail = useCallback((on: boolean) => {
-    api.setSettings({ notifications_enabled: on })
-      .then(() => { notify(t(on ? 'repos.notify.on' : 'repos.notify.off'), on ? 'success' : 'info'); settings.reload() })
-      .catch(e => notify(e instanceof Error ? e.message : 'Error', 'error'))
-  }, [api, notify, t, settings])
-
   const disclose = useCallback((r: Repository) => {
     api.disclose(r.id)
       .then(d => { notify(t('repos.notify.queued', { repo: `${r.owner}/${r.name}`, to: d.recipient })); setTimeout(res.reload, 1500) })
@@ -88,8 +82,8 @@ export default function RepositoriesPage() {
         <TextField placeholder={t('repos.filter')} value={q} onChange={e => setQ(e.target.value)} sx={{ flex: '1 1 260px' }}
           InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
         <FormControlLabel control={<Switch checked={exposedOnly} onChange={e => setExposedOnly(e.target.checked)} />} label={t('repos.onlyOpen')} />
-        <FormControlLabel control={<Switch color="warning" checked={mailOn} disabled={settings.loading} onChange={e => toggleMail(e.target.checked)} />}
-          label={<Box sx={{ display: 'flex', alignItems: 'center', gap: .5 }}><MailOutlineIcon fontSize="small" />{t('repos.notify.switch')}</Box>} />
+        <Chip clickable component="a" href={href('settings')} variant="outlined" color={mailOn ? 'warning' : 'default'}
+          icon={<MailOutlineIcon fontSize="small" />} label={`${t('repos.notify.switch')}: ${t(mailOn ? 'settings.on' : 'settings.off')}`} />
       </Card>
       <Card>
         {!repos.length ? <Empty title={t('repos.empty')} action={exposedOnly ? <Button onClick={() => setExposedOnly(false)}>{t('common.showAll')}</Button> : undefined} /> : (

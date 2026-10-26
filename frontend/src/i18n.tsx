@@ -1934,6 +1934,246 @@ const DICT: Record<string, Entry> = {
     fr: "Activez les e-mails de signalement, puis utilisez Signaler sur un dépôt.",
   },
 
+  'nav.settings': {
+    en: "Settings",
+    vi: "Cài đặt",
+    it: "Impostazioni",
+    zh: "设置",
+    es: "Ajustes",
+    de: "Einstellungen",
+    fr: "Paramètres",
+  },
+
+  'common.copy': {
+    en: "Copy",
+    vi: "Sao chép",
+    it: "Copia",
+    zh: "复制",
+    es: "Copiar",
+    de: "Kopieren",
+    fr: "Copier",
+  },
+
+  'settings.on': {
+    en: "on",
+    vi: "bật",
+    it: "attivo",
+    zh: "开",
+    es: "activado",
+    de: "an",
+    fr: "activé",
+  },
+
+  'settings.off': {
+    en: "off",
+    vi: "tắt",
+    it: "disattivo",
+    zh: "关",
+    es: "desactivado",
+    de: "aus",
+    fr: "désactivé",
+  },
+
+  'settings.title': {
+    en: "Settings",
+    vi: "Cài đặt",
+    it: "Impostazioni",
+    zh: "设置",
+    es: "Ajustes",
+    de: "Einstellungen",
+    fr: "Paramètres",
+  },
+
+  'settings.subtitle': {
+    en: "Operator switches for mail and secret display",
+    vi: "Các công tắc vận hành cho mail và hiển thị secret",
+    it: "Interruttori per email e visualizzazione dei segreti",
+    zh: "邮件与机密显示的操作开关",
+    es: "Interruptores de correo y visualización de secretos",
+    de: "Schalter für Mails und die Anzeige von Geheimnissen",
+    fr: "Interrupteurs pour l'e-mail et l'affichage des secrets",
+  },
+
+  'settings.mail.title': {
+    en: "Disclosure mail",
+    vi: "Gửi mail thông báo",
+    it: "Email di segnalazione",
+    zh: "披露邮件",
+    es: "Correo de aviso",
+    de: "Hinweis-Mails",
+    fr: "E-mails de signalement",
+  },
+
+  'settings.mail.body': {
+    en: "When on, Notify sends a disclosure to the repository owner. When off, nothing is sent and anything already queued is dropped.",
+    vi: "Khi bật, nút \"Gửi thông báo\" sẽ gửi mail cho chủ repo. Khi tắt, không gửi gì và các yêu cầu đang chờ bị bỏ.",
+    it: "Se attivo, Segnala invia una segnalazione al proprietario. Se disattivo, non parte nulla e le richieste in coda vengono scartate.",
+    zh: "开启时，\"通知\"会向仓库所有者发送披露邮件；关闭时不发送，排队中的请求被丢弃。",
+    es: "Activado, Avisar envía un aviso al propietario. Desactivado, no se envía nada y lo que esté en cola se descarta.",
+    de: "An: „Benachrichtigen“ sendet einen Hinweis an den Eigentümer. Aus: nichts wird gesendet, Eingereihtes verworfen.",
+    fr: "Activé, Signaler envoie un e-mail au propriétaire. Désactivé, rien n'est envoyé et la file est abandonnée.",
+  },
+
+  'settings.mail.log': {
+    en: "See sent mail →",
+    vi: "Xem mail đã gửi →",
+    it: "Vedi email inviate →",
+    zh: "查看已发送邮件 →",
+    es: "Ver correos enviados →",
+    de: "Gesendete Mails →",
+    fr: "Voir les e-mails envoyés →",
+  },
+
+  'settings.mask.title': {
+    en: "Safety masking",
+    vi: "Che secret (an toàn)",
+    it: "Mascheramento di sicurezza",
+    zh: "安全遮蔽",
+    es: "Enmascarado de seguridad",
+    de: "Sicherheitsmaskierung",
+    fr: "Masquage de sécurité",
+  },
+
+  'settings.mask.body': {
+    en: "On: every credential is shown masked. Off: credentials found in the repositories of the owners listed below are shown in full, for testing. Everyone else stays masked, and mail is always masked.",
+    vi: "Bật: mọi credential đều bị che. Tắt: credential trong repo của các owner trong danh sách bên dưới được hiện đầy đủ để test. Mọi repo khác vẫn bị che, và mail luôn bị che.",
+    it: "Attivo: ogni credenziale è mascherata. Disattivo: le credenziali nei repository dei proprietari elencati sotto sono mostrate per intero, per i test. Le altre restano mascherate; le email sono sempre mascherate.",
+    zh: "开启：所有凭证均遮蔽显示。关闭：下列所有者仓库中的凭证完整显示以便测试。其他仍遮蔽，邮件始终遮蔽。",
+    es: "Activado: toda credencial se muestra enmascarada. Desactivado: las de los propietarios listados abajo se muestran completas, para pruebas. El resto sigue enmascarado y el correo siempre lo está.",
+    de: "An: jede Zugangsdaten maskiert. Aus: Zugangsdaten in Repositories der unten gelisteten Eigentümer werden zum Testen vollständig gezeigt. Alle anderen bleiben maskiert, Mails immer.",
+    fr: "Activé : tout est masqué. Désactivé : les secrets des dépôts des propriétaires listés ci-dessous sont affichés en clair, pour les tests. Les autres restent masqués ; les e-mails le sont toujours.",
+  },
+
+  'settings.mask.on': {
+    en: "Masking turned on",
+    vi: "Đã bật che secret",
+    it: "Mascheramento attivato",
+    zh: "已开启遮蔽",
+    es: "Enmascarado activado",
+    de: "Maskierung eingeschaltet",
+    fr: "Masquage activé",
+  },
+
+  'settings.mask.off': {
+    en: "Masking off — listed owners are shown in full",
+    vi: "Đã tắt che — owner trong danh sách được hiện đầy đủ",
+    it: "Mascheramento disattivato — proprietari elencati in chiaro",
+    zh: "已关闭遮蔽 — 列表中的所有者完整显示",
+    es: "Enmascarado desactivado — propietarios listados en claro",
+    de: "Maskierung aus — gelistete Eigentümer im Klartext",
+    fr: "Masquage désactivé — propriétaires listés en clair",
+  },
+
+  'settings.mask.noKey': {
+    en: "Unmasking is unavailable: the server has no SECRET_SEAL_KEY, so no credential is ever kept. Add one to .env.local (openssl rand -hex 32) and restart.",
+    vi: "Chưa dùng được: server chưa có SECRET_SEAL_KEY nên không lưu credential nào. Thêm vào .env.local (openssl rand -hex 32) rồi restart.",
+    it: "Non disponibile: il server non ha SECRET_SEAL_KEY, quindi nessuna credenziale viene conservata. Aggiungila a .env.local (openssl rand -hex 32) e riavvia.",
+    zh: "不可用：服务器未配置 SECRET_SEAL_KEY，不会保存任何凭证。请在 .env.local 中添加（openssl rand -hex 32）后重启。",
+    es: "No disponible: el servidor no tiene SECRET_SEAL_KEY y no guarda ninguna credencial. Añádela a .env.local (openssl rand -hex 32) y reinicia.",
+    de: "Nicht verfügbar: Der Server hat keinen SECRET_SEAL_KEY, daher wird nichts aufbewahrt. In .env.local eintragen (openssl rand -hex 32) und neu starten.",
+    fr: "Indisponible : le serveur n'a pas de SECRET_SEAL_KEY, aucun secret n'est conservé. Ajoutez-la à .env.local (openssl rand -hex 32) puis redémarrez.",
+  },
+
+  'settings.mask.offWarning': {
+    en: "Masking is off. Full credentials of the listed owners are visible to anyone who can open this dashboard.",
+    vi: "Đang tắt che. Bất kỳ ai mở được dashboard này đều thấy đầy đủ credential của các owner trong danh sách.",
+    it: "Mascheramento disattivato. Chiunque apra questa dashboard vede le credenziali dei proprietari elencati.",
+    zh: "遮蔽已关闭。任何能打开此面板的人都能看到列表中所有者的完整凭证。",
+    es: "Enmascarado desactivado. Cualquiera que abra este panel ve las credenciales de los propietarios listados.",
+    de: "Maskierung aus. Jeder mit Zugriff auf dieses Dashboard sieht die Zugangsdaten der gelisteten Eigentümer.",
+    fr: "Masquage désactivé. Quiconque ouvre ce tableau de bord voit les secrets des propriétaires listés.",
+  },
+
+  'settings.owners.title': {
+    en: "Unmasked owners",
+    vi: "Owner được bỏ che",
+    it: "Proprietari non mascherati",
+    zh: "不遮蔽的所有者",
+    es: "Propietarios sin enmascarar",
+    de: "Unmaskierte Eigentümer",
+    fr: "Propriétaires non masqués",
+  },
+
+  'settings.owners.body': {
+    en: "GitHub users or organisations whose credentials are kept, encrypted, when their repositories are scanned. Only add accounts you own. Removing one deletes everything kept for it.",
+    vi: "User hoặc org GitHub mà credential được lưu (đã mã hoá) khi scan repo của họ. Chỉ thêm tài khoản của chính bạn. Xoá một owner sẽ xoá mọi giá trị đã lưu của owner đó.",
+    it: "Utenti o organizzazioni GitHub le cui credenziali vengono conservate, cifrate, alla scansione. Aggiungi solo account tuoi. Rimuoverne uno elimina tutto ciò che è conservato.",
+    zh: "扫描其仓库时会加密保存凭证的 GitHub 用户或组织。只添加你自己的账号。移除后会删除其全部已保存值。",
+    es: "Usuarios u organizaciones de GitHub cuyas credenciales se guardan, cifradas, al escanear. Añade solo cuentas tuyas. Quitar una borra todo lo guardado.",
+    de: "GitHub-Nutzer oder -Organisationen, deren Zugangsdaten beim Scan verschlüsselt aufbewahrt werden. Nur eigene Konten hinzufügen. Entfernen löscht alles Aufbewahrte.",
+    fr: "Utilisateurs ou organisations GitHub dont les secrets sont conservés, chiffrés, lors du scan. N'ajoutez que vos comptes. En retirer un supprime tout ce qui a été conservé.",
+  },
+
+  'settings.owners.empty': {
+    en: "No owners — everything stays masked.",
+    vi: "Chưa có owner nào — mọi thứ vẫn bị che.",
+    it: "Nessun proprietario — tutto resta mascherato.",
+    zh: "无 — 所有内容保持遮蔽。",
+    es: "Ninguno — todo sigue enmascarado.",
+    de: "Keine — alles bleibt maskiert.",
+    fr: "Aucun — tout reste masqué.",
+  },
+
+  'settings.owners.placeholder': {
+    en: "GitHub user or org, e.g. Nhannguyenus24",
+    vi: "User hoặc org GitHub, ví dụ Nhannguyenus24",
+    it: "Utente o org GitHub, es. Nhannguyenus24",
+    zh: "GitHub 用户或组织，例如 Nhannguyenus24",
+    es: "Usuario u org de GitHub, p. ej. Nhannguyenus24",
+    de: "GitHub-Nutzer oder -Org, z. B. Nhannguyenus24",
+    fr: "Utilisateur ou org GitHub, ex. Nhannguyenus24",
+  },
+
+  'settings.owners.add': {
+    en: "Add",
+    vi: "Thêm",
+    it: "Aggiungi",
+    zh: "添加",
+    es: "Añadir",
+    de: "Hinzufügen",
+    fr: "Ajouter",
+  },
+
+  'settings.owners.rescan': {
+    en: "Values are kept from the next scan on: rescan an owner's repositories to see their existing findings unmasked.",
+    vi: "Giá trị chỉ được lưu từ lần scan tiếp theo: hãy rescan repo của owner để thấy các finding cũ ở dạng đầy đủ.",
+    it: "I valori vengono conservati dalla prossima scansione: riesegui la scansione per vedere in chiaro i rilevamenti esistenti.",
+    zh: "从下一次扫描开始保存：重新扫描该所有者的仓库即可完整查看已有发现。",
+    es: "Los valores se guardan desde el próximo escaneo: reescanea para ver en claro los hallazgos existentes.",
+    de: "Werte werden ab dem nächsten Scan aufbewahrt: Repositories neu scannen, um bestehende Funde im Klartext zu sehen.",
+    fr: "Les valeurs sont conservées à partir du prochain scan : relancez-le pour voir en clair les détections existantes.",
+  },
+
+  'settings.ownerAdded': {
+    en: "{owner} added — rescan to keep their values",
+    vi: "Đã thêm {owner} — rescan để lưu giá trị",
+    it: "{owner} aggiunto — riesegui la scansione",
+    zh: "已添加 {owner} — 重新扫描以保存",
+    es: "{owner} añadido — reescanea para guardar",
+    de: "{owner} hinzugefügt — neu scannen",
+    fr: "{owner} ajouté — relancez le scan",
+  },
+
+  'settings.ownerRemoved': {
+    en: "{owner} removed and their kept values deleted",
+    vi: "Đã xoá {owner} và các giá trị đã lưu",
+    it: "{owner} rimosso e valori eliminati",
+    zh: "已移除 {owner} 并删除其保存值",
+    es: "{owner} quitado y valores borrados",
+    de: "{owner} entfernt, Werte gelöscht",
+    fr: "{owner} retiré et valeurs supprimées",
+  },
+
+  'settings.unmasked': {
+    en: "UNMASKED",
+    vi: "ĐANG HIỆN",
+    it: "IN CHIARO",
+    zh: "未遮蔽",
+    es: "SIN MÁSCARA",
+    de: "KLARTEXT",
+    fr: "EN CLAIR",
+  },
+
   'repos.empty': {
     en: 'No repositories match',
     vi: 'Không có kho nào khớp',

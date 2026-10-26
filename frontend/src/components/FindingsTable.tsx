@@ -16,6 +16,7 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import SeverityChip from './SeverityChip'
 import { commitLink, fileLink, timeAgo } from '../format'
 import { href } from '../hooks/useRoute'
@@ -92,6 +93,15 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                     <Box sx={{ fontFamily: 'monospace', fontSize: 11, color: 'text.secondary' }}>
                       {f.rule_id} · <Box component="span" sx={{ color: 'primary.main' }}>{f.masked_preview}</Box>
                     </Box>
+                    {f.secret && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: .5, mt: .5 }}>
+                        <Chip size="small" color="error" label={t('settings.unmasked')} sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />
+                        <Box component="code" sx={{ fontSize: 11.5, wordBreak: 'break-all', color: 'error.main' }}>{f.secret}</Box>
+                        <Tooltip title={t('common.copy')}>
+                          <IconButton size="small" onClick={() => navigator.clipboard?.writeText(f.secret!)}><ContentCopyIcon sx={{ fontSize: 14 }} /></IconButton>
+                        </Tooltip>
+                      </Box>
+                    )}
                   </TableCell>
                   {showRepo && (
                     <TableCell>

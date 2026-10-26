@@ -94,5 +94,8 @@ Workers take a `*slog.Logger` and log the start and end of each unit of work
 with the ids needed to follow it. Structured fields, not formatted strings.
 
 Never print, store or commit a real credential. `secrets.Mask` and the
-fingerprint are the only forms that leave the engine; when investigating a real
-leak, mask values before they reach the transcript.
+fingerprint are the only forms that leave the engine, with one exception:
+`secrets.Sealer` ciphertext in `sealed_secrets`, kept only for owners on the
+unmask list and shown only while masking is off (plan.md §6). Do not widen that
+gate. When investigating a real leak, mask values before they reach the
+transcript.

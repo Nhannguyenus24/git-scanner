@@ -14,6 +14,7 @@ import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import ShieldIcon from '@mui/icons-material/VerifiedUserOutlined'
 import BookIcon from '@mui/icons-material/MenuBookOutlined'
 import MailIcon from '@mui/icons-material/MailOutline'
+import SettingsIcon from '@mui/icons-material/SettingsOutlined'
 import AddIcon from '@mui/icons-material/Add'
 import TopBar from './TopBar'
 import { href } from '../hooks/useRoute'
@@ -28,6 +29,7 @@ const NAV = [
   { page: 'candidates',   icon: <HelpIcon fontSize="small" /> },
   { page: 'notifications', icon: <MailIcon fontSize="small" /> },
   { page: 'providers',    icon: <ShieldIcon fontSize="small" /> },
+  { page: 'settings',     icon: <SettingsIcon fontSize="small" /> },
   { page: 'help',         icon: <BookIcon fontSize="small" /> },
 ]
 

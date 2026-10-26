@@ -45,6 +45,8 @@ export interface Finding {
   reachable_from_head: boolean
   detected_at:         string
   metadata:            Record<string, string>
+  /** The unmasked credential: only while masking is off, for an unmask-listed owner. */
+  secret?:             string
 }
 
 export interface FindingFilter {
@@ -87,7 +89,13 @@ export interface Notice {
   sent_at?:   string
 }
 
-export interface AppSettings { notifications_enabled: boolean }
+export interface AppSettings {
+  notifications_enabled: boolean
+  masking_enabled:       boolean
+  unmask_owners:         string[]
+  /** False when the server has no SECRET_SEAL_KEY: nothing can be unmasked. */
+  sealing_available:     boolean
+}
 
 /** One disclosure attempt, as the notifications log lists it. */
 export interface NotificationRow {

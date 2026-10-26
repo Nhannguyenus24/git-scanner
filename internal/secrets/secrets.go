@@ -1,9 +1,11 @@
 // Package secrets turns a raw detected credential into the two forms that are
 // safe to store: a keyed fingerprint and a masked preview (plan.md §6).
 //
-// The plaintext itself never leaves this package. Everything the rest of the
-// system persists, logs, publishes on a queue or mails is derived here, so a review
-// of this one file is enough to be sure a live secret cannot reach the database.
+// The plaintext itself never leaves this package unencrypted. Everything the
+// rest of the system persists, logs, publishes on a queue or mails is derived
+// here, so a review of this package is enough to be sure a live secret cannot
+// reach the database in the clear. The one stored form of the value is Sealer's
+// ciphertext, kept only for repositories whose owner is on the unmask list.
 package secrets
 
 import (

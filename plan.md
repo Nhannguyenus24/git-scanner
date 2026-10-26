@@ -428,6 +428,12 @@ The `findings` row holds:
 If an owner-verified flow genuinely requires the full value, envelope-encrypt it per
 row under a separate KMS key with a short TTL.
 
+That flow exists for detection testing: owners on `unmask_owners` (the operator's
+own accounts) have each credential sealed with AES-256-GCM under `SECRET_SEAL_KEY`
+into `sealed_secrets`, bound to its repository and fingerprint, expiring after 30
+days. The api opens them only while the masking switch is off. `findings` stays
+secret-free, mail is always masked, and no other repository is ever sealed.
+
 Without this, our Postgres becomes more valuable than any single repository it
 scanned.
 

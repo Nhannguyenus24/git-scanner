@@ -21,6 +21,8 @@ import (
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/notify"
+	"github.com/mservice/gitscanner/internal/secrets"
+	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/libs/buildinfo"
 	"github.com/mservice/gitscanner/libs/entity"
@@ -42,6 +44,10 @@ type Store interface {
 	SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanState, errMsg string) error
 	NotificationsEnabled(ctx context.Context) (bool, error)
 	SetNotificationsEnabled(ctx context.Context, on bool) error
+	GetSettings(ctx context.Context) (store.Settings, error)
+	SetMaskingEnabled(ctx context.Context, on bool) error
+	AddUnmaskOwner(ctx context.Context, owner string) error
+	RemoveUnmaskOwner(ctx context.Context, owner string) error
 }
 
 // TaskQueue dispatches scan work. Satisfied by the rabbit-backed dispatcher.
@@ -66,6 +72,7 @@ type Server struct {
 	owners    OwnerLookup         // optional: resolves a disclosure's recipient
 	notices   NoticeLog           // optional: the disclosure log routes
 	discloseInfo notify.DisclosureInfo
+	sealer       *secrets.Sealer // optional: opens credentials kept for unmask-listed owners
 	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
 	log       *slog.Logger
 }
@@ -104,6 +111,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/repositories/{id}/disclose", s.handleDisclose)
 	mux.HandleFunc("GET /v1/settings", s.handleGetSettings)
 	mux.HandleFunc("PUT /v1/settings", s.handlePutSettings)
+	mux.HandleFunc("PUT /v1/settings/unmask-owners/{owner}", s.handleAddUnmaskOwner)
+	mux.HandleFunc("DELETE /v1/settings/unmask-owners/{owner}", s.handleRemoveUnmaskOwner)
 	s.catalogRoutes(mux)
 	s.noticeRoutes(mux)
 	return mux

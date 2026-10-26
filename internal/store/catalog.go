@@ -73,6 +73,9 @@ type FindingFilter struct {
 	Query        string // substring of path, rule, provider or repository
 	Limit        int
 	Offset       int
+	// Reveal joins in the sealed credential, for rows whose owner is on the
+	// unmask list. The caller sets it only while masking is switched off.
+	Reveal bool
 }
 
 // FindingRow is a finding with the repository it was found in.
@@ -96,6 +99,10 @@ type FindingRow struct {
 	ReachableFromHEAD bool
 	DetectedAt        time.Time
 	Metadata          map[string]string
+	// Fingerprint and Sealed are set only under FindingFilter.Reveal, and only
+	// for an unmasked owner's finding. Sealed is ciphertext; the api opens it.
+	Fingerprint string
+	Sealed      []byte
 }
 
 // SearchFindings returns one page of findings, most severe and most recent
@@ -143,8 +150,13 @@ func (db *DB) SearchFindings(ctx context.Context, f FindingFilter) ([]FindingRow
 		       f.rule_id, f.provider_slug, f.severity, f.status, f.masked_preview,
 		       f.file_path, f.line_number, f.commit_sha, f.author_name, f.committed_at,
 		       f.reachable_from_head, f.detected_at, f.metadata,
+		       f.fingerprint, s.sealed,
 		       count(*) OVER ()
 		FROM findings f JOIN repositories r ON r.id = f.repository_id
+		LEFT JOIN sealed_secrets s ON ` + arg(f.Reveal) + `
+			AND s.repository_id = f.repository_id AND s.fingerprint = f.fingerprint
+			AND s.expires_at > now()
+			AND EXISTS (SELECT 1 FROM unmask_owners u WHERE u.owner = lower(r.owner))
 		` + cond + `
 		ORDER BY ` + severityRank("f.severity") + ` DESC, f.detected_at DESC, f.id
 		LIMIT ` + limit + ` OFFSET ` + offset
@@ -163,9 +175,13 @@ func (db *DB) SearchFindings(ctx context.Context, f FindingFilter) ([]FindingRow
 			&r.ID, &r.ScanJobID, &r.RepositoryID, &r.RepoOwner, &r.RepoName, &r.RepoURL,
 			&r.RuleID, &r.Provider, &r.Severity, &r.Status, &r.MaskedPreview,
 			&r.FilePath, &r.LineNumber, &r.CommitSHA, &r.AuthorName, &r.CommittedAt,
-			&r.ReachableFromHEAD, &r.DetectedAt, &r.Metadata, &total,
+			&r.ReachableFromHEAD, &r.DetectedAt, &r.Metadata,
+			&r.Fingerprint, &r.Sealed, &total,
 		); err != nil {
 			return nil, 0, fmt.Errorf("store: finding row: %w", err)
+		}
+		if r.Sealed == nil {
+			r.Fingerprint = ""
 		}
 		out = append(out, r)
 	}

@@ -95,6 +95,9 @@ type findingResponse struct {
 	ReachableFromHEAD bool              `json:"reachable_from_head"`
 	DetectedAt        time.Time         `json:"detected_at"`
 	Metadata          map[string]string `json:"metadata"`
+	// Secret is the unmasked credential: present only while masking is off,
+	// for an unmask-listed owner, when a scan kept the value.
+	Secret string `json:"secret,omitempty"`
 }
 
 type repoRef struct {
@@ -135,6 +138,15 @@ func (s *Server) handleSearchFindings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if s.sealer != nil {
+		st, err := s.store.GetSettings(r.Context())
+		if err != nil {
+			s.writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		filter.Reveal = !st.MaskingEnabled
+	}
+
 	rows, total, err := s.catalog.SearchFindings(r.Context(), filter)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
@@ -142,8 +154,17 @@ func (s *Server) handleSearchFindings(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]findingResponse, 0, len(rows))
 	for _, f := range rows {
+		var secret string
+		if f.Sealed != nil && s.sealer != nil {
+			// A value that does not open (the key was rotated) falls back to
+			// the masked preview rather than failing the whole page.
+			if v, err := s.sealer.Open(f.Sealed, store.SealedAAD(f.RepositoryID, f.Fingerprint)); err == nil {
+				secret = v
+			}
+		}
 		out = append(out, findingResponse{
-			ID: f.ID.String(), ScanJobID: f.ScanJobID.String(),
+			Secret: secret,
+			ID:     f.ID.String(), ScanJobID: f.ScanJobID.String(),
 			Repository: repoRef{ID: f.RepositoryID.String(), Owner: f.RepoOwner, Name: f.RepoName, URL: f.RepoURL},
 			RuleID:     f.RuleID, Provider: f.Provider, Severity: f.Severity, Status: f.Status,
 			MaskedPreview: f.MaskedPreview, FilePath: f.FilePath, LineNumber: f.LineNumber,
