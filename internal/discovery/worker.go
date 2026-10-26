@@ -18,6 +18,7 @@ import (
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -31,6 +32,7 @@ type Pauser interface {
 
 // Store is the database surface discovery needs.
 type Store interface {
+	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
 	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
 	AddReposTotal(ctx context.Context, jobID entity.ID, n int) error
 	SetScanCursor(ctx context.Context, jobID entity.ID, cursor string) error
@@ -69,6 +71,23 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 
 	jobID := entity.ID(task.JobId)
 	w.log.Info("discovery task received", "job", task.JobId, "kind", task.Kind, "target", task.Value, "cursor", task.Cursor)
+
+	// A cancelled or finished job gets no more pages. Discovery republishes
+	// itself, so without this check nothing ends that loop: a random sample
+	// with no count kept enumerating for hours after its cancel and queued
+	// 79k scans ahead of every other job.
+	job, err := w.store.GetScanJob(ctx, jobID)
+	if errors.Is(err, store.ErrNotFound) {
+		w.log.Info("discovery dropped, job no longer exists", "job", task.JobId)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if job.State.Terminal() {
+		w.log.Info("discovery stopped, job has ended", "job", task.JobId, "state", string(job.State))
+		return nil
+	}
 
 	_ = w.store.SetScanState(ctx, jobID, entity.ScanRunning, "")
 

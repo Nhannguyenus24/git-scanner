@@ -10,6 +10,7 @@ import (
 	"github.com/mservice/gitscanner/internal/discovery"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -52,6 +53,20 @@ type fakeStore struct {
 	cursor   string
 	state    entity.ScanState
 	existing map[string]struct{} // repos ExistingRepoFullNames reports as present
+	// jobState is what GetScanJob reports; empty means running.
+	jobState entity.ScanState
+	jobGone  bool
+}
+
+func (s *fakeStore) GetScanJob(_ context.Context, id entity.ID) (entity.ScanJob, error) {
+	if s.jobGone {
+		return entity.ScanJob{}, store.ErrNotFound
+	}
+	st := s.jobState
+	if st == "" {
+		st = entity.ScanRunning
+	}
+	return entity.ScanJob{ID: id, State: st}, nil
 }
 
 func (s *fakeStore) UpsertRepository(_ context.Context, r entity.Repository) (entity.Repository, error) {
@@ -255,5 +270,41 @@ func TestDiscoverRandomForeverContinues(t *testing.T) {
 	// Cursor accumulates: 10 already done + 2 this page.
 	if st.cursor != "12" || len(disp.discoveries) != 1 || disp.discoveries[0] != "12" {
 		t.Errorf("cursor=%q continuation=%v, want 12/[12]", st.cursor, disp.discoveries)
+	}
+}
+
+// A cancel has to end the loop: discovery republishes itself, and a random
+// sample with no count would otherwise enumerate forever. Failed is not here:
+// it can be retried, so its work is still wanted.
+func TestDiscoverStopsForEndedJob(t *testing.T) {
+	for _, state := range []entity.ScanState{entity.ScanCancelled, entity.ScanCompleted} {
+		gh := &fakeLister{random: randomRepos(2)}
+		st, disp, pause := &fakeStore{jobState: state}, &fakeDisp{}, &fakePause{}
+		w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
+
+		err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
+			JobId: "job", TargetId: "tgt", Kind: "random", Value: "0", Cursor: "10"}))
+		if err != nil {
+			t.Fatalf("%s: %v", state, err)
+		}
+		if disp.scans != 0 || len(disp.discoveries) != 0 || len(gh.calls) != 0 {
+			t.Errorf("%s: scans=%d continuations=%v listings=%d, want none", state, disp.scans, disp.discoveries, len(gh.calls))
+		}
+		if st.state != "" {
+			t.Errorf("%s: state was set to %s; an ended job must not be revived", state, st.state)
+		}
+	}
+}
+
+func TestDiscoverDropsDeletedJob(t *testing.T) {
+	gh, st, disp, pause := &fakeLister{}, &fakeStore{jobGone: true}, &fakeDisp{}, &fakePause{}
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
+
+	if err := w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{
+		JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat"})); err != nil {
+		t.Fatalf("Handle = %v, want nil (acked)", err)
+	}
+	if disp.scans != 0 || len(disp.discoveries) != 0 {
+		t.Error("a deleted job must produce no work")
 	}
 }
