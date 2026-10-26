@@ -42,7 +42,7 @@ export default function ScanDetailPage({ id }: { id: string }) {
   if (!scan) return <Empty title={t('scan.notFound')} body={t('scan.notFoundBody')} action={<Button href={href('scans')}>{t('scan.back')}</Button>} />
 
   const act = (name: 'pause' | 'resume' | 'cancel') =>
-    api[name](id).then(() => { notify(`Scan ${name}d`); scans.reload() })
+    api[name](id).then(() => { notify(t(`toast.scan_${name}`)); scans.reload() })
       .catch(e => notify(e instanceof Error ? e.message : 'Failed', 'error'))
 
   const rescan = () =>
