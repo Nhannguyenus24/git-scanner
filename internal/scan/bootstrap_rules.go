@@ -231,6 +231,281 @@ var bootstrapRuleDefs = []struct {
 		literals: []string{"secret", "SECRET", "Secret"},
 		keywords: []string{"recaptcha"},
 	},
+
+	// Hosting, SaaS and developer platforms. Each of these famous providers
+	// issues a token with a fixed, self-identifying prefix, so — as with AKIA…
+	// and ghp_… above — the prefix alone is signal enough and no setting-name
+	// context is needed. The literal list must spell every prefix exactly: the
+	// prefilter does not fold case.
+	{
+		id: "gitlab-pat", provider: "gitlab", severity: "high",
+		pattern:  `(?P<secret>glpat-[0-9A-Za-z_-]{20})`,
+		literals: []string{"glpat-"},
+	},
+	{
+		id: "npm-access-token", provider: "npm", severity: "high",
+		pattern:  `(?P<secret>npm_[0-9A-Za-z]{36})`,
+		literals: []string{"npm_"},
+	},
+	{
+		// dop_ personal, doo_ OAuth, dor_ refresh, dot_ temporary — each 64 hex.
+		id: "digitalocean-token", provider: "digitalocean", severity: "high",
+		pattern:  `(?P<secret>do[oprt]_v1_[0-9a-f]{64})`,
+		literals: []string{"dop_v1_", "doo_v1_", "dor_v1_", "dot_v1_"},
+	},
+	{
+		// shpat_ app token, shpca_ custom-app, shppa_ private-app, shpss_ shared
+		// secret — all grant Admin-API access to the store.
+		id: "shopify-token", provider: "shopify", severity: "high",
+		pattern:  `(?P<secret>shp(?:at|ca|pa|ss)_[0-9a-fA-F]{32})`,
+		literals: []string{"shpat_", "shpca_", "shppa_", "shpss_"},
+	},
+	{
+		id: "square-access-token", provider: "square", severity: "high",
+		pattern:  `(?P<secret>sq0atp-[0-9A-Za-z_-]{22})`,
+		literals: []string{"sq0atp-"},
+	},
+	{
+		// The OAuth application secret: full account control, so critical.
+		id: "square-oauth-secret", provider: "square", severity: "critical",
+		pattern:  `(?P<secret>sq0csp-[0-9A-Za-z_-]{43})`,
+		literals: []string{"sq0csp-"},
+	},
+	{
+		// 32 hex, a hyphen, then the datacentre suffix usN. The usN suffix is the
+		// fixed part that separates it from any other 32-hex digest.
+		id: "mailchimp-api-key", provider: "mailchimp", severity: "high",
+		pattern:  `\b(?P<secret>[0-9a-f]{32}-us[0-9]{1,2})\b`,
+		literals: []string{"-us"},
+	},
+	{
+		// Mailgun's private key: the key- prefix plus 32 hex. The prefix is
+		// common, so the fixed-length hex body is what carries the match.
+		id: "mailgun-api-key", provider: "mailgun", severity: "medium",
+		pattern:  `\b(?P<secret>key-[0-9a-f]{32})\b`,
+		literals: []string{"key-"},
+	},
+	{
+		// sntrys_ is an organisation auth token, sntryu_ a user token.
+		id: "sentry-auth-token", provider: "sentry", severity: "high",
+		pattern:  `(?P<secret>sntr(?:ys|yu)_[A-Za-z0-9_=+/-]{40,})`,
+		literals: []string{"sntrys_", "sntryu_"},
+	},
+	{
+		id: "linear-api-key", provider: "linear", severity: "high",
+		pattern:  `(?P<secret>lin_api_[0-9A-Za-z]{40})`,
+		literals: []string{"lin_api_"},
+	},
+	{
+		// Notion's current integration-token prefix. The older secret_ form is
+		// too generic to enable without context and is left to the entropy pass.
+		id: "notion-integration-token", provider: "notion", severity: "high",
+		pattern:  `(?P<secret>ntn_[0-9A-Za-z]{40,})`,
+		literals: []string{"ntn_"},
+	},
+	{
+		id: "figma-token", provider: "figma", severity: "high",
+		pattern:  `(?P<secret>figd_[0-9A-Za-z_-]{32,})`,
+		literals: []string{"figd_"},
+	},
+	{
+		// dp.pt. personal, dp.st. service, dp.ct. CLI, dp.sa. service-account.
+		id: "doppler-token", provider: "doppler", severity: "high",
+		pattern:  `(?P<secret>dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9]{40,44})`,
+		literals: []string{"dp.pt.", "dp.st.", "dp.ct.", "dp.sa.", "dp.scim.", "dp.audit."},
+	},
+	{
+		id: "supabase-access-token", provider: "supabase", severity: "high",
+		pattern:  `(?P<secret>sbp_[0-9a-f]{40})`,
+		literals: []string{"sbp_"},
+	},
+	{
+		// pscale_pw_ is a database password, pscale_tkn_ a service token.
+		id: "planetscale-token", provider: "planetscale", severity: "high",
+		pattern:  `(?P<secret>pscale_(?:pw|tkn)_[0-9A-Za-z._-]{32,})`,
+		literals: []string{"pscale_pw_", "pscale_tkn_"},
+	},
+	{
+		// dapi plus 32 hex, optionally suffixed with -<n> for a token id.
+		id: "databricks-token", provider: "databricks", severity: "high",
+		pattern:  `\b(?P<secret>dapi[0-9a-f]{32}(?:-[0-9]+)?)\b`,
+		literals: []string{"dapi"},
+	},
+	{
+		// NRAK- is a user API key: 27 base62 chars follow. The 40-hex licence key
+		// has no prefix of its own and is left to the entropy pass.
+		id: "newrelic-user-key", provider: "newrelic", severity: "high",
+		pattern:  `(?P<secret>NRAK-[A-Z0-9]{27})`,
+		literals: []string{"NRAK-"},
+	},
+	{
+		// glsa_ service-account token, glc_ cloud access-policy token. The gl
+		// start is shared with GitLab's glpat-, but the literals are distinct so
+		// the prefilter never confuses them.
+		id: "grafana-token", provider: "grafana", severity: "high",
+		pattern:  `(?P<secret>gl(?:sa|c)_[A-Za-z0-9_=+/-]{32,})`,
+		literals: []string{"glsa_", "glc_"},
+	},
+	{
+		id: "tailscale-key", provider: "tailscale", severity: "high",
+		pattern:  `(?P<secret>tskey-(?:auth|api|client)-[0-9A-Za-z]+-[0-9A-Za-z]+)`,
+		literals: []string{"tskey-"},
+	},
+	{
+		id: "flyio-token", provider: "flyio", severity: "high",
+		pattern:  `(?P<secret>fo1_[0-9A-Za-z_-]{43})`,
+		literals: []string{"fo1_"},
+	},
+	{
+		// The whole webhook URL is the credential: anyone holding it can post to
+		// the channel. Covers the discord.com and legacy discordapp.com hosts and
+		// the canary/ptb subdomains. The generic pass skips URL paths.
+		id: "discord-webhook-url", provider: "discord", severity: "medium",
+		pattern:  `(?P<secret>https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/(?:v[0-9]+/)?webhooks/[0-9]+/[0-9A-Za-z_-]+)`,
+		literals: []string{"discord.com/api/webhooks", "discordapp.com/api/webhooks"},
+	},
+	{
+		// The bot token carried in the Bot API URL — digits, a colon, then the
+		// 35-character auth part. The api.telegram.org/bot path is the signal, so
+		// no keyword is needed.
+		id: "telegram-bot-token", provider: "telegram", severity: "medium",
+		pattern:  `api\.telegram\.org/bot(?P<secret>[0-9]{8,10}:[A-Za-z0-9_-]{35})`,
+		literals: []string{"api.telegram.org/bot"},
+	},
+	{
+		// Twilio's auth token and API-key secret are bare hex with no prefix of
+		// their own, so — as with the Cohere and Mistral keys above — the word
+		// twilio on the setting is the whole signal. Without that gate a 32-hex
+		// value would be attributed to Twilio on sight.
+		id: "twilio-auth-token", provider: "twilio", severity: "high",
+		pattern:  `(?i)twilio[\w.-]{0,24}(?:token|secret|auth)[\w.-]{0,10}\s*[:=]\s*["']?(?P<secret>[0-9a-f]{32})\b`,
+		literals: []string{"twilio", "TWILIO", "Twilio"},
+	},
+
+	// A second batch of well-known platforms, same reasoning as the block above:
+	// a fixed, self-identifying prefix is signal enough, so the prefix is the
+	// literal and the pattern needs no context — except Datadog and Cloudflare,
+	// whose keys are bare hex/base62 and so are gated on the provider name.
+	{
+		// Atlassian (Jira, Confluence, Bitbucket) API tokens begin with this
+		// twelve-character marker, which is specific enough to stand alone.
+		id: "atlassian-api-token", provider: "atlassian", severity: "high",
+		pattern:  `(?P<secret>ATATT3xFfGF0[A-Za-z0-9+/=_-]{50,})`,
+		literals: []string{"ATATT3xFfGF0"},
+	},
+	{
+		id: "dockerhub-pat", provider: "dockerhub", severity: "high",
+		pattern:  `(?P<secret>dckr_pat_[A-Za-z0-9_-]{27,})`,
+		literals: []string{"dckr_pat_"},
+	},
+	{
+		// hvs. service token, hvb. batch token, hvr. recovery token.
+		id: "vault-token", provider: "vault", severity: "high",
+		pattern:  `(?P<secret>hv[sbr]\.[A-Za-z0-9_-]{24,})`,
+		literals: []string{"hvs.", "hvb.", "hvr."},
+	},
+	{
+		// Terraform Cloud / Enterprise API token: a 14-char id, the fixed
+		// .atlasv1. segment, then the secret.
+		id: "terraform-cloud-token", provider: "terraform", severity: "high",
+		pattern:  `(?P<secret>[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,})`,
+		literals: []string{".atlasv1."},
+	},
+	{
+		// A PyPI upload token is a macaroon; its base64 head always decodes from
+		// "pypi.org", giving this long, highly specific literal.
+		id: "pypi-upload-token", provider: "pypi", severity: "high",
+		pattern:  `(?P<secret>pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,})`,
+		literals: []string{"pypi-AgEIcHlwaS5vcmc"},
+	},
+	{
+		id: "rubygems-api-key", provider: "rubygems", severity: "high",
+		pattern:  `\b(?P<secret>rubygems_[0-9a-f]{48})\b`,
+		literals: []string{"rubygems_"},
+	},
+	{
+		id: "postman-api-key", provider: "postman", severity: "high",
+		pattern:  `(?P<secret>PMAK-[0-9a-f]{24}-[0-9a-f]{34})`,
+		literals: []string{"PMAK-"},
+	},
+	{
+		// dt0c01. is the API-token prefix: a 24-char public id, then the secret.
+		id: "dynatrace-token", provider: "dynatrace", severity: "high",
+		pattern:  `(?P<secret>dt0c01\.[A-Z0-9]{24}\.[A-Z0-9]{64})`,
+		literals: []string{"dt0c01."},
+	},
+	{
+		// Datadog API/app keys are bare 32–40 hex with no prefix, so the setting
+		// name carries the attribution — the Cohere/Twilio pattern again.
+		id: "datadog-api-key", provider: "datadog", severity: "high",
+		pattern:  `(?i)(?:datadog|dd)[_.-]?(?:api|app)[_.-]?key\s*[:=]\s*["']?(?P<secret>[0-9a-f]{32,40})\b`,
+		literals: []string{"datadog", "DATADOG", "Datadog", "DD_API", "DD_APP", "dd_api", "dd_app"},
+	},
+	{
+		// Cloudflare API tokens and the 37-hex global key have no prefix of their
+		// own, so the word cloudflare on the setting is the whole signal.
+		id: "cloudflare-api-token", provider: "cloudflare", severity: "high",
+		pattern:  `(?i)cloudflare[\w.-]{0,24}(?:api[_.-]?(?:token|key)|global[_.-]?key)\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9_-]{37,40})\b`,
+		literals: []string{"cloudflare", "CLOUDFLARE", "Cloudflare"},
+	},
+	{
+		id: "contentful-token", provider: "contentful", severity: "high",
+		pattern:  `(?P<secret>CFPAT-[A-Za-z0-9_-]{43})`,
+		literals: []string{"CFPAT-"},
+	},
+	{
+		id: "pulumi-access-token", provider: "pulumi", severity: "high",
+		pattern:  `\b(?P<secret>pul-[0-9a-f]{40})\b`,
+		literals: []string{"pul-"},
+	},
+	{
+		// Brevo (formerly Sendinblue): xkeysib- prefix, 64 hex, then a 16-char id.
+		id: "brevo-api-key", provider: "brevo", severity: "high",
+		pattern:  `(?P<secret>xkeysib-[0-9a-f]{64}-[A-Za-z0-9]{16})`,
+		literals: []string{"xkeysib-"},
+	},
+	{
+		id: "razorpay-live-key", provider: "razorpay", severity: "high",
+		pattern:  `(?P<secret>rzp_live_[0-9A-Za-z]{14,})`,
+		literals: []string{"rzp_live_"},
+	},
+	{
+		// A test key moves no money, so low — same treatment as Stripe's.
+		id: "razorpay-test-key", provider: "razorpay", severity: "low",
+		pattern:  `(?P<secret>rzp_test_[0-9A-Za-z]{14,})`,
+		literals: []string{"rzp_test_"},
+	},
+	{
+		// Flutterwave secret key: FLWSECK- for live, FLWSECK_TEST- for test.
+		id: "flutterwave-secret-key", provider: "flutterwave", severity: "high",
+		pattern:  `(?P<secret>FLWSECK_TEST-[0-9a-f]{32,}|FLWSECK-[0-9a-f]{32}-X)`,
+		literals: []string{"FLWSECK-", "FLWSECK_TEST-"},
+	},
+	{
+		// Alibaba Cloud AccessKey ID: like AWS's AKIA, a public id worth flagging
+		// because it travels beside its secret.
+		id: "alibaba-access-key-id", provider: "alibaba", severity: "high",
+		pattern:  `\b(?P<secret>LTAI[0-9A-Za-z]{12,20})\b`,
+		literals: []string{"LTAI"},
+	},
+	{
+		id: "tencent-secret-id", provider: "tencent", severity: "high",
+		pattern:  `\b(?P<secret>AKID[0-9A-Za-z]{13,40})\b`,
+		literals: []string{"AKID"},
+	},
+	{
+		// Mapbox secret token: sk. plus a JWT. The generic pass skips JWTs, so a
+		// named rule is the only way this is reported.
+		id: "mapbox-secret-token", provider: "mapbox", severity: "medium",
+		pattern:  `(?P<secret>sk\.eyJ[A-Za-z0-9_-]{50,}\.[A-Za-z0-9_-]{20,})`,
+		literals: []string{"sk.eyJ"},
+	},
+	{
+		id: "prefect-api-key", provider: "prefect", severity: "medium",
+		pattern:  `\b(?P<secret>pnu_[A-Za-z0-9]{36})\b`,
+		literals: []string{"pnu_"},
+	},
+
 	// Database, cache and broker connection URLs with a password in the
 	// userinfo: scheme://user:pass@host[,host2][/db][?opts]. The secret is the
 	// whole URL, not just the password, because the password alone unlocks

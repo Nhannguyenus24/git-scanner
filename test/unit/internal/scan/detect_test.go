@@ -444,3 +444,105 @@ func TestSyntheticFixtureOnlyInTestFiles(t *testing.T) {
 		t.Errorf("a real-looking key in a test file must still fire: %d, want 1", len(ms))
 	}
 }
+
+// TestDetectPlatformProviderKeys covers the hosting / SaaS / developer-platform
+// rules added alongside the AI set: each carries a self-identifying prefix, so a
+// single value in a .env file must attribute to exactly its provider's rule.
+func TestDetectPlatformProviderKeys(t *testing.T) {
+	r := func(n int) string { return strings.Repeat("Zx9Kq2Lp7W", n/10+1)[:n] }
+	h := func(n int) string { return strings.Repeat("3f9a0c7e1b", n/10+1)[:n] }
+	cases := []struct{ name, blob, rule string }{
+		{"gitlab", "GITLAB_TOKEN=glpat" + "-" + r(20), "gitlab-pat"},
+		{"npm", "//registry.npmjs.org/:_authToken=npm" + "_" + r(36), "npm-access-token"},
+		{"digitalocean", "DIGITALOCEAN_TOKEN=dop" + "_v1_" + h(64), "digitalocean-token"},
+		{"shopify", "SHOPIFY_TOKEN=shpat" + "_" + h(32), "shopify-token"},
+		{"square access", "SQUARE_TOKEN=sq0atp" + "-" + r(22), "square-access-token"},
+		{"square secret", "SQUARE_OAUTH_SECRET=sq0csp" + "-" + r(43), "square-oauth-secret"},
+		{"mailchimp", "MAILCHIMP_API_KEY=" + h(32) + "-us" + "7", "mailchimp-api-key"},
+		{"mailgun", "MAILGUN_API_KEY=key" + "-" + h(32), "mailgun-api-key"},
+		{"sentry", "SENTRY_AUTH_TOKEN=sntrys" + "_" + r(45), "sentry-auth-token"},
+		{"linear", "LINEAR_API_KEY=lin_api" + "_" + r(40), "linear-api-key"},
+		{"notion", "NOTION_TOKEN=ntn" + "_" + r(46), "notion-integration-token"},
+		{"figma", "FIGMA_TOKEN=figd" + "_" + r(40), "figma-token"},
+		{"doppler", "DOPPLER_TOKEN=dp.st." + r(43), "doppler-token"},
+		{"supabase", "SUPABASE_ACCESS_TOKEN=sbp" + "_" + h(40), "supabase-access-token"},
+		{"planetscale", "DATABASE_PASSWORD=pscale_pw" + "_" + r(43), "planetscale-token"},
+		{"databricks", "DATABRICKS_TOKEN=dapi" + h(32), "databricks-token"},
+		{"newrelic", "NEW_RELIC_API_KEY=NRAK-" + strings.ToUpper(r(27)), "newrelic-user-key"},
+		{"grafana", "GRAFANA_TOKEN=glsa" + "_" + r(40), "grafana-token"},
+		{"tailscale", "TS_AUTHKEY=tskey-auth-" + r(10) + "-" + r(30), "tailscale-key"},
+		{"flyio", "FLY_API_TOKEN=fo1" + "_" + r(43), "flyio-token"},
+		{"discord", "WEBHOOK=https://discord.com/api/webhooks/123456789012345678/" + r(60), "discord-webhook-url"},
+		{"telegram", "url=https://api.telegram.org/bot1234567890:" + r(35) + "/sendMessage", "telegram-bot-token"},
+		{"twilio", "TWILIO_AUTH_TOKEN=" + h(32), "twilio-auth-token"},
+	}
+	for _, c := range cases {
+		ms := detect(".env", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			got := make([]string, len(ms))
+			for i, m := range ms {
+				got[i] = m.RuleID
+			}
+			t.Errorf("%s: rules = %v, want [%s]", c.name, got, c.rule)
+		}
+	}
+}
+
+// TestDetectMorePlatformProviderKeys covers the second batch of platform rules.
+func TestDetectMorePlatformProviderKeys(t *testing.T) {
+	r := func(n int) string { return strings.Repeat("Zx9Kq2Lp7W", n/10+1)[:n] }
+	h := func(n int) string { return strings.Repeat("3f9a0c7e1b", n/10+1)[:n] }
+	u := func(n int) string { return strings.Repeat("3F9A0C7E1B", n/10+1)[:n] }
+	cases := []struct{ name, blob, rule string }{
+		{"atlassian", "ATLASSIAN_API_TOKEN=ATATT3xFfGF0" + r(60), "atlassian-api-token"},
+		{"dockerhub", "DOCKER_PAT=dckr_pat" + "_" + r(30), "dockerhub-pat"},
+		{"vault", "VAULT_TOKEN=hvs." + r(90), "vault-token"},
+		{"terraform", "TF_TOKEN=" + r(14) + ".atlasv1." + r(70), "terraform-cloud-token"},
+		{"pypi", "PYPI_TOKEN=pypi-AgEIcHlwaS5vcmc" + r(60), "pypi-upload-token"},
+		{"rubygems", "RUBYGEMS_API_KEY=rubygems" + "_" + h(48), "rubygems-api-key"},
+		{"postman", "POSTMAN_API_KEY=PMAK-" + h(24) + "-" + h(34), "postman-api-key"},
+		{"dynatrace", "DT_TOKEN=dt0c01." + u(24) + "." + u(64), "dynatrace-token"},
+		{"datadog", "DD_API_KEY=" + h(32), "datadog-api-key"},
+		{"cloudflare", "CLOUDFLARE_API_TOKEN=" + r(40), "cloudflare-api-token"},
+		{"contentful", "CONTENTFUL_TOKEN=CFPAT-" + r(43), "contentful-token"},
+		{"pulumi", "PULUMI_ACCESS_TOKEN=pul-" + h(40), "pulumi-access-token"},
+		{"brevo", "BREVO_API_KEY=xkeysib-" + h(64) + "-" + r(16), "brevo-api-key"},
+		{"razorpay live", "RAZORPAY_KEY=rzp_live" + "_" + r(14), "razorpay-live-key"},
+		{"razorpay test", "RAZORPAY_KEY=rzp_test" + "_" + r(14), "razorpay-test-key"},
+		{"flutterwave", "FLW_SECRET_KEY=FLWSECK-" + h(32) + "-X", "flutterwave-secret-key"},
+		{"alibaba", "ALIBABA_ACCESS_KEY_ID=LTAI" + r(16), "alibaba-access-key-id"},
+		{"tencent", "TENCENT_SECRET_ID=AKID" + r(32), "tencent-secret-id"},
+		{"mapbox", "MAPBOX_SECRET=sk.eyJ" + r(60) + "." + r(30), "mapbox-secret-token"},
+		{"prefect", "PREFECT_API_KEY=pnu" + "_" + r(36), "prefect-api-key"},
+	}
+	for _, c := range cases {
+		ms := detect(".env", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			got := make([]string, len(ms))
+			for i, m := range ms {
+				got[i] = m.RuleID
+			}
+			t.Errorf("%s: rules = %v, want [%s]", c.name, got, c.rule)
+		}
+	}
+}
+
+// TestPlatformRulesNeedTheirShape guards the few platform rules whose prefix is
+// generic: they must stay dark on a value that merely looks similar.
+func TestPlatformRulesNeedTheirShape(t *testing.T) {
+	cases := []struct{ name, blob string }{
+		// A 32-hex digest is not a Twilio secret without the word twilio nearby.
+		{"bare 32 hex, no twilio", "CHECKSUM=" + strings.Repeat("3f9a0c7e", 4)},
+		// key- without exactly 32 hex following is not a Mailgun key.
+		{"key- prefix, wrong body", "monkey-business = 1"},
+		// A template value must not attribute.
+		{"gitlab template", "GITLAB_TOKEN=glpat-your-token-goes-here"},
+	}
+	for _, c := range cases {
+		for _, m := range detect(".env", c.blob) {
+			if m.Provider != "" {
+				t.Errorf("%s: attributed to %s by %s", c.name, m.Provider, m.RuleID)
+			}
+		}
+	}
+}

@@ -8,6 +8,7 @@ import FindingsPage from './pages/FindingsPage'
 import HelpPage from './pages/HelpPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
+import ProvidersPage from './pages/ProvidersPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
@@ -45,6 +46,7 @@ export default function App() {
     case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
+    case 'providers':    body = <ProvidersPage />; break
     case 'help':         body = <HelpPage />; break
     default:             body = <OverviewPage onNewScan={open} />
   }

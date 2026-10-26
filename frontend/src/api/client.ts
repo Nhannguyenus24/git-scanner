@@ -1,5 +1,5 @@
 import type {
-  Analytics, Candidate, Finding, FindingFilter, FindingStatus, Overview, Repository, ScanJob, ScanSummary,
+  Analytics, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
 export interface VersionResponse { service: string; version: string; commit: string; go_version: string }
@@ -49,6 +49,7 @@ export function createClient(rawBase: string) {
     setStatus:    (id: string, status: FindingStatus)    => r<unknown>('PATCH', `/v1/findings/${id}`, { status }),
     repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),
     candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
+    providers:    ()                                     => r<{ providers: Provider[] }>('GET', '/v1/providers'),
     disclose:     (repoId: string)                       => r<unknown>('POST', `/v1/repositories/${repoId}/disclose`),
   }
 }

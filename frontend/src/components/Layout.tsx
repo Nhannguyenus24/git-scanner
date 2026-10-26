@@ -11,6 +11,7 @@ import RadarIcon from '@mui/icons-material/RadarOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
 import FolderIcon from '@mui/icons-material/FolderOutlined'
 import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
+import ShieldIcon from '@mui/icons-material/VerifiedUserOutlined'
 import BookIcon from '@mui/icons-material/MenuBookOutlined'
 import AddIcon from '@mui/icons-material/Add'
 import TopBar from './TopBar'
@@ -24,6 +25,7 @@ const NAV = [
   { page: 'findings',     icon: <KeyIcon fontSize="small" /> },
   { page: 'repositories', icon: <FolderIcon fontSize="small" /> },
   { page: 'candidates',   icon: <HelpIcon fontSize="small" /> },
+  { page: 'providers',    icon: <ShieldIcon fontSize="small" /> },
   { page: 'help',         icon: <BookIcon fontSize="small" /> },
 ]
 

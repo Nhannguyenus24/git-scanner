@@ -43,7 +43,11 @@ var serveSpec = app.Spec{
 		}
 		queue := dispatch.New(publisher)
 		control := scan.NewControl(d.Redis.Raw())
-		srv := api.NewServer(d.DB, queue, control, d.Log).WithCatalog(d.DB)
+		// The providers list is derived from the same bootstrap ruleset the
+		// scan-worker runs, so the dashboard shows exactly what the engine detects.
+		srv := api.NewServer(d.DB, queue, control, d.Log).
+			WithCatalog(d.DB).
+			WithProviders(scan.BootstrapRuleset().Providers())
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},
