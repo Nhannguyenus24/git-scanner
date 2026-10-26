@@ -8,6 +8,7 @@ package scanworker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -59,6 +60,15 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	jobID := entity.ID(task.JobId)
 	repoID := entity.ID(task.RepositoryId)
+
+	// Tasks for a job that has ended are acked without cloning. The queue is
+	// shared and first-in first-out, so a cancelled job's backlog otherwise
+	// sits in front of every job submitted after it — 79k tasks once, which
+	// held a seven-repository scan for more than a day. One indexed lookup per
+	// task is the price of a cancel that takes effect.
+	if skip, err := w.jobEnded(ctx, task); skip || err != nil {
+		return err
+	}
 
 	// Loaded once and used twice: to name the repository in the log lines that
 	// bracket the scan, and to stamp the finding events. A log line carrying
@@ -243,4 +253,23 @@ func (w *Worker) enqueueEnrich(ctx context.Context, task *gpb.ScanTask, f entity
 		CharsetClass: f.Metadata["charset_class"],
 		SecretLength: length,
 	})
+}
+
+// jobEnded reports whether task belongs to a job that no longer wants work:
+// deleted, or in a terminal state.
+func (w *Worker) jobEnded(ctx context.Context, task *gpb.ScanTask) (bool, error) {
+	job, err := w.db.GetScanJob(ctx, entity.ID(task.JobId))
+	if errors.Is(err, store.ErrNotFound) {
+		w.log.Debug("scan skipped, job no longer exists", "job", task.JobId, "repo_id", task.RepositoryId)
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if job.State.Terminal() {
+		w.log.Debug("scan skipped, job has ended",
+			"job", task.JobId, "state", string(job.State), "repo_id", task.RepositoryId)
+		return true, nil
+	}
+	return false, nil
 }
