@@ -99,3 +99,80 @@ func TestProbeServerErrorIsError(t *testing.T) {
 		t.Errorf("outcome = %s, want error", got.Outcome)
 	}
 }
+
+// headerServer answers with both a body and response headers, so a probe can
+// read the quota facts a provider volunteers alongside identity.
+func headerServer(t *testing.T, status int, headers map[string]string, body string) *httptest.Server {
+	t.Helper()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		for k, v := range headers {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// A live GitHub key records the rate-limit allowance and scopes the /user
+// response already carried — no extra request.
+func TestProbeGitHubCapturesQuota(t *testing.T) {
+	s := headerServer(t, 200, map[string]string{
+		"X-RateLimit-Remaining": "4900",
+		"X-RateLimit-Limit":     "5000",
+		"X-OAuth-Scopes":        "repo, read:org",
+	}, `{"login":"octocat"}`)
+	got := probe.New(nil).WithEndpoints(map[string]string{"github": s.URL}).
+		Probe(context.Background(), "github", "ghp_real")
+	if got.Outcome != scan.ProbeLive {
+		t.Fatalf("outcome = %s, want live", got.Outcome)
+	}
+	for k, want := range map[string]string{"owner": "octocat", "rate_remaining": "4900", "rate_limit": "5000", "scopes": "repo, read:org"} {
+		if got.Identity[k] != want {
+			t.Errorf("identity[%s] = %q, want %q", k, got.Identity[k], want)
+		}
+	}
+}
+
+// OpenAI's models endpoint returns request/token allowance in headers.
+func TestProbeOpenAICapturesQuota(t *testing.T) {
+	s := headerServer(t, 200, map[string]string{
+		"x-ratelimit-remaining-requests": "58",
+		"x-ratelimit-limit-requests":     "60",
+		"x-ratelimit-remaining-tokens":   "149000",
+	}, "")
+	got := probe.New(nil).WithEndpoints(map[string]string{"openai": s.URL}).
+		Probe(context.Background(), "openai", "sk-real")
+	if got.Outcome != scan.ProbeLive {
+		t.Fatalf("outcome = %s, want live", got.Outcome)
+	}
+	if got.Identity["rate_remaining"] != "58" || got.Identity["tokens_remaining"] != "149000" {
+		t.Errorf("quota = %+v, want 58 requests / 149000 tokens", got.Identity)
+	}
+}
+
+// Stripe's account carries the account's country and currency, non-secret facts
+// worth showing beside the id.
+func TestProbeStripeCapturesAccountFacts(t *testing.T) {
+	s := server(t, func(r *http.Request) bool { return r.URL.Path == "/v1/account" },
+		200, `{"id":"acct_1","country":"VN","default_currency":"vnd"}`)
+	got := probe.New(nil).WithEndpoints(map[string]string{"stripe": s.URL}).
+		Probe(context.Background(), "stripe", "sk_live_x")
+	if got.Identity["country"] != "VN" || got.Identity["currency"] != "VND" {
+		t.Errorf("facts = %+v, want VN/VND", got.Identity)
+	}
+}
+
+// A dead key records no quota: the allowance belongs to a working key only.
+func TestProbeDeadCapturesNoQuota(t *testing.T) {
+	s := headerServer(t, 401, map[string]string{"X-RateLimit-Remaining": "4900"}, "")
+	got := probe.New(nil).WithEndpoints(map[string]string{"github": s.URL}).
+		Probe(context.Background(), "github", "ghp_revoked")
+	if got.Outcome != scan.ProbeDead {
+		t.Fatalf("outcome = %s, want dead", got.Outcome)
+	}
+	if _, ok := got.Identity["rate_remaining"]; ok {
+		t.Error("a dead key must record no quota")
+	}
+}

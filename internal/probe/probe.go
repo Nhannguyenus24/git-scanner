@@ -7,6 +7,13 @@
 // auth.test — and never lists, reads or changes account resources. The point is
 // a warning ("this key is LIVE, rotate it"), not access to the account.
 //
+// Alongside identity, a probe records the quota and rate-limit facts the
+// provider volunteers in that same response: GitHub and OpenAI return the key's
+// remaining allowance in response headers, Stripe its account country. Reading
+// what the response already carries is zero extra requests and still no
+// enumeration — it just gives the user "this key is live AND has 4,900 calls
+// left this hour" instead of liveness alone.
+//
 // It runs only when the operator turned probing on for targets they own
 // (config PROBE_SECRETS), and only inside the scan engine, where the plaintext
 // already exists; nothing here is reachable from a path that does not already
@@ -20,6 +27,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/mservice/gitscanner/internal/scan"
 )
@@ -114,21 +122,61 @@ func classify(status int) scan.ProbeOutcome {
 
 // do issues one request and reads a bounded prefix of the body, so a hostile or
 // huge response cannot exhaust memory.
-func (p *Prober) do(ctx context.Context, method, url string, header http.Header) (int, []byte, error) {
+func (p *Prober) do(ctx context.Context, method, url string, header http.Header) (int, http.Header, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	for k, vs := range header {
 		req.Header[k] = vs
 	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, resp.Header, body, nil
+}
+
+// quotaFacts reads the non-secret quota and rate-limit fields a provider sends
+// in its response headers, normalised to a small shared vocabulary. They ride
+// the identity response, so there is no extra request and nothing enumerated —
+// the provider offers them unasked. Returns nil when the response carries none.
+func quotaFacts(h http.Header) map[string]string {
+	out := map[string]string{}
+	first := func(key string, names ...string) {
+		for _, n := range names {
+			if v := h.Get(n); v != "" {
+				out[key] = v
+				return
+			}
+		}
+	}
+	first("rate_remaining", "X-RateLimit-Remaining", "X-Ratelimit-Remaining-Requests", "Ratelimit-Remaining")
+	first("rate_limit", "X-RateLimit-Limit", "X-Ratelimit-Limit-Requests", "Ratelimit-Limit")
+	first("tokens_remaining", "X-Ratelimit-Remaining-Tokens")
+	first("scopes", "X-Oauth-Scopes")
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// mergeFacts adds extra facts to a result's Identity without overwriting the
+// identity fields a prober set first.
+func mergeFacts(out *scan.ProbeResult, extra map[string]string) {
+	if len(extra) == 0 {
+		return
+	}
+	if out.Identity == nil {
+		out.Identity = map[string]string{}
+	}
+	for k, v := range extra {
+		if _, ok := out.Identity[k]; !ok {
+			out.Identity[k] = v
+		}
+	}
 }
 
 func bearer(secret string) http.Header {
@@ -139,16 +187,20 @@ func bearer(secret string) http.Header {
 // the outcome, no identity parsed.
 func probeBearer(path string) prober {
 	return func(ctx context.Context, p *Prober, base, secret string) scan.ProbeResult {
-		status, _, err := p.do(ctx, http.MethodGet, base+path, bearer(secret))
+		status, header, _, err := p.do(ctx, http.MethodGet, base+path, bearer(secret))
 		if err != nil {
 			return scan.ProbeResult{Outcome: scan.ProbeError}
 		}
-		return scan.ProbeResult{Outcome: classify(status)}
+		out := scan.ProbeResult{Outcome: classify(status)}
+		if out.Outcome == scan.ProbeLive {
+			mergeFacts(&out, quotaFacts(header))
+		}
+		return out
 	}
 }
 
 func probeGitHub(ctx context.Context, p *Prober, base, secret string) scan.ProbeResult {
-	status, body, err := p.do(ctx, http.MethodGet, base+"/user",
+	status, header, body, err := p.do(ctx, http.MethodGet, base+"/user",
 		http.Header{"Authorization": {"Bearer " + secret}, "Accept": {"application/vnd.github+json"}})
 	if err != nil {
 		return scan.ProbeResult{Outcome: scan.ProbeError}
@@ -162,13 +214,14 @@ func probeGitHub(ctx context.Context, p *Prober, base, secret string) scan.Probe
 		if u.Login != "" {
 			out.Identity = map[string]string{"owner": u.Login}
 		}
+		mergeFacts(&out, quotaFacts(header))
 	}
 	return out
 }
 
 func probeStripe(ctx context.Context, p *Prober, base, secret string) scan.ProbeResult {
 	// Stripe uses the secret as the HTTP basic-auth username with no password.
-	status, body, err := p.do(ctx, http.MethodGet, base+"/v1/account",
+	status, header, body, err := p.do(ctx, http.MethodGet, base+"/v1/account",
 		http.Header{"Authorization": {basic(secret)}})
 	if err != nil {
 		return scan.ProbeResult{Outcome: scan.ProbeError}
@@ -176,12 +229,25 @@ func probeStripe(ctx context.Context, p *Prober, base, secret string) scan.Probe
 	out := scan.ProbeResult{Outcome: classify(status)}
 	if out.Outcome == scan.ProbeLive {
 		var a struct {
-			ID string `json:"id"`
+			ID       string `json:"id"`
+			Country  string `json:"country"`
+			Currency string `json:"default_currency"`
 		}
 		_ = json.Unmarshal(body, &a)
+		id := map[string]string{}
 		if a.ID != "" {
-			out.Identity = map[string]string{"account": a.ID}
+			id["account"] = a.ID
 		}
+		if a.Country != "" {
+			id["country"] = a.Country
+		}
+		if a.Currency != "" {
+			id["currency"] = strings.ToUpper(a.Currency)
+		}
+		if len(id) > 0 {
+			out.Identity = id
+		}
+		mergeFacts(&out, quotaFacts(header))
 	}
 	return out
 }
@@ -189,7 +255,7 @@ func probeStripe(ctx context.Context, p *Prober, base, secret string) scan.Probe
 // probeSlack is special: Slack answers 200 even for a bad token, with
 // {"ok": false} in the body, so the body decides, not the status.
 func probeSlack(ctx context.Context, p *Prober, base, secret string) scan.ProbeResult {
-	status, body, err := p.do(ctx, http.MethodGet, base+"/api/auth.test", bearer(secret))
+	status, _, body, err := p.do(ctx, http.MethodGet, base+"/api/auth.test", bearer(secret))
 	if err != nil {
 		return scan.ProbeResult{Outcome: scan.ProbeError}
 	}
@@ -221,12 +287,16 @@ func probeSlack(ctx context.Context, p *Prober, base, secret string) scan.ProbeR
 }
 
 func probeGiphy(ctx context.Context, p *Prober, base, secret string) scan.ProbeResult {
-	status, _, err := p.do(ctx, http.MethodGet,
+	status, header, _, err := p.do(ctx, http.MethodGet,
 		base+"/v1/gifs/trending?limit=1&api_key="+secret, nil)
 	if err != nil {
 		return scan.ProbeResult{Outcome: scan.ProbeError}
 	}
-	return scan.ProbeResult{Outcome: classify(status)}
+	out := scan.ProbeResult{Outcome: classify(status)}
+	if out.Outcome == scan.ProbeLive {
+		mergeFacts(&out, quotaFacts(header))
+	}
+	return out
 }
 
 // basic is the HTTP basic-auth header for a key used as the username with an
