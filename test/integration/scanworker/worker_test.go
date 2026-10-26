@@ -178,7 +178,9 @@ func TestWorkerSkipsCancelledJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = db.Close() }()
+	// t.Cleanup, not defer: cleanups run after the test function returns, so a
+	// deferred Close would shut the pool before the cleanups below use it.
+	t.Cleanup(func() { _ = db.Close() })
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +193,7 @@ func TestWorkerSkipsCancelledJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.DeleteScanJob(context.Background(), job.ID) })
+	dropTarget(t, db, target.ID)
 	if err := db.SetScanState(ctx, job.ID, entity.ScanCancelled, "cancelled by test"); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +242,7 @@ func TestWorkerSealsOnlyUnmaskedOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = db.Close() }()
+	t.Cleanup(func() { _ = db.Close() }) // see TestWorkerSkipsCancelledJob
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +272,7 @@ func TestWorkerSealsOnlyUnmaskedOwners(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = db.DeleteScanJob(context.Background(), job.ID) })
+		dropTarget(t, db, target.ID)
 		repo, err := db.UpsertRepository(ctx, entity.Repository{
 			TargetID: target.ID, Owner: owner, Name: "r-" + job.ID.String()[:8], CloneURL: "file://" + buildRepo(t)})
 		if err != nil {
@@ -324,4 +326,15 @@ type discardEnqueuer struct{}
 func (discardEnqueuer) EnqueueEnrich(context.Context, dispatch.EnrichRequest) error { return nil }
 func (discardEnqueuer) PublishFinding(context.Context, entity.Finding, string, string) error {
 	return nil
+}
+
+// dropTarget removes a test's target when it ends. The delete cascades to its
+// jobs, repositories, findings and sealed values, so a run leaves no rows on the
+// dashboard of the database it ran against.
+func dropTarget(t *testing.T, db *store.DB, id entity.ID) {
+	t.Cleanup(func() {
+		if _, err := db.Pool().Exec(context.Background(), `DELETE FROM targets WHERE id = $1`, id); err != nil {
+			t.Errorf("drop test target: %v", err)
+		}
+	})
 }

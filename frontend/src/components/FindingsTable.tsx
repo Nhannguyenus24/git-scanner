@@ -16,7 +16,8 @@ import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import VisibilityIcon from '@mui/icons-material/VisibilityOutlined'
+import FindingDrawer from './FindingDrawer'
 import SeverityChip from './SeverityChip'
 import { commitLink, fileLink, timeAgo } from '../format'
 import { href } from '../hooks/useRoute'
@@ -28,6 +29,10 @@ interface Props {
   onStatus:      (f: Finding, s: FindingStatus) => void
   showRepo?:     boolean
   emptyMessage?: string
+  /** Controls the detail drawer from outside, e.g. from the URL; when absent
+   *  the table keeps the open finding itself. */
+  openId?:       string | null
+  onOpen?:       (id: string | null) => void
 }
 
 const STATUS_COLOR: Record<FindingStatus, 'error' | 'success' | 'default' | 'warning'> = {
@@ -54,9 +59,16 @@ function ProbeBadge({ f, t }: { f: Finding; t: (k: string, v?: Record<string, st
   return <Tooltip title={t('findings.probeOtherTip')}><Chip size="small" variant="outlined" label={t('probe.unverified')} /></Tooltip>
 }
 
-export default function FindingsTable({ findings, onStatus, showRepo = true, emptyMessage }: Props) {
+export default function FindingsTable({ findings, onStatus, showRepo = true, emptyMessage, openId: openProp, onOpen }: Props) {
   const { t } = useT()
   const [menu, setMenu] = useState<{ el: HTMLElement; f: Finding } | null>(null)
+  // The open finding is kept by id and read from the current page, so a triage
+  // change that reloads the list shows its new status in the drawer.
+  const [openLocal, setOpenLocal] = useState<string | null>(null)
+  const openId = onOpen ? openProp ?? null : openLocal
+  const setOpenId = onOpen ?? setOpenLocal
+  const open = findings.find(f => f.id === openId) ?? null
+  const stop = (e: React.MouseEvent) => e.stopPropagation()
 
   if (!findings.length) {
     return (
@@ -79,14 +91,15 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
               <TableCell>{t('findings.col.exposure')}</TableCell>
               <TableCell>{t('findings.col.status')}</TableCell>
               <TableCell>{t('findings.col.detected')}</TableCell>
-              <TableCell padding="checkbox" />
+              <TableCell />
             </TableRow>
           </TableHead>
           <TableBody>
             {findings.map(f => {
               const link = fileLink(f.repository.url, f.file_path, f.line_number, f.commit_sha, f.reachable_from_head)
               return (
-                <TableRow key={f.id} hover sx={{ opacity: f.status === 'open' ? 1 : .55 }}>
+                <TableRow key={f.id} hover onClick={() => setOpenId(f.id)}
+                  sx={{ opacity: f.status === 'open' ? 1 : .55, cursor: 'pointer' }}>
                   <TableCell><SeverityChip severity={f.severity} /></TableCell>
                   <TableCell>
                     <Box sx={{ fontWeight: 600, fontSize: 13 }}>{f.provider || <Box component="span" sx={{ color: 'text.secondary' }}>{t('findings.unmapped')}</Box>}</Box>
@@ -94,18 +107,13 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                       {f.rule_id} · <Box component="span" sx={{ color: 'primary.main' }}>{f.masked_preview}</Box>
                     </Box>
                     {f.secret && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: .5, mt: .5 }}>
-                        <Chip size="small" color="error" label={t('settings.unmasked')} sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />
-                        <Box component="code" sx={{ fontSize: 11.5, wordBreak: 'break-all', color: 'error.main' }}>{f.secret}</Box>
-                        <Tooltip title={t('common.copy')}>
-                          <IconButton size="small" onClick={() => navigator.clipboard?.writeText(f.secret!)}><ContentCopyIcon sx={{ fontSize: 14 }} /></IconButton>
-                        </Tooltip>
-                      </Box>
+                      <Chip size="small" color="error" variant="outlined" label={t('settings.unmasked')}
+                        sx={{ height: 18, fontSize: 10, fontWeight: 700, mt: .5 }} />
                     )}
                   </TableCell>
                   {showRepo && (
                     <TableCell>
-                      <Link href={href('repositories', f.repository.id)} underline="hover" color="inherit" sx={{ fontSize: 13 }}>
+                      <Link href={href('repositories', f.repository.id)} underline="hover" color="inherit" sx={{ fontSize: 13 }} onClick={stop}>
                         <Box component="span" sx={{ color: 'text.secondary' }}>{f.repository.owner}/</Box>{f.repository.name}
                       </Link>
                     </TableCell>
@@ -117,7 +125,7 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                           {f.file_path}:{f.line_number}
                         </Box>
                         {link && (
-                          <IconButton size="small" href={link} target="_blank" rel="noreferrer" sx={{ p: .25 }}>
+                          <IconButton size="small" href={link} target="_blank" rel="noreferrer" sx={{ p: .25 }} onClick={stop}>
                             <OpenInNewIcon sx={{ fontSize: 14 }} />
                           </IconButton>
                         )}
@@ -126,7 +134,7 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                     {f.commit_sha ? (
                       <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         <Link href={commitLink(f.repository.url, f.commit_sha)} target="_blank" rel="noreferrer"
-                          underline="hover" sx={{ fontFamily: 'monospace' }}>{f.commit_sha.slice(0, 7)}</Link>
+                          underline="hover" sx={{ fontFamily: 'monospace' }} onClick={stop}>{f.commit_sha.slice(0, 7)}</Link>
                         {f.author_name && <> · {f.author_name}</>}
                         {f.committed_at && <Tooltip title={new Date(f.committed_at).toLocaleString()}><span> · {timeAgo(f.committed_at)}</span></Tooltip>}
                       </Box>
@@ -148,7 +156,12 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
                       variant={f.status === 'open' ? 'filled' : 'outlined'} />
                   </TableCell>
                   <TableCell sx={{ fontSize: 12, color: 'text.secondary', whiteSpace: 'nowrap' }}>{timeAgo(f.detected_at)}</TableCell>
-                  <TableCell padding="checkbox">
+                  <TableCell sx={{ whiteSpace: 'nowrap', px: .5 }} onClick={stop}>
+                    <Tooltip title={t('detail.open')}>
+                      <IconButton size="small" onClick={() => setOpenId(f.id)} aria-label={t('detail.open')}>
+                        <VisibilityIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                     <IconButton size="small" onClick={e => setMenu({ el: e.currentTarget, f })} aria-label={t('findings.markAs')}>
                       <MoreVertIcon fontSize="small" />
                     </IconButton>
@@ -169,6 +182,8 @@ export default function FindingsTable({ findings, onStatus, showRepo = true, emp
           </MenuItem>
         ))}
       </Menu>
+
+      <FindingDrawer finding={open} onClose={() => setOpenId(null)} onStatus={onStatus} />
     </>
   )
 }

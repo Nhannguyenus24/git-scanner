@@ -91,7 +91,12 @@ export default function FindingsPage({ route }: { route: Route }) {
         <Card sx={{ position: 'relative' }}>
           {res.loading && !res.data ? <Loading /> : (
             <>
-              <FindingsTable findings={res.data?.findings ?? []} onStatus={triage} />
+              <FindingsTable findings={res.data?.findings ?? []} onStatus={triage}
+                openId={p.get('finding')} onOpen={id => {
+                  const next: Record<string, string> = {}
+                  for (const k of KEYS) next[k] = p.get(k) ?? ''
+                  navigate(href('findings', undefined, { ...next, finding: id ?? '' }))
+                }} />
               <Box sx={{ borderTop: 1, borderColor: 'divider' }}>
                 <TablePagination component="div" count={res.data?.total ?? 0} page={page} rowsPerPage={size}
                   rowsPerPageOptions={[25, 50, 100, 200]}
