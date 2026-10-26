@@ -1,6 +1,9 @@
+import { useState, type MouseEvent } from 'react'
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import IconButton from '@mui/material/IconButton'
+import Menu from '@mui/material/Menu'
+import MenuItem from '@mui/material/MenuItem'
 import TextField from '@mui/material/TextField'
 import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
@@ -12,7 +15,7 @@ import { useApiStatus, type ApiStatus } from '../hooks/useApiStatus'
 import { href } from '../hooks/useRoute'
 import { useSettings } from '../store/settings'
 import { useColorMode } from '../store/mode'
-import { useT } from '../i18n'
+import { useT, LANGUAGES } from '../i18n'
 
 const STATUS_COLOR: Record<ApiStatus, string> = { checking: '#8a8372', ok: '#3f7d57', error: '#c0392b' }
 
@@ -22,6 +25,7 @@ export default function TopBar() {
   const { t, lang, setLang } = useT()
   const status = useApiStatus(baseUrl)
   const statusLabel = { checking: t('api.checking'), ok: t('api.ok'), error: t('api.error') }[status]
+  const [langAnchor, setLangAnchor] = useState<null | HTMLElement>(null)
 
   return (
     <AppBar position="sticky" elevation={0}>
@@ -55,11 +59,56 @@ export default function TopBar() {
           </IconButton>
         </Tooltip>
         <Tooltip title={t('lang.switch')}>
-          <IconButton size="small" onClick={() => setLang(lang === 'vi' ? 'en' : 'vi')}
-            sx={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 12, fontWeight: 700, width: 34, height: 34, borderRadius: 1, color: 'text.secondary' }}>
-            {lang === 'vi' ? 'VI' : 'EN'}
+          <IconButton
+            size="small"
+            onClick={(e: MouseEvent<HTMLElement>) => setLangAnchor(e.currentTarget)}
+            aria-label={t('lang.switch')}
+            sx={{
+              fontFamily: '"IBM Plex Mono", monospace',
+              fontSize: 12,
+              fontWeight: 700,
+              width: 34,
+              height: 34,
+              borderRadius: 1,
+              color: 'text.secondary',
+            }}
+          >
+            {lang.toUpperCase()}
           </IconButton>
         </Tooltip>
+        <Menu
+          anchorEl={langAnchor}
+          open={Boolean(langAnchor)}
+          onClose={() => setLangAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          {LANGUAGES.map(l => (
+            <MenuItem
+              key={l.code}
+              selected={lang === l.code}
+              onClick={() => {
+                setLang(l.code)
+                setLangAnchor(null)
+              }}
+              sx={{ fontSize: 13, display: 'flex', gap: 1.5, minWidth: 140 }}
+            >
+              <Box
+                component="span"
+                sx={{
+                  fontFamily: '"IBM Plex Mono", monospace',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  width: 22,
+                  color: 'text.secondary',
+                }}
+              >
+                {l.code.toUpperCase()}
+              </Box>
+              <Box component="span">{l.label}</Box>
+            </MenuItem>
+          ))}
+        </Menu>
         <Tooltip title={mode === 'dark' ? t('mode.toLight') : t('mode.toDark')}>
           <IconButton size="small" onClick={toggle} sx={{ color: 'text.secondary' }}>
             {mode === 'dark' ? <LightIcon fontSize="small" /> : <DarkIcon fontSize="small" />}
