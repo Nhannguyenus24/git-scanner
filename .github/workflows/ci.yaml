@@ -17,11 +17,20 @@ concurrency:
 jobs:
   go:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            go-tools-${{ runner.os }}-
 
       # Built from source with the module's toolchain on purpose: prebuilt
       # golangci-lint releases are compiled with an older Go and refuse to lint
@@ -33,9 +42,20 @@ jobs:
       - run: make lint
       - run: make test
       - run: make build
+      - name: Unit coverage
+        run: make cover
+      - name: Upload Go coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            coverage.html
 
   integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -44,8 +64,18 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      rabbitmq:
+        image: rabbitmq:3.13-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: guest
+          RABBITMQ_DEFAULT_PASS: guest
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      POSTGRES_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@localhost:5672/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -55,6 +85,7 @@ jobs:
 
   proto:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # buf-action reports a lint, format or breaking-change finding by commenting
     # on the pull request. Without this it still fails the job, but the comment
     # call errors with "Resource not accessible by integration" and the finding
@@ -74,6 +105,7 @@ jobs:
 
   chart:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -81,6 +113,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -91,12 +124,44 @@ jobs:
       - name: Install
         run: npm ci
         working-directory: frontend
-      - name: Type-check
-        run: npx tsc --noEmit
+      - name: Check
+        run: make frontend-check
+      - name: Coverage
+        run: make frontend-coverage
+      - name: Upload frontend coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Go vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
         working-directory: frontend
-      - name: Test
-        run: npm test
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
         working-directory: frontend
-      - name: Build
-        run: npm run build
-        working-directory: frontend
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

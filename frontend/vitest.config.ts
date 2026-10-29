@@ -20,5 +20,10 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
     restoreMocks: true,
+    // The render tests mount whole pages, and under the v8 coverage
+    // instrumentation `make frontend-coverage` uses they run roughly four times
+    // slower. The 5s default failed the settings reset test in CI while the
+    // same test passed in a plain `npm test` run — a timeout, not a bug.
+    testTimeout: 30_000,
   },
 })

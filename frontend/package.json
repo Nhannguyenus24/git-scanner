@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "tsc && vitest run && vite build"
+    "test:coverage": "vitest run --coverage",
+    "check": "tsc --noEmit && vitest run && vite build"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
@@ -26,6 +27,7 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^2.1.9",
     "jsdom": "^25.0.1",
     "typescript": "^5.5.3",
     "vite": "^5.4.2",

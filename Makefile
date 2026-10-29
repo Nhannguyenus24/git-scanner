@@ -183,8 +183,12 @@ frontend-test: ## Run the frontend unit and render tests
 	cd frontend && npm test
 
 .PHONY: frontend-check
-frontend-check: ## Typecheck, test and build the frontend — what CI should run
+frontend-check: ## Type-check, test and build the frontend — what CI runs
 	cd frontend && npm run check
+
+.PHONY: frontend-coverage
+frontend-coverage: ## Run frontend tests with coverage
+	cd frontend && npm run test:coverage
 
 ## ---------------------------------------------------------------- local run (no k8s)
 

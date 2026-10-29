@@ -104,3 +104,16 @@ describe('presetSwatches', () => {
     }
   })
 })
+
+// Kept from the pre-preset suite: whatever the preset machinery does, the plain
+// makeTheme('light' | 'dark') call the charts still use must keep returning a
+// full severity scale and usable chart text and surface colours.
+describe('theme palettes', () => {
+  it.each(['light', 'dark'] as const)('contains severity colours in %s mode', mode => {
+    const theme = makeTheme(mode)
+    expect(theme.palette.mode).toBe(mode)
+    expect(Object.values(theme.chart.severity)).toHaveLength(5)
+    expect(theme.chart.text).toBeTruthy()
+    expect(theme.chart.surface).toBeTruthy()
+  })
+})
