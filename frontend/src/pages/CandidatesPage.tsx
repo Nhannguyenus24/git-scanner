@@ -27,7 +27,7 @@ export default function CandidatesPage() {
     <>
       <PageHeader title={t('cand.title')} subtitle={t('cand.subtitle')} />
       <Card>
-        {!cs.length ? <Empty title={t('cand.empty')} body={t('cand.emptyBody')} /> : (
+        {!cs.length ? <Empty art="investigate" size={200} title={t('cand.empty')} body={t('cand.emptyBody')} /> : (
           <TableContainer>
             <Table size="small">
               <TableHead>

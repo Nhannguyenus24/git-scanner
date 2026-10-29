@@ -178,6 +178,14 @@ frontend-dev: ## Start Vite dev server on :3000 (proxies /v1 to :8080)
 frontend-build: ## Build frontend for production into frontend/dist
 	cd frontend && npm run build
 
+.PHONY: frontend-test
+frontend-test: ## Run the frontend unit and render tests
+	cd frontend && npm test
+
+.PHONY: frontend-check
+frontend-check: ## Typecheck, test and build the frontend — what CI should run
+	cd frontend && npm run check
+
 ## ---------------------------------------------------------------- local run (no k8s)
 
 INFRA_POSTGRES  ?= postgresql://postgres:postgres123@localhost:5432/app_db

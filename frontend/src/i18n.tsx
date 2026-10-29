@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { DICT_UI } from './i18n.ui'
 
 // A dependency-free i18n: a flat key -> Record<Lang, string> dictionary and a t() lookup.
 // A missing key returns itself, so partial coverage degrades to English-ish
@@ -21,7 +22,7 @@ export const LANGUAGES: LangOption[] = [
   { code: 'fr', label: 'Français' },
 ]
 
-type Entry = Record<Lang, string>
+export type Entry = Record<Lang, string>
 
 const DICT: Record<string, Entry> = {
   'brand.tagline': {
@@ -2678,7 +2679,7 @@ const DICT: Record<string, Entry> = {
 }
 
 function lookup(key: string, lang: Lang, vars?: Record<string, string | number>): string {
-  const entry = DICT[key]
+  const entry = DICT[key] ?? DICT_UI[key]
   let s = entry ? entry[lang] ?? entry.en : key
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v))
   return s

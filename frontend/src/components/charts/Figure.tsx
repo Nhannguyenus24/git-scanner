@@ -6,11 +6,13 @@ import Card from '@mui/material/Card'
 // is the figure's caption — for a single-series chart it names the series, so no
 // legend box is needed.
 export default function Figure({
-  title, caption, right, children, minHeight,
+  title, caption, right, actions, children, minHeight,
 }: {
   title: string
   caption?: string
   right?: React.ReactNode
+  /** Controls for the figure itself, e.g. downloading the numbers behind it. */
+  actions?: React.ReactNode
   children: React.ReactNode
   minHeight?: number
 }) {
@@ -26,7 +28,7 @@ export default function Figure({
           <Box sx={{ fontFamily: '"IBM Plex Mono", monospace', fontSize: 13, fontWeight: 700, letterSpacing: '.02em' }}>{title}</Box>
           {caption && <Box sx={{ fontSize: 11.5, color: 'text.secondary', mt: .25 }}>{caption}</Box>}
         </Box>
-        {right}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: .5, flexShrink: 0 }}>{right}{actions}</Box>
       </Box>
       <Box sx={{ p: 2, flex: 1, minHeight }}>{children}</Box>
     </Card>
