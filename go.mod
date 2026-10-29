@@ -1,6 +1,11 @@
 module github.com/mservice/gitscanner
 
-go 1.26.3
+// The security job runs govulncheck, and setup-go takes the toolchain from this
+// line, so the directive is what decides which standard library CI compiles
+// against. At 1.26.3 the scan reported 22 called advisories in crypto/tls,
+// net/http, crypto/x509 and net/textproto; the last of them is fixed in
+// 1.26.10. Lowering this turns the security job red again.
+go 1.26.10
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
