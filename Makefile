@@ -178,8 +178,12 @@ frontend-dev: ## Start Vite dev server on :3000 (proxies /v1 to :8080)
 frontend-build: ## Build frontend for production into frontend/dist
 	cd frontend && npm run build
 
+.PHONY: frontend-test
+frontend-test: ## Run the frontend unit and render tests
+	cd frontend && npm test
+
 .PHONY: frontend-check
-frontend-check: ## Type-check, test and build the frontend
+frontend-check: ## Type-check, test and build the frontend — what CI runs
 	cd frontend && npm run check
 
 .PHONY: frontend-coverage

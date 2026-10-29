@@ -138,7 +138,7 @@ export default function NotificationsPage() {
       </Card>
 
       <Card>
-        {!data.notifications.length ? <Empty title={t('notif.empty')} body={t('notif.emptyBody')} /> : (
+        {!data.notifications.length ? <Empty art="mailbox" size={200} title={t('notif.empty')} body={t('notif.emptyBody')} /> : (
           <>
             <TableContainer>
               <Table size="small">

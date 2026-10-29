@@ -11,15 +11,19 @@ import Typography from '@mui/material/Typography'
 import DarkIcon from '@mui/icons-material/DarkModeOutlined'
 import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import LightIcon from '@mui/icons-material/LightModeOutlined'
+import SearchIcon from '@mui/icons-material/Search'
+import ShortcutHint from './ShortcutHint'
 import { useApiStatus, type ApiStatus } from '../hooks/useApiStatus'
 import { href } from '../hooks/useRoute'
+import { IS_MAC } from '../hooks/useHotkeys'
 import { useSettings } from '../store/settings'
 import { useColorMode } from '../store/mode'
 import { useT, LANGUAGES } from '../i18n'
 
-const STATUS_COLOR: Record<ApiStatus, string> = { checking: '#8a8372', ok: '#3f7d57', error: '#c0392b' }
+const STATUS_COLOR: Record<ApiStatus, 'text.disabled' | 'success.main' | 'error.main'> =
+  { checking: 'text.disabled', ok: 'success.main', error: 'error.main' }
 
-export default function TopBar() {
+export default function TopBar({ onCommands }: { onCommands?: () => void }) {
   const { baseUrl, setBaseUrl } = useSettings()
   const { mode, toggle } = useColorMode()
   const { t, lang, setLang } = useT()
@@ -43,18 +47,47 @@ export default function TopBar() {
         </Box>
         <Box sx={{ flex: 1 }} />
 
+        {/* The palette gets a visible target as well as a shortcut: a feature
+            reachable only by a key combination is a feature most people never
+            learn exists. */}
+        {onCommands && (
+          <Box
+            role="button" tabIndex={0} onClick={onCommands}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCommands() } }}
+            aria-label={t('cmd.title')}
+            sx={{
+              display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1, cursor: 'pointer',
+              px: 1.25, py: .6, borderRadius: 1, border: 1, borderColor: 'divider', color: 'text.secondary',
+              '&:hover': { borderColor: 'text.secondary' },
+            }}>
+            <SearchIcon sx={{ fontSize: 16 }} />
+            <Box sx={{ fontSize: 12.5 }}>{t('cmd.title')}</Box>
+            <ShortcutHint keys={IS_MAC ? '⌘K' : 'Ctrl+K'} />
+          </Box>
+        )}
+
         <Tooltip title={statusLabel}>
           <TextField
             value={baseUrl}
             onChange={e => setBaseUrl(e.target.value)}
             placeholder="http://localhost:8080"
-            sx={{ width: { xs: 150, sm: 230 }, '& input': { fontFamily: '"IBM Plex Mono", monospace', fontSize: 12 } }}
+            inputProps={{ 'aria-label': t('settings.apiUrl') }}
+            sx={{ width: { xs: 140, sm: 230 }, '& input': { fontFamily: '"IBM Plex Mono", monospace', fontSize: 12 } }}
             InputProps={{ startAdornment: <Box component="span" sx={{ mr: 1, fontSize: 10, color: STATUS_COLOR[status] }}>●</Box> }}
           />
         </Tooltip>
 
+        {onCommands && (
+          <Tooltip title={t('cmd.title')}>
+            <IconButton size="small" onClick={onCommands} aria-label={t('cmd.title')}
+              sx={{ display: { xs: 'inline-flex', sm: 'none' }, color: 'text.secondary' }}>
+              <SearchIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+
         <Tooltip title={t('nav.help')}>
-          <IconButton size="small" component="a" href={href('help')} sx={{ color: 'text.secondary' }}>
+          <IconButton size="small" component="a" href={href('help')} aria-label={t('nav.help')} sx={{ color: 'text.secondary' }}>
             <HelpIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -110,7 +143,8 @@ export default function TopBar() {
           ))}
         </Menu>
         <Tooltip title={mode === 'dark' ? t('mode.toLight') : t('mode.toDark')}>
-          <IconButton size="small" onClick={toggle} sx={{ color: 'text.secondary' }}>
+          <IconButton size="small" onClick={toggle} aria-label={mode === 'dark' ? t('mode.toLight') : t('mode.toDark')}
+            sx={{ color: 'text.secondary' }}>
             {mode === 'dark' ? <LightIcon fontSize="small" /> : <DarkIcon fontSize="small" />}
           </IconButton>
         </Tooltip>

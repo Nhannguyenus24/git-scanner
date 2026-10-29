@@ -42,7 +42,7 @@ export default function ProvidersPage() {
         }
       />
       {!providers.length ? (
-        <Card><Empty title={t('providers.empty')} /></Card>
+        <Card><Empty art="security" size={200} title={t('providers.empty')} /></Card>
       ) : (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {order.map(cat => {

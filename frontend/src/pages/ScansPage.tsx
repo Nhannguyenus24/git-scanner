@@ -69,7 +69,7 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
 
       <Card>
         {!scans.length ? (
-          <Empty title={view === 'active' ? t('scans.emptyActive') : t('scans.empty')}
+          <Empty art="searching" size={200} title={view === 'active' ? t('scans.emptyActive') : t('scans.empty')}
             action={<Button onClick={onNewScan} sx={{ mt: 1 }}>{t('common.startScan')}</Button>} />
         ) : (
           <TableContainer>
