@@ -229,6 +229,31 @@ describe('onboarding', () => {
     await waitFor(() => expect(screen.queryByText(/It clones a repository/i)).toBeNull())
     expect(JSON.parse(localStorage.getItem('gs-prefs')!).onboarded).toBe(true)
   })
+
+  it('turns pages by button, arrow key, swipe and dot', async () => {
+    localStorage.clear()
+    await open('#/overview')
+    const dialog = screen.getByRole('dialog')
+    expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })) })
+    expect(screen.getByText('Step 2 of 7')).toBeTruthy()
+    await act(async () => { fireEvent.keyDown(dialog, { key: 'ArrowLeft' }) })
+    expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+    // A mostly vertical drag is a scroll, not a page turn.
+    const art = screen.getByText(/It clones a repository/i)
+    await act(async () => {
+      fireEvent.touchStart(art, { touches: [{ clientX: 200, clientY: 100 }] })
+      fireEvent.touchEnd(art, { changedTouches: [{ clientX: 140, clientY: 300 }] })
+    })
+    expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+    await act(async () => {
+      fireEvent.touchStart(art, { touches: [{ clientX: 300, clientY: 100 }] })
+      fireEvent.touchEnd(art, { changedTouches: [{ clientX: 100, clientY: 110 }] })
+    })
+    expect(screen.getByText('Step 2 of 7')).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /go to step 7/i })) })
+    expect(screen.getByRole('button', { name: /get started/i })).toBeTruthy()
+  })
 })
 
 describe('scan detail', () => {
