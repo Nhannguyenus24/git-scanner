@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type TouchEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type TouchEvent } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import ButtonBase from '@mui/material/ButtonBase'
@@ -55,6 +55,10 @@ export default function OnboardingTour({ open, onClose, onNewScan }: {
   const [i, setI] = useState(0)
   const touch = useRef<{ x: number, y: number } | null>(null)
   const step = STEPS[i]
+
+  // The dialog stays mounted between runs, so a replay from settings would
+  // otherwise reopen on whichever step the last run was closed at.
+  useEffect(() => { if (open) setI(0) }, [open])
   const last = i === STEPS.length - 1
 
   const finish = () => { set('onboarded', true); onClose() }

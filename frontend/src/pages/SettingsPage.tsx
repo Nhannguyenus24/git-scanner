@@ -12,6 +12,8 @@ import ToggleButton from '@mui/material/ToggleButton'
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import MailOutlineIcon from '@mui/icons-material/MailOutline'
 import PaletteIcon from '@mui/icons-material/PaletteOutlined'
+import ReplayIcon from '@mui/icons-material/Replay'
+import TourIcon from '@mui/icons-material/ExploreOutlined'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOffOutlined'
 import { PageHeader } from '../components/Layout'
 import { LoadError, Loading } from '../components/States'
@@ -167,10 +169,25 @@ export default function SettingsPage({ onRestartTour }: { onRestartTour?: () => 
           <Button variant="outlined" onClick={() => { reset(); notify(t('appearance.resetDone'), 'info') }}>
             {t('appearance.reset')}
           </Button>
-          {onRestartTour && <Button onClick={onRestartTour}>{t('tour.restart')}</Button>}
           <Box sx={{ fontSize: 12, color: 'text.secondary' }}>{t('appearance.localNote')}</Box>
         </Box>
       </Card>
+
+      {onRestartTour && (
+        <Card sx={{ mb: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', p: 2.5, flexWrap: { xs: 'wrap', sm: 'nowrap' } }}>
+            <Box sx={{ color: 'text.secondary', pt: .25, alignSelf: 'flex-start' }}><TourIcon /></Box>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ fontWeight: 700, fontSize: 15 }}>{t('tour.settings.title')}</Box>
+              <Box sx={{ color: 'text.secondary', fontSize: 13, mt: .5, lineHeight: 1.55 }}>{t('tour.settings.body')}</Box>
+            </Box>
+            <Button variant="outlined" startIcon={<ReplayIcon />} onClick={onRestartTour}
+              sx={{ flexShrink: 0, width: { xs: '100%', sm: 'auto' } }}>
+              {t('tour.restart')}
+            </Button>
+          </Box>
+        </Card>
+      )}
 
       <Card sx={{ mb: 2 }}>
         <Row icon={<MailOutlineIcon />} title={t('settings.mail.title')} color="warning"
