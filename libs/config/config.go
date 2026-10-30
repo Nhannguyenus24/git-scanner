@@ -26,6 +26,9 @@ type Common struct {
 
 	OTLPEndpoint    string // empty disables tracing export
 	ShutdownTimeout time.Duration
+	// ConnectTimeout is how long a service keeps retrying its backends at
+	// startup before it gives up and exits.
+	ConnectTimeout time.Duration
 
 	// FingerprintKey is the HMAC key for secret fingerprints (plan.md §6). Only
 	// the workers that handle raw secrets (scan-worker, enricher) require it; it
@@ -72,6 +75,10 @@ func LoadCommon(serviceName string) (Common, error) {
 		return Common{}, err
 	}
 	c.ShutdownTimeout = timeout
+
+	if c.ConnectTimeout, err = GetDuration("CONNECT_TIMEOUT", time.Minute); err != nil {
+		return Common{}, err
+	}
 
 	return c, c.Validate()
 }
