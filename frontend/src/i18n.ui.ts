@@ -421,7 +421,9 @@ export const DICT_UI: Record<string, Entry> = {
     'Les e-mails de notification sont désactivés jusqu’à ce que vous les activiez, et chaque tentative est journalisée. Trouver une fuite sans la signaler n’aide personne.'),
   'tour.skip':    e('Skip', 'Bỏ qua', 'Salta', '跳过', 'Omitir', 'Überspringen', 'Passer'),
   'tour.done':    e('Get started', 'Bắt đầu', 'Inizia', '开始使用', 'Empezar', 'Loslegen', 'Commencer'),
-  'tour.restart': e('Replay the introduction', 'Xem lại phần giới thiệu', 'Rivedi l’introduzione', '重新播放导览', 'Repetir la introducción', 'Einführung erneut ansehen', 'Revoir l’introduction'),
+  'tour.progress': e('Step {n} of {total}', 'Bước {n}/{total}', 'Passo {n} di {total}', '第 {n} 步，共 {total} 步', 'Paso {n} de {total}', 'Schritt {n} von {total}', 'Étape {n} sur {total}'),
+  'tour.goto':     e('Go to step {n}: {title}', 'Tới bước {n}: {title}', 'Vai al passo {n}: {title}', '前往第 {n} 步：{title}', 'Ir al paso {n}: {title}', 'Zu Schritt {n}: {title}', 'Aller à l’étape {n} : {title}'),
+  'tour.restart':e('Replay the introduction', 'Xem lại phần giới thiệu', 'Rivedi l’introduzione', '重新播放导览', 'Repetir la introducción', 'Einführung erneut ansehen', 'Revoir l’introduction'),
 
   'settings.apiUrl': e('API address', 'Địa chỉ API', 'Indirizzo API', 'API 地址', 'Dirección de la API', 'API-Adresse', 'Adresse de l’API'),
   'settings.mail.prefsNote': e(
