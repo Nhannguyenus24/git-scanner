@@ -3,11 +3,11 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import Grid from '@mui/material/Grid'
-import LinearProgress from '@mui/material/LinearProgress'
 import Link from '@mui/material/Link'
 import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import ListItemText from '@mui/material/ListItemText'
+import Tooltip from '@mui/material/Tooltip'
 import TuneIcon from '@mui/icons-material/TuneOutlined'
 import { useTheme } from '@mui/material/styles'
 import ActivityFeed from '../components/ActivityFeed'
@@ -16,6 +16,7 @@ import DashboardWidget from '../components/DashboardWidget'
 import PostureScore from '../components/PostureScore'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
+import { LiveDot, ScanProgress } from '../components/Instrument'
 import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading } from '../components/States'
 import { num, timeAgo } from '../format'
@@ -84,9 +85,9 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
       case 'stats':
         return { span: 12, node: frame(id, (
           <Grid container spacing={2}>
-            <Grid item xs={6} md={2}><StatCard label={t('overview.openFindings')} value={num(o.open_findings)} hint={t('overview.totalHint', { n: num(o.findings) })} accent={ch.categorical[0]} onClick={() => findings({})} /></Grid>
-            <Grid item xs={6} md={2}><StatCard label={t('overview.critical')} value={num(critical)} accent={ch.severity.critical} onClick={() => findings({ severity: 'critical' })} /></Grid>
-            <Grid item xs={6} md={2}><StatCard label={t('overview.liveAtHead')} value={num(o.reachable_from_head)} hint={t('overview.liveHint')} accent={ch.severity.critical} onClick={() => findings({ exposure: 'head' })} /></Grid>
+            <Grid item xs={6} md={2}><StatCard label={t('overview.openFindings')} value={o.open_findings} hint={t('overview.totalHint', { n: num(o.findings) })} accent={ch.categorical[0]} onClick={() => findings({})} /></Grid>
+            <Grid item xs={6} md={2}><StatCard label={t('overview.critical')} value={critical} accent={ch.severity.critical} onClick={() => findings({ severity: 'critical' })} /></Grid>
+            <Grid item xs={6} md={2}><StatCard label={t('overview.liveAtHead')} value={o.reachable_from_head} hint={t('overview.liveHint')} accent={ch.severity.critical} onClick={() => findings({ exposure: 'head' })} /></Grid>
             <Grid item xs={6} md={2}><StatCard label={t('overview.exposedRepos')} value={`${o.exposed_repos}/${o.repositories}`} accent={ch.categorical[2]} onClick={() => navigate(href('repositories'))} /></Grid>
             <Grid item xs={6} md={2}><StatCard label={t('overview.activeScans')} value={o.active_scans} accent={ch.categorical[0]} onClick={() => navigate(href('scans'))} /></Grid>
             <Grid item xs={6} md={2}><StatCard label={t('overview.unmapped')} value={o.candidates} hint={t('overview.unmappedHint')} accent={ch.other} onClick={() => navigate(href('candidates'))} /></Grid>
@@ -132,8 +133,8 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
                   </Box>
                 </Box>
                 <Box sx={{ display: { xs: 'none', md: 'block' } }}>
-                  <LinearProgress variant="determinate" value={s.progress * 100}
-                    color={s.state === 'failed' ? 'error' : TERMINAL.has(s.state) ? 'success' : 'primary'} sx={{ height: 6, borderRadius: 3 }} />
+                  <ScanProgress variant="determinate" value={s.progress * 100} active={s.state === 'running'}
+                    color={s.state === 'failed' ? 'error' : TERMINAL.has(s.state) ? 'success' : 'primary'} />
                   <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .5 }}>{t('overview.reposOf', { a: s.repos_scanned, b: s.repos_total })}</Box>
                 </Box>
               </Box>
@@ -150,6 +151,19 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
     <>
       <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')}
         actions={<>
+          {/* The page polls; saying so tells the reader the numbers are current
+              without a refresh button that would only duplicate the timer. */}
+          <Tooltip title={t('overview.liveHint', { s: 5 })}>
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: .75, px: 1, py: .4, mr: .5,
+              border: 1, borderColor: 'divider', borderRadius: 1,
+              fontFamily: '"IBM Plex Mono", monospace', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase',
+              color: ov.error ? 'error.main' : 'text.secondary',
+            }}>
+              <LiveDot color={ov.error ? 'error.main' : 'success.main'} live={!ov.error} size={7} />
+              {t('overview.live', { s: 5 })}
+            </Box>
+          </Tooltip>
           <Button size="small" startIcon={<TuneIcon />} onClick={e => setLayoutAnchor(e.currentTarget)}>
             {t('dash.layout')}
           </Button>

@@ -28,7 +28,7 @@ import MailOutlineIcon from '@mui/icons-material/MailOutline'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
 import { Empty, LoadError, Loading } from '../components/States'
-import { num, timeAgo } from '../format'
+import { timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
 import { href, navigate } from '../hooks/useRoute'
 import { useSettings } from '../store/settings'
@@ -122,7 +122,7 @@ export default function NotificationsPage() {
       <Grid container spacing={2} sx={{ mb: 2 }}>
         {STATES.map(s => (
           <Grid item xs={6} md={3} key={s}>
-            <StatCard label={t(`notice.${s}`)} value={num(count(s))} accent={accent[s]}
+            <StatCard label={t(`notice.${s}`)} value={count(s)} accent={accent[s]}
               onClick={() => { setState(state === s ? '' : s); setPage(0) }} />
           </Grid>
         ))}

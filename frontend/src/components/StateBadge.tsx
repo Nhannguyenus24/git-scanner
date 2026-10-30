@@ -1,4 +1,5 @@
 import Chip from '@mui/material/Chip'
+import { LiveDot } from './Instrument'
 import { useT } from '../i18n'
 import type { ScanState } from '../types'
 
@@ -21,6 +22,8 @@ export default function StateBadge({ state, size = 'small' }: Props) {
       color={COLOR[state]}
       size={size}
       variant={state === 'running' ? 'filled' : 'outlined'}
+      icon={state === 'running' ? <LiveDot color="currentColor" size={6} /> : undefined}
+      sx={{ '& .MuiChip-icon': { ml: 1, mr: -.25 } }}
     />
   )
 }

@@ -116,8 +116,8 @@ export default function AnalyticsPage() {
       <Alert severity="info" sx={{ mb: 2 }}>{t('analytics.rangeNote')}</Alert>
 
       <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={6} md={3}><StatCard label={t('analytics.findings')} value={num(o.findings)} hint={t('analytics.openOf', { n: num(o.open_findings) })} accent={ch.categorical[0]} onClick={() => toFindings({})} /></Grid>
-        <Grid item xs={6} md={3}><StatCard label={t('overview.liveAtHead')} value={num(o.reachable_from_head)} hint={t('overview.liveHint')} accent={ch.severity.critical} onClick={() => toFindings({ exposure: 'head' })} /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('analytics.findings')} value={o.findings} hint={t('analytics.openOf', { n: num(o.open_findings) })} accent={ch.categorical[0]} onClick={() => toFindings({})} /></Grid>
+        <Grid item xs={6} md={3}><StatCard label={t('overview.liveAtHead')} value={o.reachable_from_head} hint={t('overview.liveHint')} accent={ch.severity.critical} onClick={() => toFindings({ exposure: 'head' })} /></Grid>
         <Grid item xs={6} md={3}><StatCard label={t('analytics.repositories')} value={`${o.exposed_repos}/${o.repositories}`} hint={t('analytics.exposedOf')} accent={ch.categorical[2]} onClick={() => navigate(href('repositories'))} /></Grid>
         <Grid item xs={6} md={3}><StatCard label={t('overview.unmapped')} value={o.candidates} hint={t('overview.unmappedHint')} accent={ch.categorical[3]} onClick={() => navigate(href('candidates'))} /></Grid>
       </Grid>

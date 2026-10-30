@@ -254,6 +254,20 @@ describe('onboarding', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /go to step 7/i })) })
     expect(screen.getByRole('button', { name: /get started/i })).toBeTruthy()
   })
+
+  it('replays from settings, always from the first step', async () => {
+    await open('#/settings')
+    const replay = () => act(async () => { fireEvent.click(screen.getByRole('button', { name: /replay the introduction/i })) })
+    await replay()
+    expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })) })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next/i })) })
+    expect(screen.getByText('Step 3 of 7')).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /skip/i })) })
+    await waitFor(() => expect(screen.queryByText('Step 3 of 7')).toBeNull())
+    await replay()
+    expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+  })
 })
 
 describe('scan detail', () => {

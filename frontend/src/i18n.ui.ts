@@ -20,7 +20,11 @@ export const DICT_UI: Record<string, Entry> = {
   'common.confirm': e('Confirm', 'Xác nhận', 'Conferma', '确认', 'Confirmar', 'Bestätigen', 'Confirmer'),
   'common.next':    e('Next', 'Tiếp', 'Avanti', '下一步', 'Siguiente', 'Weiter', 'Suivant'),
   'common.back':    e('Back', 'Quay lại', 'Indietro', '上一步', 'Atrás', 'Zurück', 'Retour'),
+  'common.loading': e('Loading', 'Đang tải', 'Caricamento', '加载中', 'Cargando', 'Wird geladen', 'Chargement'),
   'common.current': e('current', 'hiện tại', 'attuale', '当前', 'actual', 'aktuell', 'actuel'),
+
+  'overview.live':  e('Live · {s}s', 'Trực tiếp · {s}s', 'Dal vivo · {s}s', '实时 · {s}秒', 'En vivo · {s}s', 'Live · {s}s', 'En direct · {s}s'),
+  'overview.liveHint': e('Refreshes every {s} seconds', 'Tự làm mới mỗi {s} giây', 'Si aggiorna ogni {s} secondi', '每 {s} 秒刷新一次', 'Se actualiza cada {s} segundos', 'Aktualisiert alle {s} Sekunden', 'Actualisé toutes les {s} secondes'),
 
   'nav.primary': e('Primary navigation', 'Điều hướng chính', 'Navigazione principale', '主导航', 'Navegación principal', 'Hauptnavigation', 'Navigation principale'),
   'nav.more':    e('More', 'Thêm', 'Altro', '更多', 'Más', 'Mehr', 'Plus'),
@@ -423,6 +427,16 @@ export const DICT_UI: Record<string, Entry> = {
   'tour.done':    e('Get started', 'Bắt đầu', 'Inizia', '开始使用', 'Empezar', 'Loslegen', 'Commencer'),
   'tour.progress': e('Step {n} of {total}', 'Bước {n}/{total}', 'Passo {n} di {total}', '第 {n} 步，共 {total} 步', 'Paso {n} de {total}', 'Schritt {n} von {total}', 'Étape {n} sur {total}'),
   'tour.goto':     e('Go to step {n}: {title}', 'Tới bước {n}: {title}', 'Vai al passo {n}: {title}', '前往第 {n} 步：{title}', 'Ir al paso {n}: {title}', 'Zu Schritt {n}: {title}', 'Aller à l’étape {n} : {title}'),
+  'tour.settings.title': e('Introduction', 'Phần giới thiệu', 'Introduzione', '入门导览', 'Introducción', 'Einführung', 'Introduction'),
+  'tour.settings.body': e(
+    'The seven-step walkthrough shown on your first visit: connecting to the API, starting a scan, reading results and telling owners. It starts again from the first step.',
+    'Bảy bước hướng dẫn hiện ở lần đầu truy cập: kết nối API, bắt đầu quét, đọc kết quả và báo cho chủ sở hữu. Sẽ chạy lại từ bước đầu tiên.',
+    'La guida in sette passi mostrata alla prima visita: collegarsi all’API, avviare una scansione, leggere i risultati e avvisare i proprietari. Riparte dal primo passo.',
+    '首次访问时显示的七步导览：连接 API、开始扫描、阅读结果和通知所有者。将从第一步重新开始。',
+    'El recorrido de siete pasos de tu primera visita: conectar con la API, iniciar un escaneo, leer los resultados y avisar a los propietarios. Empieza de nuevo desde el primer paso.',
+    'Der siebenstufige Rundgang vom ersten Besuch: API verbinden, Scan starten, Ergebnisse lesen, Eigentümer informieren. Er beginnt wieder beim ersten Schritt.',
+    'La visite en sept étapes de votre première venue : se connecter à l’API, lancer un scan, lire les résultats et prévenir les propriétaires. Elle reprend à la première étape.',
+  ),
   'tour.restart':e('Replay the introduction', 'Xem lại phần giới thiệu', 'Rivedi l’introduzione', '重新播放导览', 'Repetir la introducción', 'Einführung erneut ansehen', 'Revoir l’introduction'),
 
   'settings.apiUrl': e('API address', 'Địa chỉ API', 'Indirizzo API', 'API 地址', 'Dirección de la API', 'API-Adresse', 'Adresse de l’API'),

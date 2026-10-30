@@ -4,7 +4,6 @@ import Breadcrumbs from '@mui/material/Breadcrumbs'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import Grid from '@mui/material/Grid'
-import LinearProgress from '@mui/material/LinearProgress'
 import Link from '@mui/material/Link'
 import Typography from '@mui/material/Typography'
 import PauseIcon from '@mui/icons-material/Pause'
@@ -19,6 +18,7 @@ import Illustration from '../components/Illustration'
 import ScanTimeline, { etaSeconds } from '../components/ScanTimeline'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
+import { ScanProgress } from '../components/Instrument'
 import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading, TableSkeleton } from '../components/States'
 import { duration, num, timeAgo } from '../format'
@@ -142,15 +142,15 @@ export default function ScanDetailPage({ id }: { id: string }) {
                 <span>{Math.round(scan.progress * 100)}%</span>
               </Box>
             </Box>
-            <LinearProgress variant={scan.state === 'queued' ? 'indeterminate' : 'determinate'} value={scan.progress * 100}
-              sx={{ height: 8, borderRadius: 4 }} color={scan.state === 'failed' ? 'error' : TERMINAL.has(scan.state) ? 'success' : 'primary'} />
+            <ScanProgress variant={scan.state === 'queued' ? 'indeterminate' : 'determinate'} value={scan.progress * 100}
+              active={scan.state === 'running'} height={8} color={scan.state === 'failed' ? 'error' : TERMINAL.has(scan.state) ? 'success' : 'primary'} />
             {remaining === undefined && !TERMINAL.has(scan.state) && (
               <Box sx={{ fontSize: 11.5, color: 'text.disabled', mt: 1 }}>{t('scan.noEta')}</Box>
             )}
 
             <Grid container spacing={1.5} sx={{ mt: 1 }}>
               <Grid item xs={6} md={3}><StatCard label={t('scan.reposCount')} value={scan.repos_total} /></Grid>
-              <Grid item xs={6} md={3}><StatCard label={t('scan.blobsScanned')} value={num(scan.blobs_scanned)} /></Grid>
+              <Grid item xs={6} md={3}><StatCard label={t('scan.blobsScanned')} value={scan.blobs_scanned} /></Grid>
               <Grid item xs={6} md={3}><StatCard label={t('scan.newFindings')} value={scan.findings_count} hint={t('scan.newFindingsHint')} accent={ch.severity.medium} /></Grid>
               <Grid item xs={6} md={3}><StatCard label={t('scan.openInJob')} value={rows.filter(f => f.status === 'open').length} accent={ch.severity.critical} /></Grid>
             </Grid>

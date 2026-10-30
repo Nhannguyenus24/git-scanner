@@ -12,6 +12,7 @@ import DarkIcon from '@mui/icons-material/DarkModeOutlined'
 import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import LightIcon from '@mui/icons-material/LightModeOutlined'
 import SearchIcon from '@mui/icons-material/Search'
+import { LiveDot } from './Instrument'
 import ShortcutHint from './ShortcutHint'
 import { useApiStatus, type ApiStatus } from '../hooks/useApiStatus'
 import { href } from '../hooks/useRoute'
@@ -73,7 +74,7 @@ export default function TopBar({ onCommands }: { onCommands?: () => void }) {
             placeholder="http://localhost:8080"
             inputProps={{ 'aria-label': t('settings.apiUrl') }}
             sx={{ width: { xs: 140, sm: 230 }, '& input': { fontFamily: '"IBM Plex Mono", monospace', fontSize: 12 } }}
-            InputProps={{ startAdornment: <Box component="span" sx={{ mr: 1, fontSize: 10, color: STATUS_COLOR[status] }}>●</Box> }}
+            InputProps={{ startAdornment: <Box component="span" sx={{ mr: 1, display: 'flex' }}><LiveDot color={STATUS_COLOR[status]} live={status === 'ok'} size={7} /></Box> }}
           />
         </Tooltip>
 
