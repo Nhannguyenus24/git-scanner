@@ -69,6 +69,31 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 		return fmt.Errorf("%w: unmarshal discovery task: %v", rabbit.ErrDrop, err)
 	}
 
+	err := w.handle(ctx, &task)
+
+	// A rate limit says nothing about the task, and the primary limit resets
+	// only hourly: counted as a failure, five 30-second retries would
+	// dead-letter a perfectly good page long before the limit lifts.
+	var limited *github.RateLimitError
+	if errors.As(err, &limited) {
+		w.log.Warn("discovery rate limited", "job", task.JobId, "target", task.Value, "retry_after", limited.RetryAfter.String())
+		return fmt.Errorf("%w: %v", rabbit.ErrRetryLater, err)
+	}
+
+	// The task is about to be dead-lettered, and with it the only thing that
+	// would ever expand the rest of this target. Fail the job so it says why,
+	// rather than leaving it running with no work left anywhere.
+	if err != nil && (d.Final || errors.Is(err, rabbit.ErrDrop)) {
+		if failErr := w.store.SetScanState(ctx, entity.ID(task.JobId), entity.ScanFailed, "discovery: "+err.Error()); failErr != nil {
+			w.log.Error("could not mark job failed", "job", task.JobId, "error", failErr)
+		} else {
+			w.log.Error("job failed, discovery gave up", "job", task.JobId, "target", task.Value, "attempt", d.Attempt, "error", err)
+		}
+	}
+	return err
+}
+
+func (w *Worker) handle(ctx context.Context, task *gpb.DiscoveryTask) error {
 	jobID := entity.ID(task.JobId)
 	w.log.Info("discovery task received", "job", task.JobId, "kind", task.Kind, "target", task.Value, "cursor", task.Cursor)
 
@@ -105,12 +130,12 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	}
 
 	if task.Kind == string(entity.TargetAllowlist) {
-		return w.expandAllowlist(ctx, &task)
+		return w.expandAllowlist(ctx, task)
 	}
 	if task.Kind == string(entity.TargetRandom) {
-		return w.expandRandom(ctx, &task)
+		return w.expandRandom(ctx, task)
 	}
-	return w.expandPage(ctx, &task)
+	return w.expandPage(ctx, task)
 }
 
 // expandRandom enqueues scans for one page of randomly sampled public

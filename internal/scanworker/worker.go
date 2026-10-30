@@ -64,7 +64,33 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 		// dead-letter queue rather than spin.
 		return fmt.Errorf("%w: unmarshal scan task: %v", rabbit.ErrDrop, err)
 	}
-	return w.scan(ctx, &task)
+	err := w.scan(ctx, &task)
+	if err != nil && d.Final {
+		w.giveUp(ctx, &task, d.Attempt, err)
+	}
+	return err
+}
+
+// giveUp counts a repository that will never be scanned as done, so its job can
+// still complete.
+//
+// The task is about to be dead-lettered. Without this, repos_scanned never
+// reaches repos_total and the job reports "running" forever for a repository
+// nobody is working on — one unclonable repository holding up a whole
+// organisation's result. The count may overshoot if an earlier delivery got as
+// far as RecordScanResult before failing; completion tests scanned >= total,
+// so that ends the job, which is the right outcome for a task that is gone.
+func (w *Worker) giveUp(ctx context.Context, task *gpb.ScanTask, attempt int, cause error) {
+	jobID := entity.ID(task.JobId)
+	w.log.Error("repository skipped after final attempt",
+		"job", task.JobId, "repo_id", task.RepositoryId, "attempt", attempt, "error", cause)
+	if err := w.db.RecordScanResult(ctx, jobID, 0, 0); err != nil {
+		w.log.Error("could not count skipped repository", "job", task.JobId, "error", err)
+		return
+	}
+	if _, err := w.db.CompleteIfAllScanned(ctx, jobID); err != nil {
+		w.log.Error("could not complete job after skip", "job", task.JobId, "error", err)
+	}
 }
 
 func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {

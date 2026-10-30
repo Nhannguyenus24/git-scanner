@@ -115,7 +115,11 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 		if errors.Is(err, store.ErrRateLimited) {
 			w.log.Info("mail rate cap reached, deferring",
 				"repo", task.RepositoryId, "retry_after", retryAfter)
-			return fmt.Errorf("notify: rate limited, retry after %s", retryAfter)
+			// Not counted as an attempt: the cap is shared by every replica,
+			// so a large disclosure batch can wait far longer than the retry
+			// budget, and a counted wait would dead-letter mail that was only
+			// queued behind other mail.
+			return fmt.Errorf("%w: notify: rate limited, retry after %s", rabbit.ErrRetryLater, retryAfter)
 		}
 		return err
 	}
