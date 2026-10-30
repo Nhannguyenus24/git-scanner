@@ -26,6 +26,8 @@ goes on a short-lived `type/short-description` branch and reaches `main` through
 a pull request titled `type(scope): description`. Nothing is committed straight
 to `main`, and pushing or opening a PR needs the user's agreement first — the
 `merge-request` skill has the details.
+A PR that changes what ships in the frontend also bumps `frontend/package.json`
+in the same PR (feat → minor, fix → patch); the skill says when and how.
 
 ## Verifying a change
 
