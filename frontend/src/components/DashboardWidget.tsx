@@ -5,6 +5,7 @@ import Tooltip from '@mui/material/Tooltip'
 import ArrowUpIcon from '@mui/icons-material/ArrowUpward'
 import ArrowDownIcon from '@mui/icons-material/ArrowDownward'
 import HideIcon from '@mui/icons-material/VisibilityOffOutlined'
+import { CornerTicks } from './Instrument'
 import { useT } from '../i18n'
 
 // A dashboard panel that can be moved and hidden with buttons.
@@ -60,7 +61,8 @@ export default function DashboardWidget({ title, editing, onUp, onDown, onHide, 
   }
 
   return (
-    <Card sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Card sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      <CornerTicks />
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 1.5 }}>
         <Box sx={{ fontWeight: 700 }}>{title}</Box>
         {controls ?? actions}

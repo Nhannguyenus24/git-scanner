@@ -1,14 +1,15 @@
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import CircularProgress from '@mui/material/CircularProgress'
 import Skeleton from '@mui/material/Skeleton'
 import Typography from '@mui/material/Typography'
 import Illustration, { type IllustrationName } from './Illustration'
+import { RadarLoader } from './Instrument'
 import { useT } from '../i18n'
 
 export function Loading() {
-  return <Box sx={{ p: 6, textAlign: 'center' }}><CircularProgress size={28} /></Box>
+  const { t } = useT()
+  return <RadarLoader label={t('common.loading')} />
 }
 
 /**

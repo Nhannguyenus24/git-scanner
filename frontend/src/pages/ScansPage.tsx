@@ -2,7 +2,6 @@ import { useMemo, useState, type MouseEvent } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
-import LinearProgress from '@mui/material/LinearProgress'
 import Table from '@mui/material/Table'
 import TableBody from '@mui/material/TableBody'
 import TableCell from '@mui/material/TableCell'
@@ -17,6 +16,7 @@ import AddIcon from '@mui/icons-material/Add'
 import ReplayIcon from '@mui/icons-material/Replay'
 import DeleteIcon from '@mui/icons-material/DeleteOutline'
 import { PageHeader } from '../components/Layout'
+import { ScanProgress } from '../components/Instrument'
 import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading } from '../components/States'
 import { duration, num, timeAgo } from '../format'
@@ -95,7 +95,7 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
                       <Box sx={{ fontSize: 11, color: 'text.secondary', fontFamily: 'monospace' }}>{s.target.kind} · {s.id.slice(0, 8)}</Box>
                     </TableCell>
                     <TableCell>
-                      <LinearProgress variant="determinate" value={s.progress * 100} sx={{ height: 6, borderRadius: 3 }}
+                      <ScanProgress variant="determinate" value={s.progress * 100} active={s.state === 'running'}
                         color={s.state === 'failed' ? 'error' : TERMINAL.has(s.state) ? 'success' : 'primary'} />
                       <Box sx={{ fontSize: 11, color: 'text.secondary', mt: .5 }}>{t('scans.reposOf', { a: s.repos_scanned, b: s.repos_total })}</Box>
                     </TableCell>

@@ -20,7 +20,11 @@ export const DICT_UI: Record<string, Entry> = {
   'common.confirm': e('Confirm', 'Xác nhận', 'Conferma', '确认', 'Confirmar', 'Bestätigen', 'Confirmer'),
   'common.next':    e('Next', 'Tiếp', 'Avanti', '下一步', 'Siguiente', 'Weiter', 'Suivant'),
   'common.back':    e('Back', 'Quay lại', 'Indietro', '上一步', 'Atrás', 'Zurück', 'Retour'),
+  'common.loading': e('Loading', 'Đang tải', 'Caricamento', '加载中', 'Cargando', 'Wird geladen', 'Chargement'),
   'common.current': e('current', 'hiện tại', 'attuale', '当前', 'actual', 'aktuell', 'actuel'),
+
+  'overview.live':  e('Live · {s}s', 'Trực tiếp · {s}s', 'Dal vivo · {s}s', '实时 · {s}秒', 'En vivo · {s}s', 'Live · {s}s', 'En direct · {s}s'),
+  'overview.liveHint': e('Refreshes every {s} seconds', 'Tự làm mới mỗi {s} giây', 'Si aggiorna ogni {s} secondi', '每 {s} 秒刷新一次', 'Se actualiza cada {s} segundos', 'Aktualisiert alle {s} Sekunden', 'Actualisé toutes les {s} secondes'),
 
   'nav.primary': e('Primary navigation', 'Điều hướng chính', 'Navigazione principale', '主导航', 'Navegación principal', 'Hauptnavigation', 'Navigation principale'),
   'nav.more':    e('More', 'Thêm', 'Altro', '更多', 'Más', 'Mehr', 'Plus'),

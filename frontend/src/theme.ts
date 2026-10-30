@@ -268,6 +268,15 @@ export function makeTheme(input: ThemeInput | Mode): Theme {
           // A focus ring that is always visible, on every preset. The browser
           // default disappears against the darker stocks, and keyboard users
           // lose their place; :focus-visible keeps it off mouse clicks.
+          // A faint dot grid, like the graph paper an instrument plots on. It is
+          // left off high contrast, where any texture behind text costs contrast.
+          ...(hc ? {} : {
+            body: {
+              backgroundImage: `radial-gradient(${c.lineStrong}${mode === 'dark' ? '55' : '66'} 1px, transparent 1.2px)`,
+              backgroundSize: '22px 22px',
+              backgroundAttachment: 'fixed',
+            },
+          }),
           ':focus-visible': {
             outline: `${hc ? 3 : 2}px solid ${c.primary}`,
             outlineOffset: 2,
