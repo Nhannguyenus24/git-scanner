@@ -33,3 +33,21 @@ make test               # unit tests, race detector on
 make test-integration   # export POSTGRES_URL=... (and others) first
 make cover              # coverage of internal/ and libs/ → coverage.html
 ```
+
+## Backends for integration tests
+
+Point the tests at a database and a vhost of their own, never at the ones a
+running stack uses. They write rows and consume real queue names: a scan test on
+the dev vhost competes with a running scan-worker for `scan.tasks`, and the
+rabbit tests purge `enrich.tasks`.
+
+```bash
+docker exec postgres createdb -U postgres gitscanner_test
+docker exec rabbitmq rabbitmqctl add_vhost gitscanner-test
+docker exec rabbitmq rabbitmqctl set_permissions -p gitscanner-test admin '.*' '.*' '.*'
+
+export POSTGRES_URL='postgresql://postgres:postgres123@localhost:5432/gitscanner_test'
+export RABBITMQ_URL='amqp://admin:admin123@localhost:5672/gitscanner-test'
+export RABBITMQ_TEST_URL="$RABBITMQ_URL"
+make test-integration
+```

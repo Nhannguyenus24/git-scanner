@@ -114,6 +114,10 @@ go run ./cmd/api
 curl localhost:8080/readyz
 ```
 
+A service that cannot reach Postgres or RabbitMQ at startup keeps retrying
+with backoff for `CONNECT_TIMEOUT` (default `1m`) before it exits, so the
+order things come up in does not matter.
+
 The `api` binary applies migrations on startup. In Kubernetes a Helm
 `pre-upgrade` hook does it first and the startup call becomes a no-op.
 
