@@ -1,6 +1,6 @@
 ---
 name: merge-request
-description: Ship a change on this project — create the branch, commit, open the pull request and title it. Use this whenever work is ready to propose, or the user says "tạo MR", "mở PR", "tạo branch", "push lên", "merge request", "raise a PR", or asks how to name a branch or a PR here. Also consult it before committing anything, because this project is trunk-based and work does not belong directly on main.
+description: Ship a change on this project — create the branch, commit, open the pull request and title it. Use this whenever work is ready to propose, or the user says "tạo MR", "mở PR", "tạo branch", "push lên", "merge request", "raise a PR", or asks how to name a branch or a PR here, or whether to bump the app version ("nâng ver", "bump version"). Also consult it before committing anything, because this project is trunk-based, work does not belong directly on main, and a change to the app must bump frontend/package.json in the same PR.
 ---
 
 # Shipping a change
@@ -104,6 +104,40 @@ Stage named files rather than `git add -A`. This repository scans for leaked
 credentials and real secrets have been handled in its working tree; a broad add
 is how one reaches a public branch. Review `git status` before committing, and
 if a filename is unfamiliar, read the file.
+
+## Bump the app version when the app changes
+
+The version in `frontend/package.json` is stamped into every build and shown in
+the footer, so a screenshot or bug report says which build it came from. If the
+number stays the same across changes, two different builds look identical and
+that stamp is useless. So every PR that changes what ships in the app bumps it
+in the same PR, never in a later chore PR.
+
+**Bump** when the PR changes `frontend/src/`, `frontend/index.html`, the
+frontend's runtime dependencies, or anything in `frontend/vite.config.ts` that
+reaches the bundle.
+**Do not bump** for tests only, docs, skills, CI, or backend-only changes. The
+Go binaries take their version from `git describe` at build time, so they have
+no file to bump.
+
+Pick the level from the PR type. While the version is `0.x`, there is no
+major bump:
+
+| PR type | Bump | Example |
+|---|---|---|
+| `feat` | minor | 0.3.0 → 0.4.0 |
+| `fix`, `perf`, `refactor`, `style`, `build` touching the app | patch | 0.3.0 → 0.3.1 |
+
+```bash
+cd frontend && npm version minor --no-git-tag-version   # or: patch
+```
+
+This updates `package.json` and `package-lock.json` together, so stage both.
+Commit them in the PR's own commit or as a `chore(frontend): bump version to
+x.y.z` commit on the same branch. Bump against the version on current `main`,
+not the one your branch started from. If another PR bumped it first, rebase
+and bump again from theirs; two open PRs that both claim 0.4.0 will conflict in
+`package.json`, and that conflict is the reminder.
 
 ## CI is the gate
 
