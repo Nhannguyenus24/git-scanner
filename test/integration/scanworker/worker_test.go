@@ -338,3 +338,70 @@ func dropTarget(t *testing.T, db *store.DB, id entity.ID) {
 		}
 	})
 }
+
+// A repository that fails on its final attempt is dead-lettered, and nothing
+// will scan it again. It still has to count, or its job waits for it forever:
+// repos_scanned stops one short of repos_total and the job reports "running"
+// with no work left anywhere.
+func TestFinalFailureStillCompletesTheJob(t *testing.T) {
+	ctx := context.Background()
+	log := observability.NewLogger("test", "error")
+
+	db, err := store.Open(ctx, env(t, "POSTGRES_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() }) // see TestWorkerSkipsCancelledJob
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := db.CreateTarget(ctx, entity.Target{Kind: entity.TargetRepo, Value: "https://github.com/t/gone.git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.CreateScanJob(ctx, target.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropTarget(t, db, target.ID)
+	if err := db.SetScanState(ctx, job.ID, entity.ScanRunning, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AddReposTotal(ctx, job.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := db.UpsertRepository(ctx, entity.Repository{
+		TargetID: target.ID, Owner: "t", Name: "gone-" + job.ID.String()[:8],
+		CloneURL: "file://" + filepath.Join(t.TempDir(), "does-not-exist")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hasher, _ := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	engine := scan.NewEngine(
+		&scan.GitCLI{ScratchDir: t.TempDir(), AllowProtocols: []string{"file"}},
+		scan.NewDetector(scan.BootstrapRuleset()), hasher)
+	worker := scanworker.New(engine, db, discardEnqueuer{}, log)
+	body, _ := proto.Marshal(&gpb.ScanTask{JobId: job.ID.String(), RepositoryId: repo.ID.String(), CloneUrl: repo.CloneURL})
+
+	// An earlier attempt fails and leaves the job alone: a retry is coming.
+	if err := worker.Handle(ctx, rabbit.Delivery{Body: body, Attempt: 0}); err == nil {
+		t.Fatal("cloning a missing repository succeeded")
+	}
+	if got, _ := db.GetScanJob(ctx, job.ID); got.ReposScanned != 0 || got.State != entity.ScanRunning {
+		t.Fatalf("after a retryable failure job = %s with %d scanned, want running with 0", got.State, got.ReposScanned)
+	}
+
+	// The final attempt fails too, and the job completes without it.
+	if err := worker.Handle(ctx, rabbit.Delivery{Body: body, Attempt: 3, Final: true}); err == nil {
+		t.Fatal("cloning a missing repository succeeded")
+	}
+	got, err := db.GetScanJob(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != entity.ScanCompleted || got.ReposScanned != 1 {
+		t.Errorf("after the final failure job = %s with %d scanned, want completed with 1", got.State, got.ReposScanned)
+	}
+}

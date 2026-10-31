@@ -2,6 +2,7 @@ package notify_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/mservice/gitscanner/internal/notify"
+	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
 	"github.com/mservice/gitscanner/libs/rabbit"
@@ -44,9 +46,15 @@ func (s *fakeSender) Send(_ context.Context, m notify.Message) error {
 	return nil
 }
 
-type fakeLimiter struct{ taken int }
+type fakeLimiter struct {
+	taken int
+	full  bool // the shared bucket is empty
+}
 
 func (l *fakeLimiter) Take(context.Context, float64) (time.Duration, error) {
+	if l.full {
+		return time.Minute, store.ErrRateLimited
+	}
 	l.taken++
 	return 0, nil
 }
@@ -87,5 +95,21 @@ func TestHandleSendsWhenNotificationsOn(t *testing.T) {
 	}
 	if len(snd.sent) != 1 || snd.sent[0].To != "dev@example.com" {
 		t.Errorf("sent = %+v, want one mail to dev@example.com", snd.sent)
+	}
+}
+
+// The mail cap is shared by every replica, so a large batch can wait far
+// longer than the retry budget. Counted as a failure, that wait would
+// dead-letter a disclosure that was only queued behind other mail.
+func TestHandleDefersWhenTheMailCapIsReached(t *testing.T) {
+	st, snd, lim := &fakeStore{on: true}, &fakeSender{}, &fakeLimiter{full: true}
+	w := notify.New(st, snd, lim, notify.DisclosureInfo{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	err := w.Handle(context.Background(), delivery(t))
+	if !errors.Is(err, rabbit.ErrRetryLater) {
+		t.Fatalf("Handle = %v, want ErrRetryLater", err)
+	}
+	if len(snd.sent) != 0 || st.created != 0 {
+		t.Errorf("sent=%d created=%d, want nothing before a token is granted", len(snd.sent), st.created)
 	}
 }

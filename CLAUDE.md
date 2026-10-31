@@ -72,6 +72,13 @@ GitHub includes one ref per pull request ever opened — gigabytes of other
 people's fork commits, which are also not the target's history and were never
 authorised as a scan target.
 
+**`libs/rabbit` — dead-letter by publishing, never by nack.** Every queue's
+dead-letter exchange is the *retry* exchange, so a nack can only ever retry.
+Reaching `.dead`, or deferring without spending an attempt (`ErrRetryLater`),
+takes an explicit confirmed publish followed by an ack. Replacing that with a
+nack once sent every "dead-lettered" task round the retry loop forever — one
+was found on its 421st attempt.
+
 **Rule literals list every casing.** They gate a `bytes.Contains` prefilter,
 which does not fold case, so a blob without the exact literal never reaches the
 regex.
@@ -80,8 +87,9 @@ regex.
 
 - Analytics rollups counted under `provider=unmapped` are not corrected when a
   finding is later reclassified; the dedupe table rejects the replay.
-- `git clone` has no timeout. A genuinely enormous repository can hold a
-  prefetch slot indefinitely.
+- A repository skipped after its final scan attempt counts toward
+  `repos_scanned`, so its job completes, but nothing on the job records that it
+  was skipped; only the scan-worker log and the `scan.tasks.dead` queue say so.
 - `envVarIn` in `detect.go` matches any word before a colon, so candidate
   `guessed_name` picks up prose from READMEs and YAML keys. Detection tuning is
   Phase 8.

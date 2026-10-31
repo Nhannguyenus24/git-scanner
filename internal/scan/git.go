@@ -3,6 +3,7 @@ package scan
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,6 +68,13 @@ func gitEnv(allowProtocols []string) []string {
 		{"core.hooksPath", "/dev/null"},
 		{"protocol.allow", "never"},
 		{"protocol.https.allow", "always"},
+		// Abort a transfer that has slowed below 1 KB/s for a minute. A clone
+		// is otherwise bounded only by the scan's context, and a server that
+		// stops sending without closing the connection holds a worker slot
+		// indefinitely. Measuring speed rather than total time does not punish
+		// a large repository that is still arriving.
+		{"http.lowSpeedLimit", "1000"},
+		{"http.lowSpeedTime", "60"},
 	}
 	for _, p := range allowProtocols {
 		pairs = append(pairs, [2]string{"protocol." + p + ".allow", "always"})
@@ -96,7 +104,16 @@ type GitCLI struct {
 	// AllowProtocols permits transports beyond https. Leave empty in production;
 	// integration tests set it to clone a local file:// repository.
 	AllowProtocols []string
+	// CloneTimeout caps one clone outright, as a backstop to the low-speed
+	// abort: a server can trickle bytes just above the floor forever. Zero uses
+	// defaultCloneTimeout.
+	CloneTimeout time.Duration
 }
+
+// defaultCloneTimeout is generous on purpose. The low-speed abort catches a
+// stalled transfer within a minute; this only has to stop one that never
+// stalls and never ends, without failing a genuinely large repository.
+const defaultCloneTimeout = 30 * time.Minute
 
 // NewGitCLI returns a cloner with sensible defaults.
 func NewGitCLI(scratchDir string) *GitCLI {
@@ -121,11 +138,21 @@ func (g *GitCLI) Clone(ctx context.Context, cloneURL string) (Repo, error) {
 		return nil, fmt.Errorf("scan: scratch dir: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "clone", "--bare", "--quiet",
+	timeout := g.CloneTimeout
+	if timeout <= 0 {
+		timeout = defaultCloneTimeout
+	}
+	cloneCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(cloneCtx, "git", "clone", "--bare", "--quiet",
 		"--no-recurse-submodules", cloneURL, dir)
 	cmd.Env = gitEnv(g.AllowProtocols)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)
+		if errors.Is(cloneCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, fmt.Errorf("scan: git clone: gave up after %s: %w", timeout, err)
+		}
 		return nil, fmt.Errorf("scan: git clone: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 

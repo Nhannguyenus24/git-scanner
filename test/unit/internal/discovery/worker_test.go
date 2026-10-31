@@ -2,8 +2,10 @@ package discovery_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -20,6 +22,7 @@ import (
 type fakeLister struct {
 	calls  []string
 	random []github.Repo // one page returned by ListRandomRepos
+	orgErr error        // what ListOrgRepos fails with
 }
 
 func (f *fakeLister) ListUserRepos(_ context.Context, user, cursor string) (github.Page, error) {
@@ -40,7 +43,7 @@ func (f *fakeLister) ListUserRepos(_ context.Context, user, cursor string) (gith
 	}
 }
 func (f *fakeLister) ListOrgRepos(context.Context, string, string) (github.Page, error) {
-	return github.Page{}, nil
+	return github.Page{}, f.orgErr
 }
 
 func (f *fakeLister) ListRandomRepos(context.Context) (github.Page, error) {
@@ -306,5 +309,49 @@ func TestDiscoverDropsDeletedJob(t *testing.T) {
 	}
 	if disp.scans != 0 || len(disp.discoveries) != 0 {
 		t.Error("a deleted job must produce no work")
+	}
+}
+
+// orgFailure runs one discovery delivery for an org whose listing fails with err.
+func orgFailure(t *testing.T, err error, final bool) (*fakeStore, error) {
+	t.Helper()
+	gh, st, disp, pause := &fakeLister{orgErr: err}, &fakeStore{}, &fakeDisp{}, &fakePause{}
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler))
+	d := deliver(t, &gpb.DiscoveryTask{JobId: "job", TargetId: "tgt", Kind: "org", Value: "acme"})
+	d.Final = final
+	return st, w.Handle(context.Background(), d)
+}
+
+// The primary rate limit resets hourly. Counted as failures, five 30-second
+// retries would dead-letter the page — and with it the rest of the target —
+// long before GitHub lets the next request through.
+func TestDiscoverRateLimitIsDeferredNotFailed(t *testing.T) {
+	st, err := orgFailure(t, &github.RateLimitError{RetryAfter: time.Hour}, true)
+	if !errors.Is(err, rabbit.ErrRetryLater) {
+		t.Fatalf("err = %v, want ErrRetryLater", err)
+	}
+	if st.state == entity.ScanFailed {
+		t.Error("a rate-limited job was failed")
+	}
+}
+
+func TestDiscoverMissingTargetFailsTheJob(t *testing.T) {
+	st, err := orgFailure(t, github.ErrNotFound, false)
+	if !errors.Is(err, rabbit.ErrDrop) {
+		t.Fatalf("err = %v, want ErrDrop", err)
+	}
+	if st.state != entity.ScanFailed {
+		t.Errorf("state = %s, want failed: a dropped discovery leaves nothing to finish the job", st.state)
+	}
+}
+
+func TestDiscoverFailsTheJobOnlyOnTheFinalAttempt(t *testing.T) {
+	boom := errors.New("connection reset")
+
+	if st, _ := orgFailure(t, boom, false); st.state == entity.ScanFailed {
+		t.Error("job failed on an attempt that will be retried")
+	}
+	if st, _ := orgFailure(t, boom, true); st.state != entity.ScanFailed {
+		t.Errorf("state after the final attempt = %s, want failed", st.state)
 	}
 }

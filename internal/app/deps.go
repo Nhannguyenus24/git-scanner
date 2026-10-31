@@ -59,22 +59,28 @@ func connect(ctx context.Context, cfg config.Common, log *slog.Logger, needs Nee
 		return nil, err
 	}
 
+	backoff := lifecycle.StartupBackoff(cfg.ConnectTimeout)
+
 	if needs.Postgres {
-		db, err := store.Open(ctx, cfg.PostgresURL)
+		err := lifecycle.Retry(ctx, log, "postgres", backoff, func(ctx context.Context) (err error) {
+			d.DB, err = store.Open(ctx, cfg.PostgresURL)
+			return err
+		})
 		if err != nil {
 			return fail(err)
 		}
-		d.DB = db
-		d.Health.AddCheck("postgres", db.Ping)
+		d.Health.AddCheck("postgres", d.DB.Ping)
 	}
 
 	if needs.Rabbit {
-		rc, err := rabbit.Connect(ctx, cfg.RabbitURL, log)
+		err := lifecycle.Retry(ctx, log, "rabbit", backoff, func(ctx context.Context) (err error) {
+			d.Rabbit, err = rabbit.Connect(ctx, cfg.RabbitURL, log)
+			return err
+		})
 		if err != nil {
 			return fail(err)
 		}
-		d.Rabbit = rc
-		d.Health.AddCheck("rabbit", rc.Healthy)
+		d.Health.AddCheck("rabbit", d.Rabbit.Healthy)
 	}
 
 	return d, nil
