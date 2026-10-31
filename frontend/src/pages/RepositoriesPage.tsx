@@ -15,7 +15,10 @@ import TextField from '@mui/material/TextField'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import Switch from '@mui/material/Switch'
 import Tooltip from '@mui/material/Tooltip'
+import IconButton from '@mui/material/IconButton'
 import MailOutlineIcon from '@mui/icons-material/MailOutline'
+import ShareIcon from '@mui/icons-material/IosShare'
+import ShareDialog from '../components/ShareDialog'
 import SearchIcon from '@mui/icons-material/Search'
 import { PageHeader } from '../components/Layout'
 import { Empty, LoadError, TableSkeleton } from '../components/States'
@@ -98,6 +101,7 @@ export default function RepositoriesPage() {
   const [q, setQ] = useState('')
   const [exposedOnly, setExposedOnly] = useState(true)
   const [sort, setSort] = useState<Sort>('risk')
+  const [sharing, setSharing] = useState<Repository>()
 
   const repos = useMemo(() => {
     const list = (res.data?.repositories ?? []).filter((r: Repository) =>
@@ -185,7 +189,14 @@ export default function RepositoriesPage() {
                             </span>
                           </Tooltip>
                         ) : (
-                          <Box sx={{ fontSize: 12, color: 'text.secondary' }}>{t(risk.action)}</Box>
+                          <Box component="span" sx={{ fontSize: 12, color: 'text.secondary' }}>{t(risk.action)}</Box>
+                        )}
+                        {r.findings > 0 && (
+                          <Tooltip title={t('share.action')}>
+                            <IconButton size="small" aria-label={t('share.actionFor', { repo: `${r.owner}/${r.name}` })} onClick={() => setSharing(r)}>
+                              <ShareIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         )}
                       </TableCell>
                     </TableRow>
@@ -196,6 +207,7 @@ export default function RepositoriesPage() {
           </TableContainer>
         )}
       </Card>
+      {sharing && <ShareDialog repo={sharing} onClose={() => setSharing(undefined)} />}
     </>
   )
 }

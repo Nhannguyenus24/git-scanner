@@ -76,6 +76,7 @@ type Server struct {
 	sealer       *secrets.Sealer // optional: opens credentials kept for unmask-listed owners
 	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
 	hub       ProgressHub         // optional: live progress streams
+	shares    ShareStore          // optional: share links and the reports they open
 	progress  *progress.Publisher // optional: announces api-side steps such as a cancel
 	log       *slog.Logger
 }
@@ -108,6 +109,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/scans/{id}", s.handleDeleteScan)
 	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)
 	mux.HandleFunc("GET /v1/scans/{id}/events", s.handleScanEvents)
+	s.shareRoutes(mux)
 	mux.HandleFunc("POST /v1/scans/{id}/pause", s.handlePause)
 	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)
