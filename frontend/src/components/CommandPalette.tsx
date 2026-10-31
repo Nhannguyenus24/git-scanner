@@ -10,6 +10,9 @@ import { usePrefs } from '../store/preferences'
 import { useColorMode } from '../store/mode'
 import { LANGUAGES, useT } from '../i18n'
 import { THEME_PRESETS } from '../theme'
+import { useResource } from '../hooks/useResource'
+import { useSettings } from '../store/settings'
+import { useToast } from '../store/toast'
 
 // One box for everything the dashboard can do from the keyboard.
 //
@@ -22,6 +25,12 @@ import { THEME_PRESETS } from '../theme'
 // which is a filter field. Nothing typed here is stored: there is no history,
 // deliberately, because a search box that remembers is a place a pasted
 // credential could come to rest.
+//
+// Asking Claude is the one command that sends what was typed off this machine,
+// so it is offered only when the server has the assistant configured, it is
+// labelled as going to Claude rather than folded into search, and the server
+// refuses a question that looks like it carries a credential before calling
+// out. Its answer only ever becomes filter fields in the URL.
 
 export interface Command {
   id:      string
@@ -48,6 +57,10 @@ export default function CommandPalette({ open, onClose, onNewScan, onExport }: P
   const { mode, toggle } = useColorMode()
   const [q, setQ] = useState('')
   const [cursor, setCursor] = useState(0)
+  const { api } = useSettings()
+  const notify = useToast()
+  const assist = useResource(() => api.assistStatus(), [api])
+  const canAsk = !!assist.data?.enabled && !assist.error
   const listRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (open) { setQ(''); setCursor(0) } }, [open])
@@ -105,14 +118,30 @@ export default function CommandPalette({ open, onClose, onNewScan, onExport }: P
       ? commands.filter(c => `${c.label} ${c.group}`.toLowerCase().includes(needle))
       : commands
     if (!needle) return hits
+    const question = q.trim()
+    const ask: Command[] = canAsk && question.includes(' ') ? [{
+      id: 'ask', group: t('cmd.g.actions'), label: t('cmd.ask', { q: question }), hint: t('cmd.askHint'),
+      run: async () => {
+        notify(t('cmd.asking'), 'info')
+        try {
+          const f = await api.assistFilter(question)
+          const params: Record<string, string> = { status: f.status, severity: f.severity, provider: f.provider, exposure: f.exposure, sort: f.sort, q: f.q }
+          navigate(href('findings', undefined, params))
+          notify(f.explanation ? t('cmd.askDone', { how: f.explanation }) : t('cmd.askDoneBare'))
+        } catch (e) {
+          notify(e instanceof Error ? e.message : String(e), 'error')
+        }
+      },
+    }] : []
     return [
+      ...ask,
       {
-        id: 'search', group: t('cmd.g.actions'), label: t('cmd.search', { q: q.trim() }),
-        run: () => navigate(href('findings', undefined, { q: q.trim() })),
+        id: 'search', group: t('cmd.g.actions'), label: t('cmd.search', { q: question }),
+        run: () => navigate(href('findings', undefined, { q: question })),
       } as Command,
       ...hits,
     ]
-  }, [q, commands, t])
+  }, [q, commands, t, canAsk, api, notify])
 
   useEffect(() => { setCursor(c => Math.min(c, Math.max(0, matches.length - 1))) }, [matches.length])
 

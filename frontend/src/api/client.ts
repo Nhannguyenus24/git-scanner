@@ -1,5 +1,5 @@
 import type {
-  SharedKey, LeakDay,
+  SharedKey, LeakDay, AssistFilter,
   AppSettings, Analytics, ShareDetail, ShareLink, SharedReport, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
@@ -53,6 +53,8 @@ export function createClient(rawBase: string) {
     setStatus:    (id: string, status: FindingStatus)    => r<unknown>('PATCH', `/v1/findings/${id}`, { status }),
     repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),
     candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
+    assistStatus: ()                                     => r<{ enabled: boolean; model: string }>('GET', '/v1/assist'),
+    assistFilter: (question: string)                     => r<AssistFilter>('POST', '/v1/assist/filter', { question }),
     sharedKeys:   (minRepos = 2)                         => r<{ keys: SharedKey[]; total: number }>('GET', `/v1/keys/shared?min_repos=${minRepos}`),
     providers:    ()                                     => r<{ providers: Provider[] }>('GET', '/v1/providers'),
     disclose:     (repoId: string)                       => r<{ recipient: string; findings: number }>('POST', `/v1/repositories/${repoId}/disclose`, {}),

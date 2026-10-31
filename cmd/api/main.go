@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/mservice/gitscanner/internal/api"
+	"github.com/mservice/gitscanner/internal/assist"
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
@@ -73,6 +74,11 @@ var serveSpec = app.Spec{
 		srv.WithProgress(hub, progress.NewPublisher(d.DB, d.Log))
 		srv.WithShares(d.DB)
 		srv.WithInsights(d.DB)
+		// Plain-words filtering is offered only with a Claude API key; without
+		// one the route is absent and the dashboard hides the command.
+		if key := config.GetOr("ANTHROPIC_API_KEY", ""); key != "" {
+			srv.WithAssist(assist.NewClaude(key), assist.Model)
+		}
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},

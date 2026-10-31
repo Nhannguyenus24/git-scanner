@@ -678,4 +678,11 @@ export const DICT_UI: Record<string, Entry> = {
   'alerts.scanBody':    e('{n} new findings', '{n} phát hiện mới', '{n} nuovi rilevamenti', '{n} 条新发现项', '{n} hallazgos nuevos', '{n} neue Funde', '{n} nouveaux résultats'),
   'alerts.live':        e('{n} more keys confirmed live', 'Thêm {n} key được xác nhận còn sống', 'Altre {n} chiavi confermate attive', '又有 {n} 个密钥确认有效', '{n} claves más confirmadas activas', '{n} weitere Schlüssel als aktiv bestätigt', '{n} clés de plus confirmées actives'),
   'alerts.liveBody':    e('They still work — rotate them first.', 'Chúng vẫn dùng được — hãy xoay khóa trước tiên.', 'Funzionano ancora: ruotale per prime.', '它们仍然可用——请优先轮换。', 'Siguen funcionando: rótalas primero.', 'Sie funktionieren noch — zuerst rotieren.', 'Elles fonctionnent encore : renouvelez-les en premier.'),
+
+  // ---- ask in plain words -------------------------------------------------
+  'cmd.ask':          e('Ask Claude: “{q}”', 'Hỏi Claude: “{q}”', 'Chiedi a Claude: “{q}”', '问 Claude：“{q}”', 'Preguntar a Claude: “{q}”', 'Claude fragen: „{q}“', 'Demander à Claude : « {q} »'),
+  'cmd.askHint':      e('sent to Claude, becomes a filter', 'gửi tới Claude, thành bộ lọc', 'inviato a Claude, diventa un filtro', '发送给 Claude，转为筛选条件', 'se envía a Claude y se convierte en filtro', 'geht an Claude, wird zum Filter', 'envoyé à Claude, devient un filtre'),
+  'cmd.asking':       e('Asking Claude…', 'Đang hỏi Claude…', 'Chiedo a Claude…', '正在询问 Claude…', 'Preguntando a Claude…', 'Claude wird gefragt…', 'Question envoyée à Claude…'),
+  'cmd.askDone':      e('Read as: {how}', 'Hiểu là: {how}', 'Interpretato come: {how}', '理解为：{how}', 'Interpretado como: {how}', 'Verstanden als: {how}', 'Compris comme : {how}'),
+  'cmd.askDoneBare':  e('Filter applied', 'Đã áp dụng bộ lọc', 'Filtro applicato', '已应用筛选', 'Filtro aplicado', 'Filter angewendet', 'Filtre appliqué'),
 }

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/mservice/gitscanner/internal/assist"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/notify"
 	"github.com/mservice/gitscanner/internal/progress"
@@ -78,6 +79,8 @@ type Server struct {
 	hub       ProgressHub         // optional: live progress streams
 	shares    ShareStore          // optional: share links and the reports they open
 	insights  Insights            // optional: cross-repository views
+	assist    assist.Translator   // optional: plain-words questions to a findings filter
+	assistModel string
 	progress  *progress.Publisher // optional: announces api-side steps such as a cancel
 	log       *slog.Logger
 }
@@ -122,6 +125,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/settings/unmask-owners/{owner}", s.handleRemoveUnmaskOwner)
 	s.catalogRoutes(mux)
 	s.insightRoutes(mux)
+	s.assistRoutes(mux)
 	s.noticeRoutes(mux)
 	return mux
 }

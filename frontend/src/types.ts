@@ -279,3 +279,9 @@ export interface SharedKeyRepo {
 
 /** Findings committed on one UTC day (GET /v1/analytics/calendar). */
 export interface LeakDay { day: string; findings: number; critical: number }
+
+/** A plain-words question read into findings filter fields (POST /v1/assist/filter). */
+export interface AssistFilter {
+  severity: string; provider: string; status: string; exposure: string; sort: string; q: string
+  explanation: string
+}

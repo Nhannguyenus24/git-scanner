@@ -119,6 +119,8 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/assist'         ? { enabled: true, model: 'claude-opus-5-5' }
+      : path === '/v1/assist/filter'  ? { severity: 'critical', provider: 'aws', status: 'open', exposure: 'head', sort: '', q: 'acme', explanation: 'critical AWS keys at HEAD in acme' }
       : path === '/v1/analytics/calendar' ? { days: [{ day: '2026-01-02', findings: 3, critical: 1 }] }
       : path === '/v1/keys/shared'    ? { keys: [SHARED_KEY], total: 1 }
       : path === '/v1/shared/tok-valid' ? SHARED
@@ -261,6 +263,21 @@ describe('command palette', () => {
     await act(async () => { fireEvent.change(box, { target: { value: 'midnight' } }) })
     const list = screen.getByRole('listbox')
     expect(within(list).getAllByText(/Midnight/i).length).toBeGreaterThan(0)
+  })
+
+  it('asks Claude for a sentence and opens the filter it returns', async () => {
+    await open('#/overview')
+    await act(async () => { fireEvent.keyDown(window, { key: 'k', ctrlKey: true }) })
+    const box = screen.getByPlaceholderText(/search pages/i)
+    await act(async () => { fireEvent.change(box, { target: { value: 'critical aws keys at head in acme' } }) })
+    const ask = within(screen.getByRole('listbox')).getByText(/^Ask Claude:/)
+    await act(async () => { fireEvent.click(ask) })
+    await waitFor(() => expect(window.location.hash).toMatch(/#\/findings\?/))
+    const params = new URLSearchParams(window.location.hash.split('?')[1])
+    expect(params.get('severity')).toBe('critical')
+    expect(params.get('provider')).toBe('aws')
+    expect(params.get('exposure')).toBe('head')
+    expect(params.get('q')).toBe('acme')
   })
 
   it('applies a theme preset chosen from it', async () => {
