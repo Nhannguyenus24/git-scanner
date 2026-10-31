@@ -189,6 +189,7 @@ describe('every page mounts', () => {
     ['#/notifications', 'Notifications'],
     ['#/providers', 'Providers'],
     ['#/spread', 'Key spread'],
+    ['#/history/r1', 'time machine'],
     ['#/settings', 'Settings'],
     ['#/help', 'Help'],
   ]
@@ -229,6 +230,17 @@ describe('key spread', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /sk_l\*\*\*\*9c1d/ })) })
     expect(screen.getByRole('link', { name: 'globex/api' }).getAttribute('href')).toContain('finding=f9')
     expect(screen.getByText(/One rotation fixes all 2/)).toBeTruthy()
+  })
+})
+
+describe('time machine', () => {
+  it('starts at today and steps back before the first leak', async () => {
+    await open('#/history/r1')
+    expect(screen.getByText(/1 credentials had been committed/)).toBeTruthy()
+    expect(screen.getByText(/all 1 can still be cloned/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /previous commit/i })) })
+    expect(screen.getByText(/Nothing has leaked yet/)).toBeTruthy()
+    expect(screen.getByRole('slider', { name: /point in the history/i }).getAttribute('aria-valuetext')).toMatch(/before the first leak/i)
   })
 })
 

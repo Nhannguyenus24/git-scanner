@@ -14,6 +14,7 @@ import HelpPage from './pages/HelpPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
 import ProvidersPage from './pages/ProvidersPage'
+import RepoHistoryPage from './pages/RepoHistoryPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
@@ -79,6 +80,7 @@ function Dashboard({ route }: { route: Route }) {
                             ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
     case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
+    case 'history':      body = route.id ? <RepoHistoryPage key={route.id} id={route.id} /> : <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
     case 'notifications': body = <NotificationsPage />; break
     case 'settings':     body = <SettingsPage onRestartTour={() => setTourOpen(true)} />; break
@@ -89,7 +91,7 @@ function Dashboard({ route }: { route: Route }) {
   }
 
   return (
-    <Layout page={page} onNewScan={open} onCommands={() => setPaletteOpen(true)}
+    <Layout page={page === 'history' ? 'repositories' : page} onNewScan={open} onCommands={() => setPaletteOpen(true)}
       badges={{ findings: ov.data?.open_findings ?? 0, scans: ov.data?.active_scans ?? 0, candidates: ov.data?.candidates ?? 0 }}>
       {body}
       <NewScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onSubmit={startScan} />
