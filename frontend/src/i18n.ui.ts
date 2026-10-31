@@ -649,4 +649,20 @@ export const DICT_UI: Record<string, Entry> = {
   'calendar.less':     e('fewer', 'ít', 'meno', '少', 'menos', 'weniger', 'moins'),
   'calendar.more':     e('more', 'nhiều', 'più', '多', 'más', 'mehr', 'plus'),
   'calendar.critical': e('a critical key', 'có key nghiêm trọng', 'una chiave critica', '含严重密钥', 'una clave crítica', 'ein kritischer Schlüssel', 'une clé critique'),
+
+  // ---- live pipeline ------------------------------------------------------
+  'flow.title':      e('Pipeline', 'Dây chuyền', 'Pipeline', '流水线', 'Canalización', 'Pipeline', 'Chaîne de traitement'),
+  'flow.caption':    e('One dot per repository, in the step its worker last reported. Orange: candidate matches so far; red: an attempt failed.', 'Mỗi chấm là một kho, nằm ở bước worker báo cáo gần nhất. Cam: đã có kết quả khớp ứng viên; đỏ: một lần thử bị lỗi.', 'Un punto per repository, nel passo segnalato per ultimo dal worker. Arancione: corrispondenze candidate finora; rosso: un tentativo fallito.', '每个点代表一个仓库，位于其 worker 最近报告的步骤。橙色：已有候选匹配；红色：某次尝试失败。', 'Un punto por repositorio, en el paso que su worker informó por última vez. Naranja: coincidencias candidatas; rojo: un intento falló.', 'Ein Punkt pro Repository, im zuletzt gemeldeten Schritt seines Workers. Orange: bisher Kandidatentreffer; rot: ein Versuch ist fehlgeschlagen.', 'Un point par dépôt, à l’étape signalée en dernier par son worker. Orange : correspondances candidates ; rouge : une tentative a échoué.'),
+  'flow.label':      e('Pipeline: {active} repositories in progress, {done} finished, {found} new findings', 'Dây chuyền: {active} kho đang xử lý, {done} kho xong, {found} phát hiện mới', 'Pipeline: {active} repository in corso, {done} completati, {found} nuovi rilevamenti', '流水线：{active} 个仓库处理中，{done} 个已完成，{found} 条新发现项', 'Canalización: {active} repositorios en curso, {done} terminados, {found} hallazgos nuevos', 'Pipeline: {active} Repositorys in Arbeit, {done} fertig, {found} neue Funde', 'Chaîne : {active} dépôts en cours, {done} terminés, {found} nouveaux résultats'),
+  'flow.more':       e('{n} here', '{n} ở đây', '{n} qui', '此处 {n} 个', '{n} aquí', '{n} hier', '{n} ici'),
+  'flow.done':       e('finished', 'xong', 'completati', '已完成', 'terminados', 'fertig', 'terminés'),
+  'flow.doneCount':  e('{n} · {f} new findings', '{n} · {f} phát hiện mới', '{n} · {f} nuovi rilevamenti', '{n} · {f} 条新发现项', '{n} · {f} hallazgos nuevos', '{n} · {f} neue Funde', '{n} · {f} nouveaux résultats'),
+  'flow.status.done':    e('done', 'xong', 'completato', '完成', 'terminado', 'fertig', 'terminé'),
+  'flow.status.failed':  e('attempt failed, will retry', 'lần thử lỗi, sẽ thử lại', 'tentativo fallito, verrà ripetuto', '本次尝试失败，将重试', 'intento fallido, se reintentará', 'Versuch fehlgeschlagen, wird wiederholt', 'tentative échouée, nouvel essai prévu'),
+  'flow.status.skipped': e('skipped after its last attempt', 'bị bỏ qua sau lần thử cuối', 'saltato dopo l’ultimo tentativo', '最后一次尝试后被跳过', 'omitido tras su último intento', 'nach dem letzten Versuch übersprungen', 'ignoré après sa dernière tentative'),
+  'flow.status.start':    e('picked up', 'đã nhận', 'preso in carico', '已领取', 'recogido', 'übernommen', 'pris en charge'),
+  'flow.status.progress': e('in progress', 'đang xử lý', 'in corso', '处理中', 'en curso', 'läuft', 'en cours'),
+  'flow.status.deferred': e('deferred', 'tạm hoãn', 'rinviato', '已推迟', 'aplazado', 'zurückgestellt', 'reporté'),
+  'flow.status.paused':   e('paused', 'tạm dừng', 'in pausa', '已暂停', 'en pausa', 'pausiert', 'en pause'),
+  'flow.status.cancelled': e('cancelled', 'đã hủy', 'annullato', '已取消', 'cancelado', 'abgebrochen', 'annulé'),
 }

@@ -453,11 +453,13 @@ describe('scan detail', () => {
     expect(screen.getByText('deploy/values.yaml')).toBeTruthy()
     expect(screen.getByText(/complete · 4 repositories queued/)).toBeTruthy()
     expect(screen.getByText(/globex\/billing: cloned in 0.9s/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Pipeline: 1 repositories in progress, 0 finished/ })).toBeTruthy()
 
     await act(async () => {
       es.emit({ seq: 5, job_id: 'j2', repo_id: 'r9', stage: 'repo', status: 'done', findings: 2, blobs: 4096, elapsed_ms: 5000, at })
     })
     expect(screen.getByText(/2 new findings · 4,096 blobs/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Pipeline: 0 repositories in progress, 1 finished, 2 new findings/ })).toBeTruthy()
   })
 
   it('does not open a stream for a finished scan', async () => {

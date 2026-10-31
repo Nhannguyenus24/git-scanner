@@ -25,6 +25,7 @@ import { Empty, LoadError, Loading, TableSkeleton } from '../components/States'
 import { duration, num, timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
 import { useScanEvents } from '../hooks/useScanEvents'
+import PipelineFlow from '../components/PipelineFlow'
 import { stepCounts } from '../live'
 import { href, navigate } from '../hooks/useRoute'
 import { useTriage } from '../hooks/useTriage'
@@ -172,6 +173,14 @@ export default function ScanDetailPage({ id }: { id: string }) {
           </Card>
         </Grid>
       </Grid>
+
+      {Object.keys(live.repos).length > 0 && (
+        <Card sx={{ p: 2, mb: 2 }}>
+          <Typography sx={{ fontWeight: 700 }}>{t('flow.title')}</Typography>
+          <Typography sx={{ fontSize: 12.5, color: 'text.secondary', mb: 1.5 }}>{t('flow.caption')}</Typography>
+          <PipelineFlow live={live} />
+        </Card>
+      )}
 
       {(active || live.log.length > 0) && <LiveActivity live={live} status={liveStatus} />}
 
