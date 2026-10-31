@@ -3,6 +3,7 @@ package scan_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -250,4 +251,88 @@ func TestEngineDoesNotProbeByDefault(t *testing.T) {
 	if _, probed := f[0].Metadata["probe_status"]; probed {
 		t.Errorf("probed with no prober configured: %+v", f[0].Metadata)
 	}
+}
+
+// progressSink records the steps the engine reports.
+type progressSink struct {
+	collectSink
+	steps []scan.Progress
+}
+
+func (s *progressSink) ScanProgress(_ context.Context, p scan.Progress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = append(s.steps, p)
+}
+
+// The live view shows each stage starting and ending in the order the engine
+// runs them, with the walk's counts on its end — and never the secret.
+func TestEngineReportsEachStage(t *testing.T) {
+	key := "sk_live" + "_0123456789abcdefghijklmn"
+	repo := &fakeRepo{
+		blobs: []scan.Blob{
+			{OID: "oid1", Path: ".env", Data: []byte("STRIPE=" + key)},
+			{OID: "oid2", Path: "README.md", Data: []byte("nothing here")},
+		},
+		intro: map[string]scan.Commit{"oid1": {SHA: "c1"}},
+	}
+	sink := &progressSink{}
+	if _, err := newEngine(t, repo).Scan(context.Background(), "job", "repo", "x", sink); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+	for _, p := range sink.steps {
+		got = append(got, p.Stage+":"+p.Status)
+		if strings.Contains(p.Path, key) || (p.Err != nil && strings.Contains(p.Err.Error(), key)) {
+			t.Errorf("step %s/%s carries the secret", p.Stage, p.Status)
+		}
+	}
+	want := []string{
+		"clone:start", "clone:done", "walk:start", "walk:done",
+		"attribute:start", "attribute:done", "store:start", "store:done",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("steps = %v, want %v", got, want)
+	}
+	for _, p := range sink.steps {
+		if p.Stage == "walk" && p.Status == "done" && (p.Blobs != 2 || p.Matches != 1) {
+			t.Errorf("walk done: blobs %d matches %d, want 2 and 1", p.Blobs, p.Matches)
+		}
+	}
+}
+
+// A repository with nothing found reports only the clone and the walk.
+func TestEngineReportsNoEmptyStages(t *testing.T) {
+	repo := &fakeRepo{blobs: []scan.Blob{{OID: "o", Path: "README.md", Data: []byte("nothing here")}}}
+	sink := &progressSink{}
+	if _, err := newEngine(t, repo).Scan(context.Background(), "job", "repo", "x", sink); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range sink.steps {
+		got = append(got, p.Stage+":"+p.Status)
+	}
+	if strings.Join(got, " ") != "clone:start clone:done walk:start walk:done" {
+		t.Errorf("steps = %v", got)
+	}
+}
+
+// A failed clone ends with that stage marked failed.
+func TestEngineReportsCloneFailure(t *testing.T) {
+	h, _ := secrets.NewHasher([]byte("0123456789abcdef0123456789abcdef"))
+	eng := scan.NewEngine(failCloner{}, scan.NewDetector(scan.BootstrapRuleset()), h)
+	sink := &progressSink{}
+	if _, err := eng.Scan(context.Background(), "job", "repo", "x", sink); err == nil {
+		t.Fatal("want the clone error")
+	}
+	if len(sink.steps) != 2 || sink.steps[1].Stage != "clone" || sink.steps[1].Status != "failed" || sink.steps[1].Err == nil {
+		t.Errorf("steps = %+v, want clone start then clone failed", sink.steps)
+	}
+}
+
+type failCloner struct{}
+
+func (failCloner) Clone(context.Context, string) (scan.Repo, error) {
+	return nil, errors.New("clone: repository not found")
 }

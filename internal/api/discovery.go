@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 )
@@ -208,5 +209,6 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("scan cancelled", "job", id.String())
+	s.progress.Publish(r.Context(), progress.Event{JobID: id.String(), Stage: progress.StageJob, Status: progress.StatusCancelled})
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id.String(), "state": "cancelled"})
 }

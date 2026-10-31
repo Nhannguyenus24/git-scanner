@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/libs/entity"
 	"github.com/mservice/gitscanner/libs/id"
@@ -54,6 +55,36 @@ type SecretKeeper interface {
 	KeepSecret(ctx context.Context, f entity.Finding, secret string) error
 }
 
+// Progress is one step of a scan as the engine sees it. Stage and Status take
+// the progress package's values; the counts are cumulative for the repository.
+type Progress struct {
+	Stage    string
+	Status   string
+	Blobs    int
+	Matches  int
+	Findings int
+	Live     int
+	Path     string
+	Elapsed  time.Duration
+	Err      error
+}
+
+// ProgressReporter is implemented by a sink that wants to show the scan as it
+// runs. The engine reports each stage's start and end and, during the walk, at
+// most one tick per walkTick. A reporter must not block: it is called on the
+// scan's own goroutine.
+type ProgressReporter interface {
+	ScanProgress(ctx context.Context, p Progress)
+}
+
+// walkTick spaces the walk's progress reports. A repository has up to millions
+// of blobs; one report each would cost more than reading them.
+const walkTick = 750 * time.Millisecond
+
+type noProgress struct{}
+
+func (noProgress) ScanProgress(context.Context, Progress) {}
+
 // Result summarises one repository scan.
 type Result struct {
 	BlobsScanned  int
@@ -77,7 +108,28 @@ type Result struct {
 // The clone is always removed, on every exit path, so a failed or cancelled
 // scan cannot leak a repository onto the scratch disk.
 func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink Sink) (Result, error) {
+	var report ProgressReporter = noProgress{}
+	if r, ok := sink.(ProgressReporter); ok {
+		report = r
+	}
+	stage := func(name string) func(p Progress) {
+		start := time.Now()
+		report.ScanProgress(ctx, Progress{Stage: name, Status: progress.StatusStart})
+		return func(p Progress) {
+			p.Stage, p.Elapsed = name, time.Since(start)
+			if p.Status == "" {
+				p.Status = progress.StatusDone
+				if p.Err != nil {
+					p.Status = progress.StatusFailed
+				}
+			}
+			report.ScanProgress(ctx, p)
+		}
+	}
+
+	cloned := stage(progress.StageClone)
 	repo, err := e.cloner.Clone(ctx, cloneURL)
+	cloned(Progress{Err: err})
 	if err != nil {
 		return Result{}, err
 	}
@@ -109,6 +161,8 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		return out
 	}
 
+	walked := stage(progress.StageWalk)
+	lastTick := time.Now()
 	err = repo.Blobs(ctx, func(b Blob) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -120,15 +174,32 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 		for _, m := range e.det.Detect(b.Path, b.Data) {
 			pending = append(pending, held{f: e.finding(jobID, repoID, b, m, reachable), secret: m.Secret, probeURL: m.ProbeURL})
 		}
+		if now := time.Now(); now.Sub(lastTick) >= walkTick {
+			lastTick = now
+			report.ScanProgress(ctx, Progress{
+				Stage: progress.StageWalk, Status: progress.StatusProgress,
+				Blobs: res.BlobsScanned, Matches: len(pending), Path: b.Path,
+			})
+		}
 		return nil
 	})
+	walked(Progress{Blobs: res.BlobsScanned, Matches: len(pending), Err: err})
 	if err != nil {
 		return res, err
 	}
 
 	// Attribution works on the finding rows; it does not need the secret.
 	attrs := findings()
+	var attributed func(Progress)
+	if len(attrs) > 0 {
+		attributed = stage(progress.StageAttribute)
+	}
 	res.AttributionErr = attribute(ctx, repo, attrs)
+	if attributed != nil {
+		// A failed attribution does not fail the scan, so it is reported done
+		// with the error alongside rather than as a failed stage.
+		attributed(Progress{Status: progress.StatusDone, Matches: len(attrs), Err: res.AttributionErr})
+	}
 	for i := range pending {
 		pending[i].f = attrs[i]
 	}
@@ -138,7 +209,8 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 
 	// Live probing, if enabled, is the last thing done with the secret in scope;
 	// only its non-secret result is written back into the finding.
-	if e.prober != nil {
+	if e.prober != nil && len(pending) > 0 {
+		probed := stage(progress.StageProbe)
 		for i := range pending {
 			if pending[i].f.ProviderSlug == "" {
 				continue // the generic pass names no provider to probe against
@@ -151,12 +223,21 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 				res.ProbesLive++
 			}
 		}
+		probed(Progress{Matches: len(pending), Live: res.ProbesLive})
 	}
 
 	keeper, keep := sink.(SecretKeeper)
 	keep = keep && keeper.KeepsSecrets()
+	// Like attribution, storing is a stage only when there is something to
+	// store; most repositories have nothing, and two empty steps each would
+	// double the events a bulk scan sends for no information.
+	stored := func(Progress) {}
+	if len(pending) > 0 {
+		stored = stage(progress.StageStore)
+	}
 	for _, pf := range pending {
 		if err := sink.Emit(ctx, pf.f); err != nil {
+			stored(Progress{Matches: len(pending), Err: err})
 			return res, fmt.Errorf("scan: emit finding: %w", err)
 		}
 		res.FindingsCount++
@@ -166,6 +247,8 @@ func (e *Engine) Scan(ctx context.Context, jobID, repoID, cloneURL string, sink 
 			}
 		}
 	}
+
+	stored(Progress{Matches: len(pending)})
 
 	res.AppType = app.result()
 	return res, nil

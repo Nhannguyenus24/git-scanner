@@ -36,6 +36,8 @@ export function createClient(rawBase: string) {
     analytics:    ()                                     => r<Analytics>('GET', '/v1/analytics'),
     listScans:    (limit = 100)                          => r<{ scans: ScanSummary[] }>('GET', `/v1/scans?limit=${limit}`),
     getScan:      (id: string)                           => r<ScanJob>('GET', `/v1/scans/${id}`),
+    /** The Server-Sent Events stream of a scan's live progress. */
+    scanEventsUrl: (id: string)                          => `${base}/v1/scans/${id}/events`,
     scanRepo:     (url: string)                          => r<ScanJob>('POST', '/v1/scans/repo', { url }),
     scanUser:     (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/user', { name, include_forks }),
     scanOrg:      (name: string, include_forks: boolean) => r<ScanJob>('POST', '/v1/scans/org',  { name, include_forks }),

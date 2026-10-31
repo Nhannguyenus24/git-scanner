@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/internal/store"
@@ -39,6 +40,16 @@ type Worker struct {
 	disp   Enqueuer
 	log    *slog.Logger
 	sealer *secrets.Sealer // nil unless SECRET_SEAL_KEY is configured
+
+	// progress shows each repository's current step on the dashboard. Nil
+	// publishes nothing, and nothing here waits on it.
+	progress *progress.Publisher
+}
+
+// WithProgress publishes live progress for every scan this worker runs.
+func (w *Worker) WithProgress(p *progress.Publisher) *Worker {
+	w.progress = p
+	return w
 }
 
 // WithSealer lets the worker keep, sealed, the credentials found in
@@ -64,11 +75,20 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 		// dead-letter queue rather than spin.
 		return fmt.Errorf("%w: unmarshal scan task: %v", rabbit.ErrDrop, err)
 	}
-	err := w.scan(ctx, &task)
+	err := w.scan(ctx, &task, d.Attempt)
 	if err != nil && d.Final {
 		w.giveUp(ctx, &task, d.Attempt, err)
 	}
 	return err
+}
+
+// event builds a progress event for task's repository. Attempt is shown from 1:
+// the delivery counts prior attempts, a person counts this one.
+func event(task *gpb.ScanTask, repo string, attempt int, stage, status string) progress.Event {
+	return progress.Event{
+		JobID: task.JobId, RepoID: task.RepositoryId, Repo: repo,
+		Stage: stage, Status: status, Attempt: attempt + 1,
+	}
 }
 
 // giveUp counts a repository that will never be scanned as done, so its job can
@@ -84,18 +104,34 @@ func (w *Worker) giveUp(ctx context.Context, task *gpb.ScanTask, attempt int, ca
 	jobID := entity.ID(task.JobId)
 	w.log.Error("repository skipped after final attempt",
 		"job", task.JobId, "repo_id", task.RepositoryId, "attempt", attempt, "error", cause)
+	ev := event(task, "", attempt, progress.StageRepo, progress.StatusSkipped)
+	ev.Error = cause.Error()
+	w.progress.Publish(ctx, ev)
 	if err := w.db.RecordScanResult(ctx, jobID, 0, 0); err != nil {
 		w.log.Error("could not count skipped repository", "job", task.JobId, "error", err)
 		return
 	}
-	if _, err := w.db.CompleteIfAllScanned(ctx, jobID); err != nil {
-		w.log.Error("could not complete job after skip", "job", task.JobId, "error", err)
-	}
+	w.completeIfAllScanned(ctx, jobID)
 }
 
-func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
+// completeIfAllScanned ends the job when its last repository is counted and
+// says so on the live view.
+func (w *Worker) completeIfAllScanned(ctx context.Context, jobID entity.ID) error {
+	done, err := w.db.CompleteIfAllScanned(ctx, jobID)
+	if err != nil {
+		w.log.Error("could not complete job", "job", jobID.String(), "error", err)
+		return err
+	}
+	if done {
+		w.progress.Publish(ctx, progress.Event{JobID: jobID.String(), Stage: progress.StageJob, Status: progress.StatusDone})
+	}
+	return nil
+}
+
+func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask, attempt int) error {
 	jobID := entity.ID(task.JobId)
 	repoID := entity.ID(task.RepositoryId)
+	started := time.Now()
 
 	// Tasks for a job that has ended are acked without cloning. The queue is
 	// shared and first-in first-out, so a cancelled job's backlog otherwise
@@ -116,13 +152,15 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	}
 	meta := repoLogFields(task, repo, repoErr)
 	w.log.Info("scan started", append([]any{"job", task.JobId}, meta...)...)
+	name := repoName(repo, repoErr)
+	w.progress.Publish(ctx, event(task, name, attempt, progress.StageRepo, progress.StatusStart))
 
 	// A single-repo job starts running on its first (only) task. For a bulk job
 	// the discovery worker has already moved it to running, and SetScanState is
 	// a no-op when the state is unchanged.
 	_ = w.db.SetScanState(ctx, jobID, entity.ScanRunning, "")
 
-	sink := &storeSink{w: w, task: task}
+	sink := &storeSink{w: w, task: task, repo: name, attempt: attempt}
 	if w.sealer != nil && repoErr == nil {
 		keep, err := w.db.IsUnmaskOwner(ctx, repo.Owner)
 		if err != nil {
@@ -133,6 +171,9 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	res, err := w.engine.Scan(ctx, task.JobId, task.RepositoryId, task.CloneUrl, sink)
 	if err != nil {
 		w.log.Error("scan failed", append([]any{"job", task.JobId, "error", err}, meta...)...)
+		ev := event(task, name, attempt, progress.StageRepo, progress.StatusFailed)
+		ev.Error, ev.ElapsedMs = err.Error(), time.Since(started).Milliseconds()
+		w.progress.Publish(ctx, ev)
 		return fmt.Errorf("scan repository %s: %w", task.RepositoryId, err)
 	}
 
@@ -159,14 +200,15 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 	if err := w.db.RecordScanResult(ctx, jobID, res.BlobsScanned, sink.inserted); err != nil {
 		return err
 	}
+	ev := event(task, name, attempt, progress.StageRepo, progress.StatusDone)
+	ev.Blobs, ev.Findings, ev.Reclassified, ev.Live = res.BlobsScanned, sink.inserted, sink.reclassified, res.ProbesLive
+	ev.AppType, ev.ElapsedMs = res.AppType, time.Since(started).Milliseconds()
+	w.progress.Publish(ctx, ev)
 
 	// A single-repo job, or the last repo of a bulk job, completes here. The
 	// check is transactional and no-ops when more repos are still pending
 	// (plan.md §8), so concurrent workers finishing different repos race safely.
-	if _, err := w.db.CompleteIfAllScanned(ctx, jobID); err != nil {
-		return err
-	}
-	return nil
+	return w.completeIfAllScanned(ctx, jobID)
 }
 
 // storeSink persists each finding, queues it for enrichment, and holds the ones
@@ -178,6 +220,8 @@ func (w *Worker) scan(ctx context.Context, task *gpb.ScanTask) error {
 type storeSink struct {
 	w            *Worker
 	task         *gpb.ScanTask
+	repo         string // owner/name, for progress events
+	attempt      int
 	inserted     int
 	reclassified int
 	attributed   int // existing rows given their introducing commit
@@ -320,6 +364,17 @@ func (w *Worker) jobEnded(ctx context.Context, task *gpb.ScanTask) (bool, error)
 		return true, nil
 	}
 	return false, nil
+}
+
+// ScanProgress implements scan.ProgressReporter.
+func (s *storeSink) ScanProgress(ctx context.Context, p scan.Progress) {
+	ev := event(s.task, s.repo, s.attempt, p.Stage, p.Status)
+	ev.Blobs, ev.Matches, ev.Findings, ev.Live, ev.Path = p.Blobs, p.Matches, p.Findings, p.Live, p.Path
+	ev.ElapsedMs = p.Elapsed.Milliseconds()
+	if p.Err != nil {
+		ev.Error = p.Err.Error()
+	}
+	s.w.progress.Publish(ctx, ev)
 }
 
 // KeepsSecrets implements scan.SecretKeeper.

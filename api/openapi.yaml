@@ -372,6 +372,53 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/scans/{id}/events:
+    get:
+      tags: [scans]
+      summary: Stream live progress (Server-Sent Events)
+      description: |
+        A `text/event-stream` of what the workers are doing for this job:
+        discovery pages, and for each repository its steps — `clone`, `walk`
+        (reading every unique blob and running detection, with a tick at most
+        every 750 ms carrying the blob count and the file being read),
+        `attribute` and `store` (only when something was found), `probe`
+        (only when probing is enabled) — and how each repository ended.
+
+        Each message's `data` is one `ProgressEvent` and its `id` the event's
+        `seq`, so a reconnecting browser sends `Last-Event-ID` and resumes from
+        the server's recent replay. The stream opens with that replay (up to
+        300 recent events), sends a `: ping` comment every 15 s, and ends with
+        an `end` event once the job ends — immediately, after the replay, for a
+        job that has already ended.
+
+        This is narration, not a record: delivery is at-most-once (Postgres
+        LISTEN/NOTIFY), so an event can be lost. The job's counters from
+        `GET /v1/scans/{id}` stay authoritative. Events never carry a
+        credential.
+      operationId: streamScanEvents
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+        - name: after
+          in: query
+          required: false
+          description: Replay only events with a larger `seq`; overrides `Last-Event-ID`.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ProgressEvent"
+        "404":
+          description: Unknown job, or live progress is not enabled on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/scans/{id}/pause:
     post:
       tags: [scans]
@@ -1565,6 +1612,35 @@ components:
           type: string
           description: Human-readable error message.
           example: "scan not found"
+
+    ProgressEvent:
+      type: object
+      description: One step of a running scan. Fields that do not apply are omitted.
+      required: [job_id, stage, status, at]
+      properties:
+        seq: { type: integer, format: int64, description: Per-api-process sequence; the SSE id. }
+        job_id: { type: string, format: uuid }
+        repo_id: { type: string, format: uuid }
+        repo: { type: string, description: owner/name }
+        stage:
+          type: string
+          enum: [discover, queue, clone, walk, attribute, probe, store, repo, job]
+        status:
+          type: string
+          enum: [start, progress, done, failed, skipped, deferred, paused, cancelled]
+        at: { type: string, format: date-time }
+        elapsed_ms: { type: integer, format: int64 }
+        attempt: { type: integer, description: 1 for the first attempt. }
+        blobs: { type: integer }
+        matches: { type: integer, description: Detector hits so far, before storage dedupe. }
+        findings: { type: integer, description: New findings stored by this attempt. }
+        reclassified: { type: integer }
+        live: { type: integer, description: Probes that found a live credential. }
+        page: { type: integer }
+        repos: { type: integer, description: Repositories discovery enqueued in this step. }
+        path: { type: string, description: The file being read during the walk, clipped to 300 bytes. }
+        app_type: { type: string }
+        error: { type: string, description: Clipped to 300 bytes. }
 
   responses:
     BadRequest:

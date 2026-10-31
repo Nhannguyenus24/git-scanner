@@ -56,6 +56,18 @@ rollups are rebuilt by reading the `findings` table instead, which is the system
 of record (plan.md §1, §10). What survives the change is that delivery is still
 at-least-once, which is why the dedupe tables below are not optional.
 
+**Live progress is a third kind of message, and it skips the broker.**
+discovery-worker and scan-worker narrate each step (`internal/progress`) with
+Postgres `NOTIFY` on `scan_progress`; the api runs a `progress.Hub` that
+`LISTEN`s on one hijacked connection, keeps a short replay per job, and serves
+it as Server-Sent Events at `GET /v1/scans/{id}/events`. It is deliberately
+at-most-once: nothing reads it back, the job counters stay authoritative, and a
+RabbitMQ queue would bring retry and dead-letter semantics a stale progress tick
+must never get. Two rules keep it harmless — publishing never fails or blocks a
+scan, and an event never carries a credential. The hub runs on the api's build
+context, not as its Worker, so open streams close on SIGTERM before the HTTP
+drain instead of holding it to the deadline.
+
 ## Every service is the same shape
 
 `cmd/<name>/main.go` is a short declaration — a `Spec` plus a `build` function
