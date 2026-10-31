@@ -54,8 +54,8 @@ type Finding struct {
 	DetectedAt time.Time
 
 	// Metadata holds offline-extracted fields from the registry's extract block
-	// (account, key_id, region...). Probe results are stored separately because
-	// they require the ownership gate.
+	// (account, key_id, region...), and the probe outcome (probe_status and
+	// non-secret identity) when live probing is enabled.
 	Metadata map[string]string
 }
 

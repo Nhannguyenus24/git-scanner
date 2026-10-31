@@ -61,6 +61,7 @@ pairs with `feat(`, and only that one differs:
 | `test/` | `test` | tests only |
 | `ci/` | `ci` | workflows, pipelines |
 | `build/` | `build` | Dockerfile, Makefile, dependencies |
+| `style/` | `style` | formatting only, no behaviour change |
 | `chore/` | `chore` | anything that fits nothing above |
 
 ### Scope
@@ -68,7 +69,8 @@ pairs with `feat(`, and only that one differs:
 The area of the codebase, which here usually maps to a package or a service:
 
 `scan` `discovery` `enricher` `notifier` `analytics` `api` `store` `rabbit`
-`entity` `skills` `docs` `ci` `deploy` `frontend`
+`entity` `probe` `app` `config` `observability` `proto` `build` `skills`
+`docs` `ci` `deploy` `frontend`
 
 Omit it rather than invent one when a change is genuinely cross-cutting.
 
@@ -84,9 +86,17 @@ go build ./... && go vet ./... && go test -count=1 ./test/unit/...
 
 # 3. commit — the message follows the same type(scope): convention
 git add <specific files>
-git commit
+git commit -m "$(cat <<'EOF'
+feat(scan): detect cloudinary credentials in separate settings
 
-# 4. push and open the PR
+Why the change was needed, in a few lines.
+
+Co-Authored-By: <the attribution line the session supplies>
+EOF
+)"
+
+# 4. only after the user agrees (see "Confirm before acting on the remote"):
+#    push and open the PR
 git push -u origin feature/cloudinary-detection-rules
 gh pr create --title "feat(scan): detect cloudinary credentials in separate settings" --body "$(cat <<'EOF'
 ## Summary
@@ -142,12 +152,17 @@ and bump again from theirs; two open PRs that both claim 0.4.0 will conflict in
 ## CI is the gate
 
 `.github/workflows/ci.yaml` runs on every pull request and on pushes to `main`:
-`make check` (vet, lint, unit tests) plus the Helm chart render and the frontend
-type-check and build. Trunk-based development only works if `main` stays green,
+the Go job (`make vet`, `make lint`, `make test`, `make build`, `make cover`),
+integration tests against Postgres and RabbitMQ (`make test-integration`), buf
+lint and breaking checks on `libs/proto`, the Helm chart render (`make
+chart-lint`), the frontend type-check, tests and build (`make frontend-check`,
+`make frontend-coverage`), and a security job (govulncheck, npm audit,
+gitleaks). Trunk-based development only works if `main` stays green,
 so a red PR is not ready regardless of how small it looks.
 
-`make check` locally runs the same targets — use it before pushing rather than
-discovering it in CI.
+`make check` covers only the Go job's vet, lint and unit tests. Also run `make
+frontend-check` when `frontend/` changed and `make chart-lint` when `deploy/`
+changed — before pushing, rather than discovering it in CI.
 
 ## Confirm before acting on the remote
 

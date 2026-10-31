@@ -26,6 +26,8 @@ UNION ALL SELECT 'repositories', count(*) FROM repositories
 UNION ALL SELECT 'targets', count(*) FROM targets
 UNION ALL SELECT 'provider_candidates', count(*) FROM provider_candidates
 UNION ALL SELECT 'analytics_rollups', count(*) FROM analytics_rollups
+UNION ALL SELECT 'notifications', count(*) FROM notifications
+UNION ALL SELECT 'sealed_secrets', count(*) FROM sealed_secrets
 ORDER BY 1;"
 ```
 
@@ -44,14 +46,15 @@ a foreign key as its target disappears. Stop them, wipe, then restart — see th
 ```bash
 make stop-local
 for port in 8080 8081 8082 8083 8084 8085; do
-  pid=$(lsof -ti tcp:$port 2>/dev/null); [ -n "$pid" ] && kill $pid
+  pid=$(lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null); [ -n "$pid" ] && kill $pid
 done
 ```
 
 ## Full wipe
 
 `targets` is the root of the foreign-key tree: deleting it cascades to
-`scan_jobs`, `repositories`, and through them `findings` and `notifications`.
+`scan_jobs`, `repositories`, and through them `findings`, `notifications` and
+`sealed_secrets`.
 The analytics tables and `provider_candidates` hang off nothing, so they have to
 be named explicitly — forgetting them leaves rollups describing findings that no
 longer exist.
@@ -61,7 +64,7 @@ One transaction, so a failure part-way cannot leave a half-emptied database:
 ```bash
 PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -v ON_ERROR_STOP=1 <<'SQL'
 BEGIN;
-DELETE FROM targets;                   -- cascades: scan_jobs, repositories, findings, notifications
+DELETE FROM targets;                   -- cascades: scan_jobs, repositories, findings, notifications, sealed_secrets
 DELETE FROM analytics_rollups;
 DELETE FROM analytics_seen_findings;
 DELETE FROM analytics_seen_repos;
@@ -75,8 +78,11 @@ not drop them.
 
 ### Results only, keeping the repository inventory
 
-Skip `DELETE FROM targets` and instead clear the results and reset the job
-counters, so a rescan runs against repositories already discovered:
+Skip `DELETE FROM targets` and clear the results instead, so a rescan (which
+always creates a new job) runs against repositories already discovered.
+`notifications` and `sealed_secrets` go too: the first holds an id array with no
+foreign key and its one-per-repository index would block new disclosures; the
+second holds sealed credential values that only cascade from `repositories`.
 
 ```sql
 BEGIN;
@@ -85,7 +91,8 @@ DELETE FROM analytics_rollups;
 DELETE FROM analytics_seen_findings;
 DELETE FROM analytics_seen_repos;
 DELETE FROM provider_candidates;
-UPDATE scan_jobs SET repos_scanned = 0, blobs_scanned = 0, findings_count = 0;
+DELETE FROM notifications;
+DELETE FROM sealed_secrets;
 COMMIT;
 ```
 
@@ -99,9 +106,10 @@ DELETE FROM provider_candidates WHERE charset_class = ''; -- recorded before sha
 ## Purge the queues too
 
 This is the step that is easy to miss and that spoils the clean slate. Tasks
-already queued name job and repository ids that no longer exist; on redelivery
-they fail and dead-letter, filling a freshly cleaned environment with errors
-that have nothing to do with the code.
+already queued name ids that no longer exist. Scan and discovery tasks for a
+deleted job are skipped, but enrich tasks dead-letter, notify tasks fail their
+foreign key and retry, and — worst — `findings.events` messages are counted
+again into the analytics tables you just emptied.
 
 Purge repeatedly. Messages sitting in a `.retry` queue carry a TTL whose
 expiry routes them back into the main queue, so a single pass leaves work
@@ -109,7 +117,7 @@ behind — this was observed, not theorised:
 
 ```bash
 for round in 1 2 3; do
-  for q in scan.tasks enrich.tasks discovery.tasks notify.tasks; do
+  for q in scan.tasks enrich.tasks discovery.tasks notify.tasks findings.events; do
     for suffix in "" ".retry" ".dead"; do
       curl -s -u admin:admin123 -X DELETE \
         "http://localhost:15672/api/queues/%2F/$q$suffix/contents" >/dev/null
@@ -126,7 +134,9 @@ PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -c "
 SELECT 'findings' AS t, count(*) FROM findings
 UNION ALL SELECT 'targets', count(*) FROM targets
 UNION ALL SELECT 'provider_candidates', count(*) FROM provider_candidates
-UNION ALL SELECT 'analytics_rollups', count(*) FROM analytics_rollups ORDER BY 1;"
+UNION ALL SELECT 'analytics_rollups', count(*) FROM analytics_rollups
+UNION ALL SELECT 'notifications', count(*) FROM notifications
+UNION ALL SELECT 'sealed_secrets', count(*) FROM sealed_secrets ORDER BY 1;"
 
 # schema and migrations must still be there
 PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -tAc \

@@ -26,15 +26,20 @@ for f in /tmp/gitscanner-logs/*.pid; do
 done
 ```
 
-A DEAD service usually failed to bind its port. See the `run` skill — restart
-with the ports explicitly cleared.
+A DEAD service exited — read the tail of its log; the `fatal:` line names the
+cause. Usually one of: a port it could not bind; a backend still unreachable
+after `CONNECT_TIMEOUT` (default 1m — "backend not reachable yet, retrying"
+followed by "gave up after N attempts"); or "worker stopped with error" because
+its RabbitMQ connection dropped. Nothing restarts it under run-local. See the
+`run` skill — restart with the ports explicitly cleared. A service that is
+RUNNING but fails `/readyz` is usually still retrying a backend.
 
 ### 2. Who went quiet, and how long ago?
 
 This single check localises most problems.
 
 ```bash
-for svc in api discovery-worker scan-worker enricher analytics; do
+for svc in api discovery-worker scan-worker enricher notifier analytics; do
   last=$(tail -1 /tmp/gitscanner-logs/$svc.log 2>/dev/null | python3 -c "
 import sys,json
 try: print(json.loads(sys.stdin.read()).get('time','?')[11:19])
@@ -58,7 +63,12 @@ for q in json.load(sys.stdin):
 
 Read it as follows. `unacked` that never changes means a consumer took the work
 and is blocked inside the handler — go to step 5. A growing `.dead` queue means
-tasks are being rejected and the error is already in that service's log. All
+tasks were given up on: each carries the reason in its `x-gitscanner-dead-reason`
+header, and the service logged "task dead-lettered". A `.retry` queue that
+never drains, with "task deferred, attempt not counted" in the log, is a rate
+limit (discovery: "discovery rate limited"; notifier: the mail rate) — those
+tasks cycle every 30s without spending attempts, so that is waiting, not a
+hang. All
 queues empty while a job still reports work outstanding points at the database,
 not the broker.
 
@@ -66,7 +76,7 @@ not the broker.
 
 ```bash
 PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -c \
-  "SELECT id, state, repos_total, repos_scanned, findings_count FROM scan_jobs ORDER BY created_at DESC LIMIT 5;"
+  "SELECT id, state, repos_total, repos_scanned, findings_count, error FROM scan_jobs ORDER BY created_at DESC LIMIT 5;"
 ```
 
 `repos_total` climbing with `repos_scanned` stuck at 0 means discovery works and
@@ -100,11 +110,15 @@ Interpretation:
   simply enormous, by watching the directory grow:
 
 ```bash
-D=$(find /var/folders -maxdepth 6 -name "scan-*" -type d 2>/dev/null | head -1)
+# clones live under SCRATCH_DIR, else the OS temp dir; two may run at once
+D=$(ls -dt "${SCRATCH_DIR:-$TMPDIR}"/scan-* 2>/dev/null | head -1)
 du -sh "$D"; sleep 5; du -sh "$D"
 ```
 
-Growth means it is downloading, not hung. If a small repository is pulling
+Growth means it is downloading, not hung. A clone can no longer hang forever:
+git aborts a transfer below 1 KB/s for 60s, and the whole clone is cut off at
+30 minutes ("git clone: gave up after 30m0s"). Either surfaces as a scan
+failure and a retry. If a small repository is pulling
 hundreds of megabytes, suspect a ref explosion:
 
 ```bash
@@ -117,8 +131,8 @@ git ls-remote https://github.com/owner/repo.git | wc -l
 lsof -nP -p $PID | grep -E 'TCP|PIPE'
 ```
 
-Established connections to 5432, 5672, 6379 and 9092 are normal — all four are
-held open. What you are looking for is which one the goroutine is waiting on,
+Established connections to 5432 (Postgres) and 5672 (RabbitMQ) are normal —
+both are held open. What you are looking for is which one the goroutine is waiting on,
 which the next step settles definitively.
 
 ### 7. Goroutine dump — stop guessing
@@ -169,14 +183,22 @@ now `--bare`, which takes branches and tags only. Those PR refs are also other
 people's fork commits, so scanning them would attribute another repository's
 secrets to this one.
 
-**Tasks referencing deleted rows.** After wiping the database, queued tasks still
-name job and repository ids that no longer exist, and fail on redelivery. Purge
-the queues too — and purge repeatedly, because messages sitting in a `.retry`
+**A repository that keeps failing.** After its final attempt the scan-worker
+logs "repository skipped after final attempt" and the task goes to
+`scan.tasks.dead`. The repository still counts toward `repos_scanned`, so the
+job completes without recording the skip (a known gap in CLAUDE.md). When
+discovery gives up, the job goes to `failed` with the reason in
+`scan_jobs.error`.
+
+**Tasks referencing deleted rows.** After wiping the database, queued work still
+names ids that no longer exist. Scan and discovery tasks for a deleted job are
+skipped, enrich tasks dead-letter, and `findings.events` would be counted again
+into the freshly emptied analytics rollups. Purge the queues too — and purge repeatedly, because messages sitting in a `.retry`
 queue have a TTL and migrate back into the main queue mid-purge:
 
 ```bash
 for round in 1 2 3; do
-  for q in scan.tasks enrich.tasks discovery.tasks notify.tasks; do
+  for q in scan.tasks enrich.tasks discovery.tasks notify.tasks findings.events; do
     for suffix in "" ".retry" ".dead"; do
       curl -s -u admin:admin123 -X DELETE \
         "http://localhost:15672/api/queues/%2F/$q$suffix/contents" >/dev/null
