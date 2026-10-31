@@ -72,6 +72,7 @@ var serveSpec = app.Spec{
 		go hub.Run(ctx, d.DB)
 		srv.WithProgress(hub, progress.NewPublisher(d.DB, d.Log))
 		srv.WithShares(d.DB)
+		srv.WithInsights(d.DB)
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},

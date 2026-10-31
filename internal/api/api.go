@@ -77,6 +77,7 @@ type Server struct {
 	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
 	hub       ProgressHub         // optional: live progress streams
 	shares    ShareStore          // optional: share links and the reports they open
+	insights  Insights            // optional: cross-repository views
 	progress  *progress.Publisher // optional: announces api-side steps such as a cancel
 	log       *slog.Logger
 }
@@ -120,6 +121,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /v1/settings/unmask-owners/{owner}", s.handleAddUnmaskOwner)
 	mux.HandleFunc("DELETE /v1/settings/unmask-owners/{owner}", s.handleRemoveUnmaskOwner)
 	s.catalogRoutes(mux)
+	s.insightRoutes(mux)
 	s.noticeRoutes(mux)
 	return mux
 }

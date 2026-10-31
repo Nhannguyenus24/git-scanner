@@ -90,6 +90,15 @@ const REPOSITORY = {
   findings: 3, open: 2, critical: 1, high: 1, medium: 0, low: 0,
 }
 
+const SHARED_KEY = {
+  key_id: '0123456789abcdef', provider: 'stripe', rule_id: 'stripe-secret-key', severity: 'critical',
+  masked_preview: 'sk_l****9c1d',
+  repositories: [
+    { finding_id: 'f1', id: 'r1', owner: 'acme', name: 'web', status: 'open', reachable_from_head: true },
+    { finding_id: 'f9', id: 'r9', owner: 'globex', name: 'api', status: 'rotated', reachable_from_head: false },
+  ],
+}
+
 /** Answers every endpoint the dashboard calls, by path. */
 function stubFetch() {
   return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -110,6 +119,7 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/keys/shared'    ? { keys: [SHARED_KEY], total: 1 }
       : path === '/v1/shared/tok-valid' ? SHARED
       : path === '/v1/repositories/r1/shares' && init?.method === 'POST'
         ? { ...SHARE, token: 'tok-new' }
@@ -178,6 +188,7 @@ describe('every page mounts', () => {
     ['#/candidates', 'Unmapped'],
     ['#/notifications', 'Notifications'],
     ['#/providers', 'Providers'],
+    ['#/spread', 'Key spread'],
     ['#/settings', 'Settings'],
     ['#/help', 'Help'],
   ]
@@ -208,6 +219,16 @@ describe('overview', () => {
     await act(async () => { fireEvent.click(hide) })
     expect(screen.getByRole('button', { name: /\+ /i })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem('gs-prefs')!).widgets).not.toContain('posture')
+  })
+})
+
+describe('key spread', () => {
+  it('lists a shared key and opens its repositories from the list', async () => {
+    await open('#/spread')
+    expect(await screen.findByText(/2 repositories · 2 owners/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /sk_l\*\*\*\*9c1d/ })) })
+    expect(screen.getByRole('link', { name: 'globex/api' }).getAttribute('href')).toContain('finding=f9')
+    expect(screen.getByText(/One rotation fixes all 2/)).toBeTruthy()
   })
 })
 

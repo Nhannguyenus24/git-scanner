@@ -15,6 +15,7 @@ import DashboardIcon from '@mui/icons-material/SpaceDashboardOutlined'
 import InsightsIcon from '@mui/icons-material/InsightsOutlined'
 import RadarIcon from '@mui/icons-material/RadarOutlined'
 import KeyIcon from '@mui/icons-material/VpnKeyOutlined'
+import HubIcon from '@mui/icons-material/HubOutlined'
 import FolderIcon from '@mui/icons-material/FolderOutlined'
 import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import ShieldIcon from '@mui/icons-material/VerifiedUserOutlined'
@@ -37,6 +38,7 @@ const NAV = [
   { page: 'scans',        icon: <RadarIcon fontSize="small" /> },
   { page: 'findings',     icon: <KeyIcon fontSize="small" /> },
   { page: 'repositories', icon: <FolderIcon fontSize="small" /> },
+  { page: 'spread',       icon: <HubIcon fontSize="small" /> },
   { page: 'candidates',   icon: <HelpIcon fontSize="small" /> },
   { page: 'notifications', icon: <MailIcon fontSize="small" /> },
   { page: 'providers',    icon: <ShieldIcon fontSize="small" /> },

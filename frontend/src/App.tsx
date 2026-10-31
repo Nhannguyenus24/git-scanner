@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import CommandPalette from './components/CommandPalette'
 import Layout from './components/Layout'
 import NewScanDialog from './components/NewScanDialog'
@@ -17,6 +17,11 @@ import ProvidersPage from './pages/ProvidersPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
+import { Loading } from './components/States'
+
+// The graph pulls in d3-force; loading the page on demand keeps it out of the
+// bundle everyone else downloads.
+const KeySpreadPage = lazy(() => import('./pages/KeySpreadPage'))
 import SharedReportPage from './pages/SharedReportPage'
 import { usePrefs } from './store/preferences'
 import { useSettings } from './store/settings'
@@ -78,6 +83,7 @@ function Dashboard({ route }: { route: Route }) {
     case 'notifications': body = <NotificationsPage />; break
     case 'settings':     body = <SettingsPage onRestartTour={() => setTourOpen(true)} />; break
     case 'providers':    body = <ProvidersPage />; break
+    case 'spread':       body = <Suspense fallback={<Loading />}><KeySpreadPage /></Suspense>; break
     case 'help':         body = <HelpPage />; break
     default:             body = <OverviewPage onNewScan={open} />
   }

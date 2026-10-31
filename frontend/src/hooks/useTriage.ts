@@ -17,8 +17,11 @@ export function useTriage(reload: () => void) {
   }, [api, notify, t, reload])
 }
 
+/** All bulk triage needs of a finding — so a view holding only ids can use it. */
+export type TriageTarget = Pick<Finding, 'id' | 'status'>
+
 export interface BulkTriage {
-  run:     (findings: Finding[], status: FindingStatus) => Promise<void>
+  run:     (findings: TriageTarget[], status: FindingStatus) => Promise<void>
   running: boolean
 }
 
@@ -40,7 +43,7 @@ export function useBulkTriage(reload: () => void): BulkTriage {
   const { t }   = useT()
   const [running, setRunning] = useState(false)
 
-  const run = useCallback(async (findings: Finding[], status: FindingStatus) => {
+  const run = useCallback(async (findings: TriageTarget[], status: FindingStatus) => {
     const todo = findings.filter(f => f.status !== status)
     if (!todo.length) { notify(t('bulk.nothing'), 'info'); return }
 
