@@ -73,6 +73,11 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	findingIDs, err := s.discloseFindings(ctx, repoID, req.FindingIDs)
+	var foreign *foreignFindingError
+	if errors.As(err, &foreign) {
+		s.writeError(w, http.StatusBadRequest, err)
+		return
+	}
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -135,21 +140,46 @@ func (s *Server) handleDisclose(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// foreignFindingError names a requested finding that is not an open finding of
+// the repository being disclosed.
+type foreignFindingError struct{ id string }
+
+func (e *foreignFindingError) Error() string {
+	return fmt.Sprintf("finding %q is not an open finding of this repository", e.id)
+}
+
 // discloseFindings resolves which findings the mail covers: the caller's list
 // when given, otherwise every open finding for the repository.
+//
+// A caller's list is checked against the repository's open findings. The mail
+// goes to this repository's owner, so an id from another repository would
+// describe someone else's leak to them.
 func (s *Server) discloseFindings(ctx context.Context, repoID entity.ID, requested []string) ([]entity.ID, error) {
-	if len(requested) > 0 {
-		out := make([]entity.ID, 0, len(requested))
-		for _, id := range requested {
-			out = append(out, entity.ID(id))
-		}
-		return out, nil
-	}
-
 	open, err := s.store.ListOpenFindingsByRepository(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
+
+	if len(requested) > 0 {
+		owned := make(map[entity.ID]bool, len(open))
+		for _, f := range open {
+			owned[f.ID] = true
+		}
+		out := make([]entity.ID, 0, len(requested))
+		seen := make(map[entity.ID]bool, len(requested))
+		for _, id := range requested {
+			fid := entity.ID(id)
+			if !owned[fid] {
+				return nil, &foreignFindingError{id: id}
+			}
+			if !seen[fid] {
+				seen[fid] = true
+				out = append(out, fid)
+			}
+		}
+		return out, nil
+	}
+
 	out := make([]entity.ID, 0, len(open))
 	for _, f := range open {
 		out = append(out, f.ID)
