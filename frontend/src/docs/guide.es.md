@@ -70,6 +70,14 @@ que abre Hallazgos con ese texto como filtro de búsqueda. La paleta no guarda
 historial a propósito: un cuadro de búsqueda que recuerda es un lugar donde
 podría quedarse una credencial pegada.
 
+Cuando el servidor tiene configurada una clave de la API de Claude, una consulta
+de más de una palabra ofrece también **Preguntar a Claude: “…”**. Convierte una
+frase como *claves de AWS críticas aún en HEAD en la organización acme* en los
+filtros de Hallazgos, abre Hallazgos con ellos y explica cómo interpretó la
+pregunta para que puedas corregirla. A Claude solo se envían la pregunta y la
+lista de valores de filtro — nunca un hallazgo — y una pregunta que parece
+contener una credencial se rechaza antes de enviar nada.
+
 ### Introducción
 
 La primera vez que se abre el panel ofrece una introducción de siete pasos.
@@ -138,6 +146,12 @@ Debajo de la cabecera:
 - **Fases** — Descubriendo repositorios → Escaneando repositorios (clonar,
   recorrer el historial, detectar) → Clasificando proveedores → Finalizando
   analítica.
+- **Canalización** — un punto por repositorio, situado en el paso que su
+  worker informó por última vez (clonar, leer historial, atribuir, verificar,
+  guardar) y que avanza cuando se informa el siguiente paso; los repositorios
+  terminados caen en el contenedor de la derecha. Naranja significa
+  coincidencias candidatas hasta ahora, rojo un intento fallido, gris un
+  repositorio omitido.
 - **Actividad en vivo** — transmitida desde los workers mientras el escaneo
   está en curso.
 - **Resumen final** — cuando el trabajo termina: cuántos hallazgos en cuántos
@@ -372,6 +386,56 @@ pone en cola un aviso al propietario del repositorio con la lista de sus
 hallazgos en vista previa enmascarada. La columna **Avisado** indica entonces
 *enviando*, *enviado*, *fallido* o *excluido*.
 
+### Máquina del tiempo
+
+El icono del reloj en una fila (o el chip **Máquina del tiempo** en Hallazgos
+filtrados por un repositorio) reproduce la exposición de ese repositorio commit
+a commit. Cada archivo con una credencial tiene su carril; un rombo marca el
+commit que introdujo cada clave, y desde ahí una línea llega hasta hoy — continua
+mientras la clave sigue en HEAD, desvaneciéndose una vez eliminada.
+
+Arrastra el control deslizante, avanza con los botones anterior y siguiente, o
+pulsa reproducir para avanzar desde la primera filtración. En cada paso la
+página indica cuántas credenciales se habían confirmado hasta entonces, cuántas
+siguen hoy en HEAD y que todas siguen siendo clonables. Debajo se listan los
+commits que introdujeron una credencial, del más reciente al más antiguo, con
+autor, fecha y un enlace a cada hallazgo.
+
+El escaneo sabe cuándo se confirmó una clave, no cuándo se borró, así que la
+línea de una clave eliminada se desvanece en lugar de terminar en una fecha
+inventada. Los hallazgos sin fecha de commit se cuentan debajo de la lista; un
+nuevo escaneo los sitúa.
+
+---
+
+## Propagación de claves
+
+Credenciales halladas en más de un repositorio. Los hallazgos se registran una
+vez por repositorio, así que el mismo secreto en varios sitios solo aparece
+aquí, donde las copias se unen por su huella.
+
+- **Claves compartidas**, **Entre propietarios** (claves en repositorios de
+  distintos propietarios), **Abiertas en HEAD** y **Repos / propietarios**
+  alcanzados. Cuando hay más claves compartidas de las que dibuja el grafo, la
+  primera tarjeta indica cuántas se dibujan.
+- **Hallada en** — muestra las claves presentes en 2, 3, 5 o 10 repositorios o
+  más.
+- **El grafo** — un rombo por clave, coloreado por gravedad y con un tamaño
+  según cuánto se ha extendido; un círculo por repositorio; un cuadrado por cada
+  propietario que tiene dos o más. Una línea roja es una copia aún en HEAD, una
+  discontinua una copia ya tratada. Pasa el cursor para iluminar el entorno de
+  una clave.
+- **La lista** de al lado contiene las mismas claves para el uso con teclado y
+  lector de pantalla. Elegir una clave en cualquiera de los dos muestra sus
+  repositorios, cada uno enlazado a su hallazgo.
+
+Una sola rotación arregla todas las copias, así que el detalle de una clave
+puede **marcar todas las copias** como *Rotado* o *Falso positivo* de una vez,
+tras una confirmación. Un valor pegado en repositorios de muchos propietarios
+sin relación suele ser código repetitivo que el paso genérico confundió con un
+secreto — nombres de clases de un framework, claves de ejemplo de un tutorial —
+y esta vista es la forma más rápida de detectarlos.
+
 ---
 
 ## Sin asignar
@@ -427,6 +491,11 @@ proveedores de nube y de pagos, hasta crítica.
 Una lectura de todo lo escaneado hasta ahora:
 
 - **Hallazgos** y **Repositorios** — totales, abiertos, expuestos / escaneados.
+- **Calendario de fugas** — un cuadrado por día, un año cada vez, sombreado
+  según cuántas credenciales se confirmaron ese día y con borde donde una era
+  crítica. Elige el año arriba a la derecha. Los días son UTC: la zona horaria
+  del autor no se registra, así que un cuadrado puede ser su día anterior o
+  siguiente.
 - **Cronología de introducción de filtraciones** — hallazgos según el mes en
   que se confirmó la credencial.
 - **Abiertos por gravedad**, **Abiertos por proveedor** (proveedores conocidos
@@ -479,6 +548,23 @@ Guardado solo en este navegador.
 ### Introducción
 
 **Repetir la introducción** vuelve a abrir el recorrido de bienvenida.
+
+### Notificaciones del navegador
+
+Con esta opción activada y el permiso del navegador concedido, un panel abierto
+— basta una pestaña en segundo plano — te avisa cuando termina un escaneo que
+estaba siguiendo y cuando se confirman más claves activas; al hacer clic en la
+notificación se abre el escaneo o las claves activas. Mientras estás mirando el
+panel, la misma noticia llega como un mensaje dentro de la página. No se envía
+nada cuando todas las pestañas del panel están cerradas. Solo se guarda en este
+navegador.
+
+### Instalar el panel
+
+El panel se puede instalar como aplicación desde la barra de direcciones del
+navegador (o con *Añadir a pantalla de inicio* en un teléfono). Entonces se abre
+en su propia ventana y su estructura carga sin red; los datos siguen llegando de
+la API y nunca se guardan en la caché del navegador.
 
 ### Correo de aviso
 
@@ -557,6 +643,14 @@ lecturas de cuota y límites aparecen en el panel del hallazgo.
 - **La lista dice que solo refinó 500 hallazgos** — acota los filtros del
   servidor (gravedad, proveedor, estado, repositorio) para que la ventana lo
   cubra todo.
+- **No aparece “Preguntar a Claude” en la paleta** — el servidor no tiene
+  `ANTHROPIC_API_KEY`, o la consulta es de una sola palabra (eso es una
+  búsqueda normal).
+- **Preguntar a Claude rechazó la pregunta** — contenía algo con forma de
+  credencial; reformúlala sin el valor.
+- **No llegan notificaciones del navegador** — revisa el permiso de este sitio
+  en el navegador; a un sitio bloqueado no se le puede volver a preguntar desde
+  la página.
 - **Resultados obsoletos** — eliminar un trabajo o borrar los datos elimina sus
   hallazgos; reescanea para recuperarlos.
 

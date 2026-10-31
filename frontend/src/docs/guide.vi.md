@@ -66,6 +66,13 @@ Mọi nội dung khác bạn gõ trở thành **Tìm phát hiện với “…�
 với chuỗi đó làm bộ lọc tìm kiếm. Bảng lệnh cố ý không lưu lịch sử: ô tìm kiếm có
 trí nhớ là nơi một credential lỡ dán vào có thể nằm lại.
 
+Khi máy chủ đã cấu hình khóa Claude API, một truy vấn dài hơn một từ còn có thêm
+**Hỏi Claude: “…”**. Nó đọc một câu như *key AWS nghiêm trọng còn ở HEAD trong tổ
+chức acme* thành các bộ lọc của trang Phát hiện, mở trang Phát hiện với các bộ lọc
+đó, và cho biết nó đã hiểu câu hỏi ra sao để bạn sửa lại. Chỉ câu hỏi và danh sách
+giá trị bộ lọc được gửi tới Claude — không bao giờ gửi một phát hiện — và câu hỏi
+trông như có chứa credential sẽ bị từ chối trước khi gửi bất cứ thứ gì.
+
 ### Phần giới thiệu
 
 Lần đầu mở, bảng điều khiển đưa ra phần giới thiệu bảy bước. Có thể bỏ qua bất
@@ -127,6 +134,10 @@ Bên dưới:
   hãy tin vào bộ đếm.
 - **Giai đoạn** — Tìm kho → Quét kho (clone, duyệt lịch sử, dò quét) → Phân loại
   nhà cung cấp → Hoàn tất phân tích.
+- **Dây chuyền** — mỗi kho một chấm, nằm ở bước worker báo cáo gần nhất (clone,
+  đọc lịch sử, gán nhà cung cấp, kiểm tra key, lưu) và đi tiếp khi bước sau được
+  báo; kho đã xong rơi vào thùng bên phải. Cam là đã có kết quả khớp ứng viên, đỏ
+  là một lần thử bị lỗi, xám là bị bỏ qua.
 - **Hoạt động trực tiếp** — được worker truyền về khi lượt quét đang chạy.
 - **Tóm tắt** — khi job hoàn tất: bao nhiêu phát hiện trong bao nhiêu kho, bao
   nhiêu ở mức cao hoặc nghiêm trọng, bao nhiêu vẫn lấy được từ nhánh mặc định, và
@@ -335,6 +346,50 @@ kết tới Cài đặt. Khi mail bật, nút **Gửi thông báo** trên một 
 một mail gửi chủ sở hữu kho, liệt kê các phát hiện với bản xem trước đã che. Cột
 **Đã thông báo** sau đó hiện *đang gửi*, *đã gửi*, *lỗi* hoặc *đã từ chối nhận*.
 
+### Cỗ máy thời gian
+
+Biểu tượng đồng hồ trên một dòng (hoặc chip **Cỗ máy thời gian** ở trang Phát hiện
+khi đang lọc theo một kho) phát lại quá trình lộ của kho đó qua từng commit. Mỗi
+file có credential là một làn; hình thoi đánh dấu commit đã đưa từng key vào, và
+một đường kéo từ đó tới hôm nay — liền nét khi key vẫn còn ở HEAD, mờ dần khi đã bị
+xóa.
+
+Kéo thanh trượt, đi từng bước bằng nút trước và sau, hoặc bấm phát để đi tới từ lần
+rò rỉ đầu tiên. Ở mỗi bước, trang cho biết đến lúc đó đã có bao nhiêu credential bị
+commit, bao nhiêu hôm nay vẫn còn ở HEAD, và rằng tất cả vẫn lấy được khi clone.
+Bên dưới là các commit đã đưa credential vào, mới nhất trước, kèm tác giả, ngày và
+liên kết tới từng phát hiện.
+
+Lượt quét biết key được commit lúc nào, nhưng không biết lúc nào nó bị xóa, nên
+đường của một key đã xóa mờ dần thay vì dừng ở một ngày bịa ra. Phát hiện chưa có
+ngày commit được đếm bên dưới danh sách; quét lại sẽ đặt chúng vào đúng chỗ.
+
+---
+
+## Lan truyền key
+
+Các credential xuất hiện ở nhiều hơn một kho. Phát hiện được ghi một lần cho mỗi
+kho, nên cùng một secret ở nhiều nơi chỉ hiện ra ở đây, nơi các bản sao được nối
+với nhau bằng fingerprint.
+
+- **Key dùng chung**, **Vượt chủ sở hữu** (key nằm ở kho của nhiều chủ khác nhau),
+  **Còn mở ở HEAD** và **Kho / chủ** bị chạm tới. Khi có nhiều key dùng chung hơn
+  số đồ thị vẽ ra, thẻ đầu tiên cho biết đã vẽ bao nhiêu.
+- **Xuất hiện ở** — hiện các key có trong từ 2, 3, 5 hoặc 10 kho trở lên.
+- **Đồ thị** — mỗi key một hình thoi, tô màu theo mức độ và lớn theo độ lan rộng;
+  mỗi kho một hình tròn; mỗi chủ sở hữu có từ hai kho trở lên một hình vuông.
+  Đường đỏ là bản sao vẫn còn ở HEAD, đường đứt nét là bản sao đã được xử lý. Rê
+  chuột để làm sáng vùng lân cận của một key.
+- **Danh sách** bên cạnh chứa cùng các key đó, cho bàn phím và trình đọc màn hình.
+  Chọn một key ở bên nào cũng hiện các kho của nó, mỗi kho liên kết tới phát hiện
+  tương ứng.
+
+Một lần xoay khóa xử lý mọi bản sao, nên chi tiết của một key có thể **đánh dấu mọi
+bản sao** là *Đã xoay khóa* hoặc *Báo nhầm* cùng lúc, sau khi xác nhận. Một giá trị
+bị dán vào kho của nhiều chủ không liên quan thường là đoạn mẫu mà lượt quét chung
+tưởng nhầm là secret — tên class của framework, key mẫu trong một bài hướng dẫn —
+và trang này là cách nhanh nhất để nhận ra chúng.
+
 ---
 
 ## Chưa gắn
@@ -386,6 +441,10 @@ cloud và thanh toán, tối đa là nghiêm trọng.
 Bức tranh về mọi thứ đã quét:
 
 - **Phát hiện** và **Kho mã** — tổng số, đang mở, bị lộ trên đã quét.
+- **Lịch rò rỉ** — mỗi ngày một ô, từng năm một, tô đậm theo số credential bị
+  commit trong ngày đó và có viền ở ngày có credential nghiêm trọng. Chọn năm ở góc
+  trên bên phải. Ngày tính theo UTC: múi giờ của tác giả không được lưu, nên một ô
+  có thể là ngày hôm trước hoặc hôm sau theo giờ của họ.
 - **Dòng thời gian rò rỉ** — phát hiện theo tháng credential được commit.
 - **Mở theo mức độ**, **Mở theo nhà cung cấp** (nhà cung cấp có tên và nhóm chưa
   gắn), **Theo loại ứng dụng**, **Trạng thái phân loại**.
@@ -431,6 +490,22 @@ Chỉ lưu trong trình duyệt này.
 ### Phần giới thiệu
 
 **Xem lại phần giới thiệu** mở lại tour hướng dẫn.
+
+### Thông báo trình duyệt
+
+Khi bật mục này và trình duyệt đã cấp quyền, một bảng điều khiển đang mở — để ở tab
+nền cũng được — sẽ báo cho bạn khi một lượt quét nó đang theo dõi kết thúc và khi
+có thêm key được xác nhận còn sống; bấm vào thông báo sẽ mở lượt quét hoặc các key
+còn sống. Khi bạn đang nhìn bảng điều khiển, tin đó hiện thành thông báo ngay trong
+trang. Không gì được gửi khi mọi tab bảng điều khiển đã đóng. Chỉ lưu trong trình
+duyệt này.
+
+### Cài bảng điều khiển
+
+Có thể cài bảng điều khiển thành ứng dụng từ thanh địa chỉ của trình duyệt (hoặc
+*Thêm vào Màn hình chính* trên điện thoại). Khi đó nó mở trong cửa sổ riêng và phần
+khung tải được khi không có mạng; dữ liệu vẫn lấy từ API và không bao giờ được giữ
+trong bộ nhớ đệm của trình duyệt.
 
 ### Gửi mail thông báo
 
@@ -501,6 +576,12 @@ Mặc định tắt, không bao giờ liệt kê nội dung tài khoản, và s�
   quét lại sau khi thêm owner.
 - **Danh sách báo chỉ lọc trên 500 phát hiện** — thu hẹp bộ lọc phía máy chủ (mức
   độ, nhà cung cấp, trạng thái, kho) để cửa sổ bao trọn.
+- **Không có “Hỏi Claude” trong bảng lệnh** — máy chủ không có `ANTHROPIC_API_KEY`,
+  hoặc truy vấn chỉ có một từ (đó là tìm kiếm thường).
+- **Hỏi Claude từ chối câu hỏi** — câu hỏi chứa thứ có hình dạng giống credential;
+  hãy diễn đạt lại mà không kèm giá trị.
+- **Không có thông báo trình duyệt** — kiểm tra quyền của trang này trong trình
+  duyệt; trang đã bị chặn thì không thể hỏi lại từ trong trang.
 - **Kết quả cũ biến mất** — xóa job hoặc dọn dữ liệu sẽ xóa các phát hiện của nó;
   quét lại để có lại.
 

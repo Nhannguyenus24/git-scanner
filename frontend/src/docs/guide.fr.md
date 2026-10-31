@@ -70,6 +70,14 @@ ouvre Résultats avec ce texte comme filtre de recherche. La palette ne garde
 volontairement aucun historique : un champ de recherche qui se souvient est un
 endroit où un identifiant collé pourrait rester.
 
+Quand le serveur dispose d'une clé d'API Claude, une requête de plus d'un mot
+propose aussi **Demander à Claude : « … »**. Une phrase comme *clés AWS
+critiques encore sur HEAD dans l'organisation acme* est traduite en filtres de
+Résultats, Résultats s'ouvre avec ces filtres, et la palette indique comment la
+question a été comprise pour que vous puissiez la corriger. Seuls la question et
+la liste des valeurs de filtre sont envoyés à Claude — jamais un résultat — et
+une question qui semble contenir un identifiant est refusée avant tout envoi.
+
 ### Introduction
 
 À la première ouverture, le tableau de bord propose une introduction en sept
@@ -140,6 +148,11 @@ Sous l'en-tête :
 - **Étapes** — Découverte des dépôts → Scan des dépôts (clonage, parcours de
   l'historique, détection) → Classement des fournisseurs → Finalisation des
   analyses.
+- **Chaîne de traitement** — un point par dépôt, placé à l'étape signalée en
+  dernier par son worker (clone, lire l'historique, attribuer, vérifier,
+  enregistrer) et qui avance quand l'étape suivante est signalée ; les dépôts
+  terminés tombent dans le bac à droite. Orange signifie des correspondances
+  candidates jusqu'ici, rouge une tentative échouée, gris un dépôt ignoré.
 - **Activité en direct** — transmise par les workers pendant le scan.
 - **Bilan** — à la fin de la tâche : combien de résultats dans combien de
   dépôts, combien sont élevés ou critiques, combien restent atteignables depuis
@@ -375,6 +388,57 @@ ligne met en file un signalement destiné au propriétaire du dépôt, listant s
 résultats sous forme d'aperçus masqués. La colonne **Signalé** indique ensuite
 *en cours*, *envoyé*, *échec* ou *désinscrit*.
 
+### Machine à remonter le temps
+
+L'icône d'horloge sur une ligne (ou la puce **Machine à remonter le temps** dans
+Résultats filtrés sur un dépôt) rejoue l'exposition de ce dépôt commit par
+commit. Chaque fichier contenant un identifiant a son couloir ; un losange marque
+le commit qui a introduit chaque clé, et une ligne court de là jusqu'à
+aujourd'hui — pleine tant que la clé est encore sur HEAD, s'estompant une fois
+qu'elle a été retirée.
+
+Faites glisser le curseur, avancez pas à pas avec les boutons précédent et
+suivant, ou appuyez sur lecture pour avancer depuis la première fuite. À chaque
+étape, la page indique combien d'identifiants avaient été commités à ce moment,
+combien sont encore sur HEAD aujourd'hui, et que tous restent clonables.
+Dessous, les commits qui ont introduit un identifiant sont listés du plus récent
+au plus ancien, avec auteur, date et un lien vers chaque résultat.
+
+Le scan sait quand une clé a été commitée, pas quand elle a été supprimée : la
+ligne d'une clé retirée s'estompe donc au lieu de s'arrêter à une date inventée.
+Les résultats sans date de commit sont comptés sous la liste ; un nouveau scan
+les place.
+
+---
+
+## Propagation des clés
+
+Identifiants trouvés dans plus d'un dépôt. Les résultats sont enregistrés une
+fois par dépôt, donc le même secret à plusieurs endroits n'apparaît qu'ici, où
+les copies sont reliées par leur empreinte.
+
+- **Clés partagées**, **Entre propriétaires** (clés dans des dépôts de
+  propriétaires différents), **Ouvertes sur HEAD** et **Dépôts / propriétaires**
+  touchés. Quand il y a plus de clés partagées que le graphe n'en dessine, la
+  première carte indique combien sont dessinées.
+- **Trouvée dans** — afficher les clés présentes dans 2, 3, 5 ou 10 dépôts ou
+  plus.
+- **Le graphe** — un losange par clé, coloré selon la gravité et dimensionné
+  selon sa propagation ; un cercle par dépôt ; un carré par propriétaire qui en
+  a deux ou plus. Une ligne rouge est une copie encore sur HEAD, une ligne
+  pointillée une copie déjà traitée. Survolez pour éclairer le voisinage d'une
+  clé.
+- **La liste** à côté contient les mêmes clés pour le clavier et les lecteurs
+  d'écran. Choisir une clé dans l'un ou l'autre affiche ses dépôts, chacun lié à
+  son résultat.
+
+Une seule rotation règle toutes les copies : le détail d'une clé peut donc
+**marquer chaque copie** comme *Renouvelé* ou *Faux positif* d'un coup, après
+confirmation. Une valeur collée dans les dépôts de nombreux propriétaires sans
+lien entre eux est généralement du code passe-partout que la passe générique a
+pris pour un secret — noms de classes d'un framework, clés d'exemple d'un
+tutoriel — et cette vue est le moyen le plus rapide de les repérer.
+
 ---
 
 ## Non mappés
@@ -432,6 +496,11 @@ niveau de plus pour les fournisseurs cloud et de paiement, jusqu'à critique.
 Un état de tout ce qui a été scanné jusqu'ici :
 
 - **Résultats** et **Dépôts** — totaux, ouverts, exposés / scannés.
+- **Calendrier des fuites** — un carré par jour, une année à la fois, teinté
+  selon le nombre d'identifiants commités ce jour-là et cerclé là où l'un était
+  critique. Choisissez l'année en haut à droite. Les jours sont en UTC : le
+  fuseau de l'auteur n'est pas enregistré, donc un carré peut correspondre à sa
+  veille ou à son lendemain.
 - **Chronologie d'introduction des fuites** — résultats par mois de commit de
   l'identifiant.
 - **Ouverts par gravité**, **Ouverts par fournisseur** (fournisseurs
@@ -485,6 +554,24 @@ Enregistré dans ce navigateur uniquement.
 ### Introduction
 
 **Revoir l'introduction** rouvre la visite guidée.
+
+### Notifications du navigateur
+
+Une fois cette option activée et l'autorisation du navigateur accordée, un
+tableau de bord ouvert — un onglet en arrière-plan suffit — vous prévient quand
+un scan qu'il suivait se termine et quand d'autres clés sont confirmées
+actives ; cliquer sur la notification ouvre le scan ou les clés actives. Quand
+vous regardez le tableau de bord, la même nouvelle arrive plutôt sous forme de
+message dans la page. Rien n'est envoyé une fois tous les onglets du tableau de
+bord fermés. Enregistré dans ce navigateur uniquement.
+
+### Installer le tableau de bord
+
+Le tableau de bord peut être installé comme une application depuis la barre
+d'adresse du navigateur (ou via *Sur l'écran d'accueil* sur un téléphone). Il
+s'ouvre alors dans sa propre fenêtre et son interface se charge sans réseau ;
+les données viennent toujours de l'API et ne sont jamais conservées dans le
+cache du navigateur.
 
 ### E-mails de signalement
 
@@ -567,6 +654,13 @@ relevés de quota et de limites apparaissent dans le panneau du résultat.
 - **La liste indique n'avoir affiné que 500 résultats** — resserrez les
   filtres côté serveur (gravité, fournisseur, statut, dépôt) pour que la
   fenêtre couvre tout.
+- **Pas de « Demander à Claude » dans la palette** — le serveur n'a pas de
+  `ANTHROPIC_API_KEY`, ou la requête ne fait qu'un mot (c'est alors une simple
+  recherche).
+- **Demander à Claude a refusé la question** — elle contenait quelque chose qui
+  a la forme d'un identifiant ; reformulez-la sans la valeur.
+- **Pas de notifications du navigateur** — vérifiez l'autorisation de ce site
+  dans le navigateur ; un site bloqué ne peut pas redemander depuis la page.
 - **Résultats périmés** — supprimer une tâche ou effacer les données retire ses
   résultats ; rescannez pour les récupérer.
 
