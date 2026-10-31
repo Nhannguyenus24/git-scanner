@@ -114,10 +114,10 @@ way to look at results from a shell:
 
 ```bash
 curl -s http://localhost:8080/v1/overview          # headline counts and breakdowns
-curl -s http://localhost:8080/v1/scans             # every job, newest first, with its target
+curl -s http://localhost:8080/v1/scans             # jobs, newest first, with their target (paged: ?limit=&offset=, ?state=active|done)
 curl -s 'http://localhost:8080/v1/findings?severity=critical&status=open&q=env&limit=50&offset=0'
-curl -s http://localhost:8080/v1/repositories      # per-repository open counts by severity
-curl -s http://localhost:8080/v1/candidates        # unmapped-provider backlog
+curl -s http://localhost:8080/v1/repositories      # per-repository open counts by severity (paged; ?q= ?only_open=1 ?sort=risk|open|recent|name)
+curl -s http://localhost:8080/v1/candidates        # unmapped-provider backlog (paged)
 curl -s -X PATCH http://localhost:8080/v1/findings/<id> -d '{"status":"false_positive"}'
 ```
 

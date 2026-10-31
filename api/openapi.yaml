@@ -40,6 +40,8 @@ tags:
     description: Responsible-disclosure mail
   - name: settings
     description: Runtime switches and the unmask list
+  - name: assist
+    description: Plain-words questions read into a findings filter by Claude (only with ANTHROPIC_API_KEY)
 
 paths:
   /healthz:
@@ -175,22 +177,37 @@ paths:
       description: |
         Most recent jobs first, with the target each one expands from, so a scan
         started from the CLI, another browser or before a page reload is still
-        visible.
+        visible. Paged; `total` counts every job matching the filter.
       operationId: listScans
       parameters:
         - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: state
+          in: query
+          required: false
+          description: "`active` for jobs not yet finished, `done` for completed, failed or cancelled ones."
+          schema: { type: string, enum: [active, done] }
+        - name: id
+          in: query
+          required: false
+          description: One job by id — its summary with the target, whatever its age.
+          schema: { type: string, format: uuid }
       responses:
         "200":
           description: Scan jobs
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  scans:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ScanSummary"
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    properties:
+                      scans:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ScanSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -355,20 +372,29 @@ paths:
       tags: [findings]
       summary: List findings for a scan job
       description: |
-        Returns all credentials detected so far. Results grow while the job
-        is still `running`. Each finding exposes a masked preview
-        (e.g. `sk_live_4f2a…9c1d`) — the plaintext secret is never returned
-        here. An unknown job id returns an empty list, not a 404.
+        One page of the credentials the job has recorded, newest first; `total`
+        grows while the job is still `running`. Each finding exposes a masked
+        preview (e.g. `sk_live_4f2a…9c1d`) — the plaintext secret is never
+        returned here. An unknown job id returns an empty page, not a 404.
       operationId: listFindings
       parameters:
         - $ref: "#/components/parameters/JobID"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Findings list
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FindingsResponse"
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    properties:
+                      findings:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Finding"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -679,22 +705,72 @@ paths:
       tags: [catalog]
       summary: List repositories
       description: |
-        Every repository ever scanned, with finding counts and the latest
-        disclosure attempt. Ordered by open critical, then open high, then open
-        findings, each descending, then by `owner/name`. Not paged.
+        One page of the repositories ever scanned, with finding counts and the
+        latest disclosure attempt. Filtering and ordering happen on the server;
+        every order ends on `owner/name`, so pages neither overlap nor skip.
+
+        - `risk` (default): open findings weighted critical 10, high 5,
+          medium 2, low/info 1, descending — the weights of the dashboard's
+          risk score.
+        - `open`: open findings, descending.
+        - `recent`: last scanned, newest first, never-scanned last.
+        - `name`: `owner/name`.
       operationId: listRepositories
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring of `owner/name`. `%` and `_` are literal.
+          schema: { type: string }
+        - name: only_open
+          in: query
+          required: false
+          description: "`true` or `1` keeps only repositories with an open finding."
+          schema: { type: boolean }
+        - name: sort
+          in: query
+          required: false
+          schema: { type: string, enum: [risk, open, recent, name], default: risk }
       responses:
         "200":
           description: Repositories
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  repositories:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Repository"
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    properties:
+                      repositories:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Repository"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/repositories/{id}:
+    get:
+      tags: [catalog]
+      summary: Get one repository
+      description: One repository's summary, in the shape the list returns.
+      operationId: getRepository
+      parameters:
+        - $ref: "#/components/parameters/RepositoryID"
+      responses:
+        "200":
+          description: The repository
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repository"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -928,24 +1004,156 @@ paths:
       description: |
         The unmapped-provider backlog: credential shapes no named rule
         attributes, grouped by signature. Open candidates (`new`, `triaged`)
-        come first, then by occurrences and recency. Not paged.
+        come first, then by occurrences and recency. Paged.
       operationId: listCandidates
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
           description: Candidates
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  candidates:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Candidate"
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    properties:
+                      candidates:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Candidate"
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /v1/notifications:
+  /v1/keys/shared:
+    get:
+      tags: [catalog]
+      summary: Credentials found in more than one repository
+      description: |
+        Findings grouped by fingerprint, keeping those found in at least
+        `min_repos` repositories, most widely spread first. A key is described
+        only by its masked preview and a 16-hex fingerprint prefix — never a
+        value, sealed or not. Paged; the default page is 100 keys.
+      operationId: listSharedKeys
+      parameters:
+        - name: min_repos
+          in: query
+          required: false
+          description: Minimum number of repositories. Values below 2 mean 2.
+          schema: { type: integer, minimum: 2, default: 2 }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Shared keys
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PageInfo"
+                  - type: object
+                    properties:
+                      keys:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SharedKey"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/analytics/calendar:
+    get:
+      tags: [catalog]
+      summary: Findings per day of commit
+      description: |
+        Findings counted by the UTC day their credential was committed, all
+        time, one row per day that had any. Days are UTC because the author's
+        own offset is not stored. Findings not yet traced to a commit are left
+        out.
+      operationId: leakCalendar
+      responses:
+        "200":
+          description: Days with leaks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        day: { type: string, format: date }
+                        findings: { type: integer }
+                        critical: { type: integer }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/assist:
+    get:
+      tags: [assist]
+      summary: Whether plain-words filtering is available
+      description: Present only when the server has `ANTHROPIC_API_KEY`; otherwise 404.
+      operationId: assistStatus
+      responses:
+        "200":
+          description: Enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  model: { type: string, example: claude-opus-5-5 }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/assist/filter:
+    post:
+      tags: [assist]
+      summary: Read a question in plain words into a findings filter
+      description: |
+        One Claude call turns the question into `/v1/findings` filter fields.
+        Only the question and the provider slugs are sent. A question that
+        looks like it contains a credential is refused with 400 before any
+        call; a request the model declines is 422; the model being unreachable
+        is 502. Every returned field is checked against the values the filter
+        accepts. Present only when the server has `ANTHROPIC_API_KEY`.
+      operationId: assistFilter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string, maxLength: 300, example: critical AWS keys still at HEAD in org acme }
+      responses:
+        "200":
+          description: Filter fields; empty means "any"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  severity: { type: string }
+                  provider: { type: string }
+                  status: { type: string }
+                  exposure: { type: string, enum: ["", head, history, live] }
+                  sort: { type: string, enum: ["", recent, oldest, severity] }
+                  q: { type: string }
+                  explanation: { type: string, description: How the question was read, in its language. }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The model declined the request
+        "502":
+          description: The model could not answer
+
     get:
       tags: [notifications]
       summary: List disclosure attempts
@@ -1372,13 +1580,37 @@ components:
         status:
           $ref: "#/components/schemas/FindingStatus"
 
-    FindingsResponse:
+    SharedKey:
       type: object
       properties:
-        findings:
+        key_id: { type: string, description: First 16 hex characters of the fingerprint. }
+        provider: { type: string }
+        rule_id: { type: string }
+        severity: { $ref: "#/components/schemas/Severity" }
+        masked_preview: { type: string }
+        repositories:
           type: array
           items:
-            $ref: "#/components/schemas/Finding"
+            type: object
+            properties:
+              finding_id: { type: string, format: uuid }
+              id: { type: string, format: uuid }
+              owner: { type: string }
+              name: { type: string }
+              status: { $ref: "#/components/schemas/FindingStatus" }
+              reachable_from_head: { type: boolean }
+
+    PageInfo:
+      type: object
+      description: |
+        The window a paged list applied. `limit` and `offset` are the values
+        actually used, which differ from the request when it was out of range;
+        page from these, not from what was sent.
+      required: [total, limit, offset]
+      properties:
+        total: { type: integer, description: Rows matching the filter, across all pages. }
+        limit: { type: integer }
+        offset: { type: integer }
 
     FindingDetail:
       description: A finding as the dashboard search returns it, with its repository and commit.
