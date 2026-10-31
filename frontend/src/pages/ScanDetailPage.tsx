@@ -15,6 +15,7 @@ import { useTheme } from '@mui/material/styles'
 import ExportMenu from '../components/ExportMenu'
 import FindingsTable from '../components/FindingsTable'
 import Illustration from '../components/Illustration'
+import LiveActivity from '../components/LiveActivity'
 import ScanTimeline, { etaSeconds } from '../components/ScanTimeline'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
@@ -23,6 +24,8 @@ import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading, TableSkeleton } from '../components/States'
 import { duration, num, timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
+import { useScanEvents } from '../hooks/useScanEvents'
+import { stepCounts } from '../live'
 import { href, navigate } from '../hooks/useRoute'
 import { useTriage } from '../hooks/useTriage'
 import { useSettings } from '../store/settings'
@@ -48,6 +51,12 @@ export default function ScanDetailPage({ id }: { id: string }) {
   const active   = scan ? !TERMINAL.has(scan.state) : true
   const findings = useResource(() => api.findings({ scan_id: id, limit: 500 }), [api, id], active ? 4000 : 0)
   const triage   = useTriage(findings.reload)
+  // Opened only while the job runs; a finished job's narration is over and the
+  // counters say everything. A finished repository refreshes the counters and
+  // findings at once rather than at the next poll.
+  const { live, status: liveStatus } = useScanEvents(api.scanEventsUrl(id), !!scan && active, () => {
+    scans.reload(); findings.reload()
+  })
 
   if (scans.loading) return <Loading />
   if (scans.error && !scans.data) return <LoadError error={scans.error} retry={scans.reload} />
@@ -159,10 +168,12 @@ export default function ScanDetailPage({ id }: { id: string }) {
         <Grid item xs={12} md={5}>
           <Card sx={{ p: 2, height: '100%' }}>
             <Typography sx={{ fontWeight: 700, mb: 1.5 }}>{t('scan.stages')}</Typography>
-            <ScanTimeline scan={scan} />
+            <ScanTimeline scan={scan} steps={liveStatus === 'live' || liveStatus === 'reconnecting' ? stepCounts(live) : undefined} />
           </Card>
         </Grid>
       </Grid>
+
+      {(active || live.log.length > 0) && <LiveActivity live={live} status={liveStatus} />}
 
       <Card>
         <Box sx={{ px: 2, py: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

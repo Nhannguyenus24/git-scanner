@@ -128,6 +128,36 @@ export interface Provider {
   rules:    number
 }
 
+/** One step of a running scan, as streamed by GET /v1/scans/{id}/events.
+ *  Live narration only: the job's counters stay the source of truth, and an
+ *  event can be lost without any number on the page being wrong. */
+export type ProgressStage =
+  'discover' | 'queue' | 'clone' | 'walk' | 'attribute' | 'probe' | 'store' | 'repo' | 'job'
+export type ProgressStatus =
+  'start' | 'progress' | 'done' | 'failed' | 'skipped' | 'deferred' | 'paused' | 'cancelled'
+
+export interface ProgressEvent {
+  seq:            number
+  job_id:         string
+  repo_id?:       string
+  repo?:          string
+  stage:          ProgressStage
+  status:         ProgressStatus
+  at:             string
+  elapsed_ms?:    number
+  attempt?:       number
+  blobs?:         number
+  matches?:       number
+  findings?:      number
+  reclassified?:  number
+  live?:          number
+  page?:          number
+  repos?:         number
+  path?:          string
+  app_type?:      string
+  error?:         string
+}
+
 export interface Count { key: string; count: number }
 export interface TimePoint { period: string; findings: number }
 

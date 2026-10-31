@@ -10,6 +10,7 @@ import (
 	"github.com/mservice/gitscanner/internal/discovery"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/libs/config"
 	"github.com/mservice/gitscanner/libs/rabbit"
 )
@@ -40,7 +41,7 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	// limit exhausts after a few hundred requests (plan.md §9).
 	gh := github.New(config.GetOr("GITHUB_TOKEN", ""))
 	disp := dispatch.New(publisher)
-	worker := discovery.New(gh, d.DB, disp, d.DB, d.Log)
+	worker := discovery.New(gh, d.DB, disp, d.DB, d.Log).WithProgress(progress.NewPublisher(d.DB, d.Log))
 
 	consumer, err := d.Rabbit.NewConsumer(rabbit.QueueDiscovery, discoveryPrefetch, discoveryMaxRetry)
 	if err != nil {
