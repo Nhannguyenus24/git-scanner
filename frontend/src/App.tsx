@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import NewScanDialog from './components/NewScanDialog'
 import OnboardingTour from './components/OnboardingTour'
 import { useHotkeys } from './hooks/useHotkeys'
+import { useDesktopAlerts } from './hooks/useDesktopAlerts'
 import { useResource } from './hooks/useResource'
 import { href, navigate, useRoute, type Route } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
@@ -49,6 +50,7 @@ function Dashboard({ route }: { route: Route }) {
   // without clearing the completion flag.
   const [tourOpen, setTourOpen] = useState(!prefs.onboarded)
   const ov = useResource(() => api.overview(), [api], 10000)
+  useDesktopAlerts(prefs.desktopAlerts)
 
   const startScan = async (kind: TargetKind, value: string, forks: boolean) => {
     const job = kind === 'repo' ? await api.scanRepo(value)

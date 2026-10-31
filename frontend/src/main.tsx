@@ -25,3 +25,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </PreferencesProvider>
   </React.StrictMode>,
 )
+
+// The service worker is registered for built pages only: under the dev server it
+// would cache modules Vite is about to hot-replace.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}) })
+}
