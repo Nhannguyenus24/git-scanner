@@ -23,8 +23,8 @@ var bootstrapRuleDefs = []struct {
 	},
 	{
 		id: "github-pat", provider: "github", severity: "high",
-		pattern:  `(?P<secret>gh[pous]_[0-9A-Za-z]{36})`,
-		literals: []string{"ghp_", "gho_", "ghu_", "ghs_"},
+		pattern:  `(?P<secret>gh[pousr]_[0-9A-Za-z]{36})`,
+		literals: []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_"},
 	},
 	{
 		id: "github-fine-grained-pat", provider: "github", severity: "high",
@@ -574,6 +574,121 @@ var bootstrapRuleDefs = []struct {
 		id: "smtp-url", provider: "smtp", severity: "medium",
 		pattern:  `(?P<secret>smtps?://[^:@\s/]+:[^@\s/]+@[^\s/"']+)`,
 		literals: []string{"smtp://", "smtps://"},
+	},
+	// Cloud and payment credentials whose leak is the most expensive. Several
+	// have no prefix of their own and are anchored on the setting that holds
+	// them, as cloudinary and recaptcha are above.
+	{
+		// The secret half of an AKIA… pair: 40 base64 characters with no shape
+		// of its own, so it is found by its setting name, near the word aws.
+		id: "aws-secret-access-key", provider: "aws", severity: "critical",
+		pattern:  `(?i)secret[_-]?access[_-]?key["']?\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9/+]{40})(?:[^A-Za-z0-9/+=]|$)`,
+		literals: []string{"secret_access_key", "SECRET_ACCESS_KEY", "secretAccessKey", "SecretAccessKey", "secret-access-key"},
+		keywords: []string{"aws"},
+	},
+	{
+		id: "azure-storage-account-key", provider: "azure", severity: "critical",
+		pattern:  `AccountKey=(?P<secret>[A-Za-z0-9+/]{86}==)`,
+		literals: []string{"AccountKey="},
+	},
+	{
+		// Entra ID (Azure AD) client secrets: three characters, a digit, then
+		// the fixed "Q~" marker. The surrounding class is matched outside the
+		// group because RE2 has no lookaround and \b does not see "~".
+		id: "azure-ad-client-secret", provider: "azure", severity: "high",
+		pattern:  `(?:^|[^A-Za-z0-9_~.-])(?P<secret>[A-Za-z0-9_~.-]{3}[0-9]Q~[A-Za-z0-9_~.-]{31,34})(?:[^A-Za-z0-9_~.-]|$)`,
+		literals: []string{"Q~"},
+	},
+	{
+		id: "stripe-restricted-key", provider: "stripe", severity: "high",
+		pattern:  `(?P<secret>rk_live_[0-9A-Za-z]{24,})`,
+		literals: []string{"rk_live_"},
+	},
+	{
+		// A webhook signing secret lets anyone forge Stripe events to the app.
+		id: "stripe-webhook-secret", provider: "stripe", severity: "medium",
+		pattern:  `(?P<secret>whsec_[0-9A-Za-z]{32,})`,
+		literals: []string{"whsec_"},
+	},
+	{
+		id: "paypal-braintree-access-token", provider: "paypal", severity: "critical",
+		pattern:  `(?P<secret>access_token\$production\$[0-9a-z]{16}\$[0-9a-f]{32})`,
+		literals: []string{"access_token$production$"},
+	},
+	{
+		// VNPay's merchant hash secret signs every payment request; with it and
+		// the public TmnCode anyone can forge a paid order. 32 uppercase
+		// alphanumerics, so it is anchored on the setting name.
+		id: "vnpay-hash-secret", provider: "vnpay", severity: "critical",
+		pattern:  `(?i)vnp(?:ay)?[._-]?hash[._-]?secret["']?\s*[:=]\s*["']?(?P<secret>[A-Z0-9]{32})\b`,
+		literals: []string{"vnp", "VNP", "Vnp"},
+	},
+	{
+		// MoMo partner secretKey signs payment requests. Its shape is 32
+		// alphanumerics, so it needs both the setting name and the word momo.
+		id: "momo-secret-key", provider: "momo", severity: "critical",
+		pattern:  `(?i)secret[_-]?key["']?\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9]{32})\b`,
+		literals: []string{"secretKey", "secret_key", "SECRET_KEY", "SecretKey", "secretkey", "secret-key"},
+		keywords: []string{"momo"},
+	},
+	{
+		// ZaloPay key1 signs order creation, key2 verifies callbacks.
+		id: "zalopay-key", provider: "zalopay", severity: "critical",
+		pattern:  `(?i)\bkey[12]["']?\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9]{32})\b`,
+		literals: []string{"key1", "key2", "KEY1", "KEY2", "Key1", "Key2"},
+		keywords: []string{"zalopay"},
+	},
+
+	// More platform tokens with a self-identifying prefix.
+	{
+		id: "slack-app-token", provider: "slack", severity: "high",
+		pattern:  `(?P<secret>xapp-[0-9]-[A-Z0-9]+-[0-9]+-[a-f0-9]{64})`,
+		literals: []string{"xapp-"},
+	},
+	{
+		// Deploy, runner, pipeline-trigger and service-account tokens: each
+		// acts on the project without a personal account behind it.
+		id: "gitlab-token", provider: "gitlab", severity: "high",
+		pattern:  `(?P<secret>gl(?:dt|rt|ptt|soat)-[0-9A-Za-z_-]{20,})`,
+		literals: []string{"gldt-", "glrt-", "glptt-", "glsoat-"},
+	},
+	{
+		id: "heroku-api-key", provider: "heroku", severity: "high",
+		pattern:  `(?P<secret>HRKU-AA[0-9A-Za-z_-]{58})`,
+		literals: []string{"HRKU-AA"},
+	},
+	{
+		id: "supabase-secret-key", provider: "supabase", severity: "critical",
+		pattern:  `(?P<secret>sb_secret_[0-9A-Za-z_-]{20,})`,
+		literals: []string{"sb_secret_"},
+	},
+	{
+		// The legacy FCM server key sends push notifications to every install.
+		id: "firebase-fcm-server-key", provider: "google", severity: "high",
+		pattern:  `(?P<secret>AAAA[0-9A-Za-z_-]{7}:APA91b[0-9A-Za-z_-]{100,})`,
+		literals: []string{":APA91b"},
+	},
+	{
+		// An X (Twitter) app bearer token opens with a long run of "A". That
+		// run also opens base64 of zero bytes, so the word bearer must be near.
+		id: "twitter-bearer-token", provider: "twitter", severity: "high",
+		pattern:  `(?P<secret>A{22}[0-9A-Za-z%]{80,})`,
+		literals: []string{"AAAAAAAAAAAAAAAAAAAAAA"},
+		keywords: []string{"bearer"},
+	},
+	{
+		// Bot tokens are three dot-separated base64url parts; the first is the
+		// bot's id, so it starts M or N. The shape alone is too loose, hence
+		// the word discord nearby.
+		id: "discord-bot-token", provider: "discord", severity: "high",
+		pattern:  `(?:^|[^0-9A-Za-z_-])(?P<secret>[MN][0-9A-Za-z_-]{23,25}\.[0-9A-Za-z_-]{6}\.[0-9A-Za-z_-]{27,38})(?:[^0-9A-Za-z_-]|$)`,
+		literals: []string{"discord", "Discord", "DISCORD"},
+		keywords: []string{"discord"},
+	},
+	{
+		id: "age-secret-key", provider: "age", severity: "critical",
+		pattern:  `(?P<secret>AGE-SECRET-KEY-1[0-9A-Z]{58})`,
+		literals: []string{"AGE-SECRET-KEY-1"},
 	},
 	{
 		// The secret spans the whole block, not just the header. A header-only

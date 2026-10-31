@@ -546,3 +546,68 @@ func TestPlatformRulesNeedTheirShape(t *testing.T) {
 		}
 	}
 }
+
+// TestDetectCloudPaymentAndPlatformKeys covers the third batch: cloud and
+// payment secrets anchored on their setting name, and more prefixed tokens.
+func TestDetectCloudPaymentAndPlatformKeys(t *testing.T) {
+	r := func(n int) string { return strings.Repeat("Zx9Kq2Lp7W", n/10+1)[:n] }
+	h := func(n int) string { return strings.Repeat("3f9a0c7e1b", n/10+1)[:n] }
+	u := func(n int) string { return strings.Repeat("ZX9KQ2LP7W", n/10+1)[:n] }
+	cases := []struct{ name, blob, rule string }{
+		{"aws secret env", "AWS_SECRET_ACCESS_KEY=" + r(38) + "/+", "aws-secret-access-key"},
+		{"aws secret ini", "[default]\naws_secret_access_key = " + r(40) + "\n", "aws-secret-access-key"},
+		{"aws secret js", "new AWS.S3({ secretAccessKey: '" + r(40) + "' })", "aws-secret-access-key"},
+		{"azure storage", "DefaultEndpointsProtocol=https;AccountName=acme;AccountKey=" + r(86) + "==;EndpointSuffix=core.windows.net", "azure-storage-account-key"},
+		{"azure ad", "AZURE_CLIENT_SECRET=" + r(3) + "8Q~" + r(34), "azure-ad-client-secret"},
+		{"stripe restricted", "STRIPE_KEY=rk_live" + "_" + r(40), "stripe-restricted-key"},
+		{"stripe webhook", "STRIPE_WEBHOOK_SECRET=whsec" + "_" + r(32), "stripe-webhook-secret"},
+		{"braintree", "BT=access_token$production$" + h(16) + "$" + h(32), "paypal-braintree-access-token"},
+		{"vnpay", "vnp_HashSecret=" + u(32), "vnpay-hash-secret"},
+		{"vnpay env", "VNPAY_HASH_SECRET=\"" + u(32) + "\"", "vnpay-hash-secret"},
+		{"momo", "momo:\n  partnerCode: MOMOX\n  secretKey: " + r(32) + "\n", "momo-secret-key"},
+		{"zalopay", "zalopay:\n  app_id: 2553\n  key1: " + r(32) + "\n", "zalopay-key"},
+		{"slack app", "SLACK_APP_TOKEN=xapp-1-A0" + u(8) + "-1234567890123-" + h(64), "slack-app-token"},
+		{"gitlab deploy", "CI_DEPLOY_TOKEN=gldt" + "-" + r(20), "gitlab-token"},
+		{"heroku", "HEROKU_API_KEY=HRKU-AA" + r(58), "heroku-api-key"},
+		{"supabase secret", "SUPABASE_SECRET_KEY=sb_secret" + "_" + r(31), "supabase-secret-key"},
+		{"fcm", "FCM_SERVER_KEY=AAAA" + r(7) + ":APA91b" + r(134), "firebase-fcm-server-key"},
+		{"twitter", "TWITTER_BEARER_TOKEN=" + strings.Repeat("A", 22) + r(90), "twitter-bearer-token"},
+		{"discord bot", "DISCORD_BOT_TOKEN=M" + r(23) + "." + r(6) + "." + r(38), "discord-bot-token"},
+		{"age", "AGE_KEY=AGE-SECRET-KEY-1" + u(58), "age-secret-key"},
+		{"github refresh", "token=ghr" + "_" + r(36), "github-pat"},
+	}
+	for _, c := range cases {
+		ms := detect(".env", c.blob)
+		if len(ms) != 1 || ms[0].RuleID != c.rule {
+			got := make([]string, len(ms))
+			for i, m := range ms {
+				got[i] = m.RuleID
+			}
+			t.Errorf("%s: rules = %v, want [%s]", c.name, got, c.rule)
+		}
+	}
+}
+
+// TestContextAnchoredRulesNeedTheirContext guards the rules whose value has no
+// shape of its own: without the setting name or the provider's word nearby they
+// must not attribute, and published sandbox keys must not fire at all.
+func TestContextAnchoredRulesNeedTheirContext(t *testing.T) {
+	r := func(n int) string { return strings.Repeat("Zx9Kq2Lp7W", n/10+1)[:n] }
+	cases := []struct{ name, blob string }{
+		{"secret access key, no aws", "minio:\n  secret_access_key: " + r(40)},
+		{"secretKey, no momo", "jwt:\n  secretKey: " + r(32)},
+		{"key1, no zalopay", "cache:\n  key1: " + r(32)},
+		{"discord-shaped, no discord", "token=M" + r(23) + "." + r(6) + "." + r(38)},
+		{"A-run, no bearer", "data=" + strings.Repeat("A", 22) + r(90)},
+		{"momo sandbox", "momo:\n  secretKey: K951B6PE1waDMi640xX08PD3vg6EkVlz"},
+		{"azurite", "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="},
+		{"aws docs secret", "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"},
+	}
+	for _, c := range cases {
+		for _, m := range detect("config.yml", c.blob) {
+			if m.Provider != "" {
+				t.Errorf("%s: attributed to %s by %s", c.name, m.Provider, m.RuleID)
+			}
+		}
+	}
+}
