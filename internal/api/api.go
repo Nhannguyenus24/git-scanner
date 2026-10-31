@@ -40,7 +40,7 @@ type Store interface {
 	UpsertRepository(ctx context.Context, r entity.Repository) (entity.Repository, error)
 	GetScanJob(ctx context.Context, jobID entity.ID) (entity.ScanJob, error)
 	GetRepository(ctx context.Context, repoID entity.ID) (entity.Repository, error)
-	ListFindings(ctx context.Context, jobID entity.ID) ([]entity.Finding, error)
+	ListFindingsPage(ctx context.Context, jobID entity.ID, page store.Page) ([]entity.Finding, int, error)
 	ListOpenFindingsByRepository(ctx context.Context, repoID entity.ID) ([]entity.Finding, error)
 	SetReposTotal(ctx context.Context, jobID entity.ID, n int) error
 	SetScanState(ctx context.Context, jobID entity.ID, to entity.ScanState, errMsg string) error

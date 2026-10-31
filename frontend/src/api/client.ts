@@ -1,5 +1,5 @@
 import type {
-  SharedKey, LeakDay, AssistFilter,
+  SharedKey, LeakDay, AssistFilter, PageInfo, PageParams, RepositoryFilter, ScanListFilter,
   AppSettings, Analytics, ShareDetail, ShareLink, SharedReport, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
@@ -36,7 +36,7 @@ export function createClient(rawBase: string) {
     overview:     ()                                     => r<Overview>('GET', '/v1/overview'),
     analytics:    ()                                     => r<Analytics>('GET', '/v1/analytics'),
     leakCalendar: ()                                     => r<{ days: LeakDay[] }>('GET', '/v1/analytics/calendar'),
-    listScans:    (limit = 100)                          => r<{ scans: ScanSummary[] }>('GET', `/v1/scans?limit=${limit}`),
+    listScans:    (f: ScanListFilter = {})               => r<{ scans: ScanSummary[] } & PageInfo>('GET', `/v1/scans${query(f)}`),
     getScan:      (id: string)                           => r<ScanJob>('GET', `/v1/scans/${id}`),
     /** The Server-Sent Events stream of a scan's live progress. */
     scanEventsUrl: (id: string)                          => `${base}/v1/scans/${id}/events`,
@@ -51,11 +51,12 @@ export function createClient(rawBase: string) {
     deleteScan:   (id: string)                           => r<unknown>('DELETE', `/v1/scans/${id}`),
     findings:     (f: FindingFilter)                     => r<{ findings: Finding[]; total: number }>('GET', `/v1/findings${query(f)}`),
     setStatus:    (id: string, status: FindingStatus)    => r<unknown>('PATCH', `/v1/findings/${id}`, { status }),
-    repositories: ()                                     => r<{ repositories: Repository[] }>('GET', '/v1/repositories'),
-    candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
+    repositories: (f: RepositoryFilter = {})             => r<{ repositories: Repository[] } & PageInfo>('GET', `/v1/repositories${query({ ...f, only_open: f.only_open || undefined })}`),
+    repository:   (id: string)                           => r<Repository>('GET', `/v1/repositories/${id}`),
+    candidates:   (p: PageParams = {})                   => r<{ candidates: Candidate[] } & PageInfo>('GET', `/v1/candidates${query(p)}`),
     assistStatus: ()                                     => r<{ enabled: boolean; model: string }>('GET', '/v1/assist'),
     assistFilter: (question: string)                     => r<AssistFilter>('POST', '/v1/assist/filter', { question }),
-    sharedKeys:   (minRepos = 2)                         => r<{ keys: SharedKey[]; total: number }>('GET', `/v1/keys/shared?min_repos=${minRepos}`),
+    sharedKeys:   (minRepos = 2)                         => r<{ keys: SharedKey[] } & PageInfo>('GET', `/v1/keys/shared?min_repos=${minRepos}`),
     providers:    ()                                     => r<{ providers: Provider[] }>('GET', '/v1/providers'),
     disclose:     (repoId: string)                       => r<{ recipient: string; findings: number }>('POST', `/v1/repositories/${repoId}/disclose`, {}),
     shares:       (repoId: string)                       => r<{ shares: ShareLink[] }>('GET', `/v1/repositories/${repoId}/shares`),

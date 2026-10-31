@@ -46,7 +46,9 @@ export default function AnalyticsPage() {
   const ch = useTheme().chart
   const ov = useResource(() => api.overview(), [api], 10000)
   const an = useResource(() => api.analytics(), [api], 10000)
-  const repos = useResource(() => api.repositories(), [api], 30000)
+  // Ranked on the server by the same weights the risk score uses, so the first
+  // page is the top of the whole list, not of whatever happened to load.
+  const repos = useResource(() => api.repositories({ sort: 'risk', only_open: true, limit: 8 }), [api], 30000)
   // The oldest unresolved findings need the findings themselves; one window of
   // the server's maximum is enough to rank the worst, and the caption says so.
   const old = useResource(() => api.findings({ status: 'open', limit: 500 }), [api], 60000)
@@ -67,10 +69,7 @@ export default function AnalyticsPage() {
   }, [old.data, severity, provider])
 
   const topRepos = useMemo(() => {
-    const rows = repos.data?.repositories ?? []
-    return [...rows].filter(r => r.open > 0)
-      .sort((a, b) => repoRisk(b).score - repoRisk(a).score)
-      .slice(0, 8)
+    return repos.data?.repositories ?? []
   }, [repos.data])
 
   if (ov.loading || an.loading) return <Loading />

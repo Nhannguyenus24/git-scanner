@@ -36,7 +36,7 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
   const [layoutAnchor, setLayoutAnchor] = useState<null | HTMLElement>(null)
 
   const ov    = useResource(() => api.overview(), [api], 5000)
-  const scans = useResource(() => api.listScans(8), [api], 5000)
+  const scans = useResource(() => api.listScans({ limit: 8 }), [api], 5000)
   // The activity feed is assembled from these three lists; see ActivityFeed for
   // why nothing is generated in the browser.
   const recent  = useResource(() => api.findings({ limit: 8 }), [api], 15000)

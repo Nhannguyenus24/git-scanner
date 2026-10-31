@@ -101,7 +101,8 @@ func (s *Server) handleGetScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListFindings(w http.ResponseWriter, r *http.Request) {
-	findings, err := s.store.ListFindings(r.Context(), entity.ID(r.PathValue("id")))
+	page := pageParam(r)
+	findings, total, err := s.store.ListFindingsPage(r.Context(), entity.ID(r.PathValue("id")), page)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -124,7 +125,7 @@ func (s *Server) handleListFindings(w http.ResponseWriter, r *http.Request) {
 			"status":              string(f.Status),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"findings": out})
+	paged(w, "findings", out, total, page)
 }
 
 // handleDeleteScan removes a scan job and the findings it recorded (the DB

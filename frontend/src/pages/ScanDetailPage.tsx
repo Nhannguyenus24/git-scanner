@@ -46,8 +46,9 @@ export default function ScanDetailPage({ id }: { id: string }) {
   const { t } = useT()
   const ch = useTheme().chart
   const notify  = useToast()
-  // The list endpoint carries the target and timings; polled until the job ends.
-  const scans    = useResource(() => api.listScans(500), [api], 3000)
+  // The list endpoint carries the target and timings; asked for this one job by
+  // id, so a job older than any page is still found. Polled until it ends.
+  const scans    = useResource(() => api.listScans({ id }), [api, id], 3000)
   const scan     = scans.data?.scans.find(s => s.id === id)
   const active   = scan ? !TERMINAL.has(scan.state) : true
   const findings = useResource(() => api.findings({ scan_id: id, limit: 500 }), [api, id], active ? 4000 : 0)

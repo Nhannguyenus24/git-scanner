@@ -6,11 +6,11 @@ import Card from '@mui/material/Card'
 import Chip from '@mui/material/Chip'
 import InputAdornment from '@mui/material/InputAdornment'
 import MenuItem from '@mui/material/MenuItem'
-import TablePagination from '@mui/material/TablePagination'
 import TextField from '@mui/material/TextField'
 import SearchIcon from '@mui/icons-material/Search'
 import HistoryIcon from '@mui/icons-material/History'
 import ExportMenu from '../components/ExportMenu'
+import Pager from '../components/Pager'
 import FindingsTable from '../components/FindingsTable'
 import SavedFilterMenu from '../components/SavedFilterMenu'
 import { PageHeader } from '../components/Layout'
@@ -179,10 +179,8 @@ export default function FindingsPage({ route }: { route: Route }) {
                   navigate(href('findings', undefined, { ...next, finding: id ?? '' }))
                 }} />
               <Box sx={{ borderTop: 1, borderColor: 'divider' }}>
-                <TablePagination component="div" count={total} page={page} rowsPerPage={size}
-                  rowsPerPageOptions={[25, 50, 100, 200]}
-                  onPageChange={(_, n) => set({ page: String(n) })}
-                  onRowsPerPageChange={e => set({ size: e.target.value })} />
+                <Pager total={total} page={page} size={size}
+                  onPage={n => set({ page: String(n) })} onSize={n => set({ size: String(n) })} />
               </Box>
             </>
           )}

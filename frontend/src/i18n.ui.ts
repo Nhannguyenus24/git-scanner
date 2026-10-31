@@ -685,4 +685,12 @@ export const DICT_UI: Record<string, Entry> = {
   'cmd.asking':       e('Asking Claude…', 'Đang hỏi Claude…', 'Chiedo a Claude…', '正在询问 Claude…', 'Preguntando a Claude…', 'Claude wird gefragt…', 'Question envoyée à Claude…'),
   'cmd.askDone':      e('Read as: {how}', 'Hiểu là: {how}', 'Interpretato come: {how}', '理解为：{how}', 'Interpretado como: {how}', 'Verstanden als: {how}', 'Compris comme : {how}'),
   'cmd.askDoneBare':  e('Filter applied', 'Đã áp dụng bộ lọc', 'Filtro applicato', '已应用筛选', 'Filtro aplicado', 'Filter angewendet', 'Filtre appliqué'),
+
+  // ---- paging ---------------------------------------------------------------
+  'pager.size':     e('Rows per page', 'Số dòng mỗi trang', 'Righe per pagina', '每页行数', 'Filas por página', 'Zeilen pro Seite', 'Lignes par page'),
+  'pager.range':    e('{from}–{to} of {total}', '{from}–{to} trên {total}', '{from}–{to} di {total}', '第 {from}–{to} 条，共 {total} 条', '{from}–{to} de {total}', '{from}–{to} von {total}', '{from}–{to} sur {total}'),
+  'pager.first':    e('First page', 'Trang đầu', 'Prima pagina', '第一页', 'Primera página', 'Erste Seite', 'Première page'),
+  'pager.last':     e('Last page', 'Trang cuối', 'Ultima pagina', '最后一页', 'Última página', 'Letzte Seite', 'Dernière page'),
+  'pager.next':     e('Next page', 'Trang sau', 'Pagina successiva', '下一页', 'Página siguiente', 'Nächste Seite', 'Page suivante'),
+  'pager.previous': e('Previous page', 'Trang trước', 'Pagina precedente', '上一页', 'Página anterior', 'Vorherige Seite', 'Page précédente'),
 }

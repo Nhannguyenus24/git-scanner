@@ -115,10 +115,11 @@ function stubFetch() {
           by_rule: [{ key: 'github-pat', count: 4 }], live_probes: [{ key: 'live', count: 1 }],
           notifications: [{ key: 'sent', count: 1 }],
         }
-      : path === '/v1/scans'          ? { scans: [SCAN, RUNNING] }
+      : path === '/v1/scans'          ? { scans: [SCAN, RUNNING], total: 2, limit: 50, offset: 0 }
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
-      : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
-      : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/repositories'   ? { repositories: [REPOSITORY], total: 126102, limit: 50, offset: 0 }
+      : path === '/v1/repositories/r1' ? REPOSITORY
+      : path === '/v1/candidates'     ? { candidates: [], total: 0, limit: 50, offset: 0 }
       : path === '/v1/assist'         ? { enabled: true, model: 'claude-opus-5-5' }
       : path === '/v1/assist/filter'  ? { severity: 'critical', provider: 'aws', status: 'open', exposure: 'head', sort: '', q: 'acme', explanation: 'critical AWS keys at HEAD in acme' }
       : path === '/v1/analytics/calendar' ? { days: [{ day: '2026-01-02', findings: 3, critical: 1 }] }
@@ -223,6 +224,21 @@ describe('overview', () => {
     await act(async () => { fireEvent.click(hide) })
     expect(screen.getByRole('button', { name: /\+ /i })).toBeTruthy()
     expect(JSON.parse(localStorage.getItem('gs-prefs')!).widgets).not.toContain('posture')
+  })
+})
+
+describe('repositories', () => {
+  it('asks the server for a filtered, sorted page and pages through the total', async () => {
+    await open('#/repositories')
+    const calls = () => (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map(c => String(c[0])).filter(u => u.includes('/v1/repositories?'))
+    expect(calls().at(-1)).toMatch(/only_open=true/)
+    expect(calls().at(-1)).toMatch(/sort=risk/)
+    expect(calls().at(-1)).toMatch(/limit=50/)
+    // 126,102 repositories on the server, one page here.
+    expect(screen.getByText(/1–50 of 126,102/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /next page/i })) })
+    expect(calls().at(-1)).toMatch(/offset=50/)
   })
 })
 

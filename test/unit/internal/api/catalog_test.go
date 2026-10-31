@@ -15,14 +15,18 @@ import (
 
 // fakeCatalog records the filter it was asked for and the triage it applied.
 type fakeCatalog struct {
-	filter   store.FindingFilter
-	sealed   []byte // returned on the row when the filter asks to reveal
-	statuses map[entity.ID]entity.FindingStatus
-	jobs     []store.JobSummary
+	filter     store.FindingFilter
+	sealed     []byte // returned on the row when the filter asks to reveal
+	statuses   map[entity.ID]entity.FindingStatus
+	jobs       []store.JobSummary
+	repoFilter store.RepositoryFilter
+	page       store.Page
+	scanFilter store.ScanFilter
 }
 
-func (c *fakeCatalog) ListScanJobs(context.Context, int) ([]store.JobSummary, error) {
-	return c.jobs, nil
+func (c *fakeCatalog) ListScanJobs(_ context.Context, f store.ScanFilter) ([]store.JobSummary, int, error) {
+	c.page, c.scanFilter = f.Page, f
+	return c.jobs, len(c.jobs), nil
 }
 
 func (c *fakeCatalog) SearchFindings(_ context.Context, f store.FindingFilter) ([]store.FindingRow, int, error) {
@@ -42,16 +46,25 @@ func (c *fakeCatalog) SetFindingStatus(_ context.Context, id entity.ID, s entity
 	return nil
 }
 
-func (c *fakeCatalog) ListRepositories(context.Context) ([]store.RepositorySummary, error) {
-	return nil, nil
+func (c *fakeCatalog) ListRepositories(_ context.Context, f store.RepositoryFilter) ([]store.RepositorySummary, int, error) {
+	c.repoFilter = f
+	return []store.RepositorySummary{{ID: "r1", Owner: "acme", Name: "web", Open: 2, Critical: 1}}, 126102, nil
+}
+
+func (c *fakeCatalog) RepositorySummaryByID(_ context.Context, id entity.ID) (store.RepositorySummary, error) {
+	if id != knownRepo {
+		return store.RepositorySummary{}, store.ErrNotFound
+	}
+	return store.RepositorySummary{ID: id, Owner: "acme", Name: "web"}, nil
 }
 
 func (c *fakeCatalog) GetOverview(context.Context) (store.Overview, error) {
 	return store.Overview{Findings: 3}, nil
 }
 
-func (c *fakeCatalog) ListProviderCandidates(context.Context) ([]entity.ProviderCandidate, error) {
-	return []entity.ProviderCandidate{{ID: "c1"}}, nil
+func (c *fakeCatalog) ListProviderCandidates(_ context.Context, p store.Page) ([]entity.ProviderCandidate, int, error) {
+	c.page = p
+	return []entity.ProviderCandidate{{ID: "c1"}}, 824, nil
 }
 
 func (c *fakeCatalog) FindingsTimeline(context.Context) ([]store.TimePoint, error) {
@@ -69,6 +82,8 @@ func (c *fakeCatalog) LiveProbeCounts(context.Context) ([]store.Count, error) {
 func (c *fakeCatalog) NotificationCounts(context.Context) ([]store.Count, error) {
 	return []store.Count{{Key: "sent", Count: 1}}, nil
 }
+
+const knownRepo = entity.ID("01a16d46-dc0a-7979-899f-fae3af3961b3")
 
 const knownFinding = entity.ID("01a16d46-dc0a-7979-899f-fae3af3961b2")
 
@@ -188,11 +203,92 @@ func TestAnalyticsRoute(t *testing.T) {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 	var resp struct {
-		Timeline  []struct{ Period string; Findings int }
-		ByAppType []struct{ Key string; Count int } `json:"by_app_type"`
+		Timeline []struct {
+			Period   string
+			Findings int
+		}
+		ByAppType []struct {
+			Key   string
+			Count int
+		} `json:"by_app_type"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if len(resp.Timeline) != 1 || resp.Timeline[0].Period != "2025-01" || len(resp.ByAppType) != 1 {
 		t.Errorf("analytics response = %+v", resp)
+	}
+}
+
+type pageMeta struct {
+	Total  int `json:"total"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+func TestRepositoriesArePagedFilteredAndSortedOnTheServer(t *testing.T) {
+	srv, cat := newCatalogServer(t)
+	rec := do(srv, http.MethodGet, "/v1/repositories?q=acme&only_open=true&sort=recent&limit=25&offset=50", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	want := store.RepositoryFilter{Query: "acme", OnlyOpen: true, Sort: "recent", Page: store.Page{Limit: 25, Offset: 50}}
+	if cat.repoFilter != want {
+		t.Errorf("filter %+v, want %+v", cat.repoFilter, want)
+	}
+	var got struct {
+		pageMeta
+		Repositories []struct{ ID string } `json:"repositories"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.Total != 126102 || got.Limit != 25 || got.Offset != 50 || len(got.Repositories) != 1 {
+		t.Errorf("body %s", rec.Body.String())
+	}
+
+	if rec := do(srv, http.MethodGet, "/v1/repositories?sort=stars", ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown sort: status %d, want 400", rec.Code)
+	}
+}
+
+func TestPageBoundsAreReportedAsApplied(t *testing.T) {
+	srv, _ := newCatalogServer(t)
+	for path, want := range map[string]pageMeta{
+		"/v1/candidates":                    {Total: 824, Limit: store.DefaultPageSize},
+		"/v1/candidates?limit=100000":       {Total: 824, Limit: store.MaxPageSize},
+		"/v1/candidates?limit=-3&offset=-9": {Total: 824, Limit: store.DefaultPageSize},
+		"/v1/scans?limit=10&offset=20":      {Total: 1, Limit: 10, Offset: 20},
+	} {
+		rec := do(srv, http.MethodGet, path, "")
+		var got pageMeta
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		if rec.Code != http.StatusOK || got != want {
+			t.Errorf("%s: %d %+v, want %+v", path, rec.Code, got, want)
+		}
+	}
+}
+
+func TestGetRepository(t *testing.T) {
+	srv, _ := newCatalogServer(t)
+	if rec := do(srv, http.MethodGet, "/v1/repositories/"+knownRepo.String(), ""); rec.Code != http.StatusOK {
+		t.Errorf("known: %d", rec.Code)
+	}
+	if rec := do(srv, http.MethodGet, "/v1/repositories/01a16d46-dc0a-7979-899f-fae3af396000", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown: %d", rec.Code)
+	}
+	if rec := do(srv, http.MethodGet, "/v1/repositories/not-a-uuid", ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("malformed: %d", rec.Code)
+	}
+}
+
+func TestListScansFilters(t *testing.T) {
+	srv, cat := newCatalogServer(t)
+	if rec := do(srv, http.MethodGet, "/v1/scans?state=done&id="+knownRepo.String(), ""); rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if cat.scanFilter.Group != "done" || cat.scanFilter.ID != knownRepo {
+		t.Errorf("filter %+v", cat.scanFilter)
+	}
+	for _, q := range []string{"state=running", "id=nope"} {
+		if rec := do(srv, http.MethodGet, "/v1/scans?"+q, ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", q, rec.Code)
+		}
 	}
 }

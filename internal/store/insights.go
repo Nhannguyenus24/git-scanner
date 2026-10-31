@@ -41,7 +41,7 @@ const keyIDLen = 16
 // so a caller showing the first page can say it is one. Severity and preview
 // come from the most severe copy, so a key that is critical anywhere reads
 // critical.
-func (db *DB) SharedKeys(ctx context.Context, minRepos, limit int) ([]SharedKey, int, error) {
+func (db *DB) SharedKeys(ctx context.Context, minRepos int, page Page) ([]SharedKey, int, error) {
 	const q = `
 		WITH shared AS (
 			SELECT fingerprint, count(DISTINCT repository_id) AS repos,
@@ -50,7 +50,7 @@ func (db *DB) SharedKeys(ctx context.Context, minRepos, limit int) ([]SharedKey,
 			GROUP BY fingerprint
 			HAVING count(DISTINCT repository_id) >= $1
 			ORDER BY repos DESC, fingerprint
-			LIMIT $2
+			LIMIT $2 OFFSET $3
 		)
 		SELECT f.fingerprint, f.provider_slug, f.rule_id, f.severity, f.masked_preview,
 		       f.id, r.id, r.owner, r.name, f.status, f.reachable_from_head, s.total
@@ -60,7 +60,8 @@ func (db *DB) SharedKeys(ctx context.Context, minRepos, limit int) ([]SharedKey,
 		ORDER BY s.repos DESC, f.fingerprint,
 		         array_position(ARRAY['critical','high','medium','low','info'], f.severity),
 		         r.owner, r.name`
-	rows, err := db.pool.Query(ctx, q, max(minRepos, 2), clampLimit(limit, 100, 500))
+	limit, offset := clampLimit(page.Limit, 100, MaxPageSize), max(page.Offset, 0)
+	rows, err := db.pool.Query(ctx, q, max(minRepos, 2), limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: shared keys: %w", err)
 	}

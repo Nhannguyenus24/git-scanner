@@ -48,7 +48,7 @@ export function useDesktopAlerts(enabled: boolean) {
 
     const poll = async () => {
       try {
-        const [{ scans }, analytics] = await Promise.all([api.listScans(30), api.analytics()])
+        const [{ scans }, analytics] = await Promise.all([api.listScans({ limit: 30 }), api.analytics()])
         const live = analytics.live_probes.find(c => c.key === 'live')?.count ?? 0
         if (stopped) return
         diff(last.current, scans, live).forEach(say)
