@@ -44,7 +44,7 @@ func readStream(t *testing.T, url string, header http.Header) (frames []string, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	sc := bufio.NewScanner(res.Body)
 	var cur []string
 	for sc.Scan() {

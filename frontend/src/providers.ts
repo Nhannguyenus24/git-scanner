@@ -45,6 +45,8 @@ const META: Record<string, ProviderMeta> = {
   cloudflare:     { label: 'Cloudflare',      category: 'Cloud & Hosting' },
   alibaba:        { label: 'Alibaba Cloud',   category: 'Cloud & Hosting' },
   tencent:        { label: 'Tencent Cloud',   category: 'Cloud & Hosting' },
+  azure:          { label: 'Microsoft Azure', category: 'Cloud & Hosting' },
+  heroku:         { label: 'Heroku',          category: 'Cloud & Hosting' },
 
   // Databases & Data
   postgres:       { label: 'PostgreSQL',      category: 'Databases & Data' },
@@ -63,6 +65,10 @@ const META: Record<string, ProviderMeta> = {
   shopify:        { label: 'Shopify',         category: 'Payments & Commerce' },
   razorpay:       { label: 'Razorpay',        category: 'Payments & Commerce' },
   flutterwave:    { label: 'Flutterwave',     category: 'Payments & Commerce' },
+  paypal:         { label: 'PayPal / Braintree', category: 'Payments & Commerce' },
+  vnpay:          { label: 'VNPay',           category: 'Payments & Commerce' },
+  momo:           { label: 'MoMo',            category: 'Payments & Commerce' },
+  zalopay:        { label: 'ZaloPay',         category: 'Payments & Commerce' },
 
   // Messaging & Email
   slack:          { label: 'Slack',           category: 'Messaging & Email' },
@@ -104,6 +110,8 @@ const META: Record<string, ProviderMeta> = {
   postman:        { label: 'Postman',         category: 'Developer Tools' },
   contentful:     { label: 'Contentful',      category: 'Developer Tools' },
   mapbox:         { label: 'Mapbox',          category: 'Developer Tools' },
+  twitter:        { label: 'X (Twitter)',     category: 'Developer Tools' },
+  age:            { label: 'age encryption',  category: 'Developer Tools' },
 
   // Other
   generic:        { label: 'Private keys & generic secrets', category: 'Other' },
@@ -112,6 +120,24 @@ const META: Record<string, ProviderMeta> = {
 // Title-case a bare slug (aws-foo → "Aws Foo") for a provider with no entry.
 function prettify(slug: string): string {
   return slug.split(/[-_]/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
+}
+
+// What a leaked credential from each category lets its holder do, so the detail
+// view can say why the provider matters before it says how it is caught.
+const CATEGORY_IMPACT: Record<string, string> = {
+  'AI & ML':                'providers.impact.ai',
+  'Cloud & Hosting':        'providers.impact.cloud',
+  'Databases & Data':       'providers.impact.data',
+  'Payments & Commerce':    'providers.impact.payments',
+  'Messaging & Email':      'providers.impact.messaging',
+  'DevOps & Observability': 'providers.impact.devops',
+  'Developer Tools':        'providers.impact.tools',
+  'Other':                  'providers.impact.other',
+}
+
+/** The i18n key describing what a leak in this category allows. */
+export function categoryImpactKey(category: string): string {
+  return CATEGORY_IMPACT[category] ?? CATEGORY_IMPACT.Other
 }
 
 export function providerMeta(slug: string): ProviderMeta {

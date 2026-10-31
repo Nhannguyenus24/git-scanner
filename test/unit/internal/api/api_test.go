@@ -13,6 +13,7 @@ import (
 
 	"github.com/mservice/gitscanner/internal/api"
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	"github.com/mservice/gitscanner/libs/id"
@@ -424,6 +425,42 @@ func TestSettingsRoundTrip(t *testing.T) {
 	// A body without the field must not flip the switch either way.
 	if rec := do(srv, http.MethodPut, "/v1/settings", `{}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("empty put status = %d, want 400", rec.Code)
+	}
+}
+
+// The provider list carries each rule's description for the detail view, with
+// lists as [] rather than null so the client can iterate them unguarded.
+func TestProvidersIncludeRuleDetails(t *testing.T) {
+	srv, _, _ := newServer(t)
+	srv.WithProviders(scan.BootstrapRuleset().Providers())
+	rec := do(srv, http.MethodGet, "/v1/providers", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var resp struct {
+		Providers []struct {
+			Slug        string `json:"slug"`
+			Rules       int    `json:"rules"`
+			RuleDetails []struct {
+				ID       string    `json:"id"`
+				Anchor   string    `json:"anchor"`
+				Example  string    `json:"example"`
+				Keywords *[]string `json:"keywords"`
+			} `json:"rule_details"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range resp.Providers {
+		if len(p.RuleDetails) != p.Rules {
+			t.Errorf("%s: %d details for %d rules", p.Slug, len(p.RuleDetails), p.Rules)
+		}
+		for _, d := range p.RuleDetails {
+			if d.Anchor == "" || d.Example == "" || d.Keywords == nil {
+				t.Errorf("%s/%s: anchor %q, example %q, keywords %v", p.Slug, d.ID, d.Anchor, d.Example, d.Keywords)
+			}
+		}
 	}
 }
 

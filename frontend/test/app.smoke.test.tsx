@@ -86,7 +86,14 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
-      : path === '/v1/providers'      ? { providers: [{ slug: 'github', severity: 'critical', rules: 3 }] }
+      : path === '/v1/providers'      ? { providers: [
+          { slug: 'github', severity: 'high', rules: 1, rule_details: [{
+            id: 'github-pat', severity: 'high', anchor: 'prefix', shape: 'gh[opsu]_[0-9A-Za-z]{36}',
+            example: 'gh•_' + '•'.repeat(36), literals: ['ghp_', 'gho_'], keywords: [],
+          }] },
+          // An older api sends no rule_details; the dialog must still open.
+          { slug: 'slack', severity: 'medium', rules: 2 },
+        ] }
       : path === '/v1/notifications'  ? { notifications: [], total: 0, by_state: [] }
       : path === '/v1/settings'       ? { notifications_enabled: false, masking_enabled: true, unmask_owners: [], sealing_available: true }
       : {}
@@ -203,6 +210,27 @@ describe('command palette', () => {
     const search = screen.getByLabelText(/search/i)
     await act(async () => { fireEvent.keyDown(search, { key: 'n' }) })
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('providers', () => {
+  it('opens a provider and explains its keys, detection and severity', async () => {
+    await open('#/providers')
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /GitHub/ })) })
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('github-pat')).toBeTruthy()
+    expect(within(dialog).getByText('gh•_' + '•'.repeat(36))).toBeTruthy()
+    expect(within(dialog).getByText('own prefix')).toBeTruthy()
+    expect(within(dialog).getByText(/Why high/i)).toBeTruthy()
+    expect(within(dialog).getByText(/broad API access/i)).toBeTruthy()
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /close/i })) })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('opens a provider the api sent without rule details', async () => {
+    await open('#/providers')
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /Slack/ })) })
+    expect(within(screen.getByRole('dialog')).getByText(/does not report rule details/i)).toBeTruthy()
   })
 })
 

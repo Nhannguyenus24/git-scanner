@@ -111,7 +111,9 @@ func (w *Worker) giveUp(ctx context.Context, task *gpb.ScanTask, attempt int, ca
 		w.log.Error("could not count skipped repository", "job", task.JobId, "error", err)
 		return
 	}
-	w.completeIfAllScanned(ctx, jobID)
+	// The task is being given up on either way; completeIfAllScanned has
+	// logged any failure, and there is nothing left to return it to.
+	_ = w.completeIfAllScanned(ctx, jobID)
 }
 
 // completeIfAllScanned ends the job when its last repository is counted and

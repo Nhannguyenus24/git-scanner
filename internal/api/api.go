@@ -130,9 +130,22 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 }
 
 type providerResponse struct {
-	Slug     string `json:"slug"`
-	Severity string `json:"severity"`
-	Rules    int    `json:"rules"`
+	Slug        string             `json:"slug"`
+	Severity    string             `json:"severity"`
+	Rules       int                `json:"rules"`
+	RuleDetails []ruleInfoResponse `json:"rule_details"`
+}
+
+// ruleInfoResponse describes one rule for the provider detail view. Example is
+// a drawing of the layout ("•" for every variable character), never a value.
+type ruleInfoResponse struct {
+	ID       string   `json:"id"`
+	Severity string   `json:"severity"`
+	Anchor   string   `json:"anchor"`
+	Shape    string   `json:"shape"`
+	Example  string   `json:"example"`
+	Literals []string `json:"literals"`
+	Keywords []string `json:"keywords"`
 }
 
 // handleListProviders returns the detection catalogue — the providers a finding
@@ -142,7 +155,14 @@ type providerResponse struct {
 func (s *Server) handleListProviders(w http.ResponseWriter, _ *http.Request) {
 	out := make([]providerResponse, 0, len(s.providers))
 	for _, p := range s.providers {
-		out = append(out, providerResponse{Slug: p.Slug, Severity: p.Severity, Rules: p.Rules})
+		details := make([]ruleInfoResponse, 0, len(p.Details))
+		for _, d := range p.Details {
+			details = append(details, ruleInfoResponse{
+				ID: d.ID, Severity: d.Severity, Anchor: d.Anchor, Shape: d.Shape, Example: d.Example,
+				Literals: nonNil(d.Literals), Keywords: nonNil(d.Keywords),
+			})
+		}
+		out = append(out, providerResponse{Slug: p.Slug, Severity: p.Severity, Rules: p.Rules, RuleDetails: details})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"providers": out})
 }
