@@ -1,18 +1,29 @@
+import { useState } from 'react'
 import Box from '@mui/material/Box'
 import Card from '@mui/material/Card'
+import CardActionArea from '@mui/material/CardActionArea'
+import Chip from '@mui/material/Chip'
+import Dialog from '@mui/material/Dialog'
+import DialogContent from '@mui/material/DialogContent'
+import DialogTitle from '@mui/material/DialogTitle'
+import IconButton from '@mui/material/IconButton'
+import CloseIcon from '@mui/icons-material/Close'
 import { PageHeader } from '../components/Layout'
 import SeverityChip from '../components/SeverityChip'
 import { Empty, LoadError, Loading } from '../components/States'
 import { useResource } from '../hooks/useResource'
-import { CATEGORY_ORDER, providerMeta } from '../providers'
+import { CATEGORY_ORDER, categoryImpactKey, providerMeta } from '../providers'
 import { useSettings } from '../store/settings'
 import { useT } from '../i18n'
-import type { Provider } from '../types'
+import type { Provider, RuleDetail } from '../types'
+
+const MONO = '"IBM Plex Mono", monospace'
 
 export default function ProvidersPage() {
   const { api } = useSettings()
   const { t } = useT()
   const res = useResource(() => api.providers(), [api], 60000)
+  const [open, setOpen] = useState<Provider | null>(null)
 
   if (res.loading) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
@@ -62,22 +73,28 @@ export default function ProvidersPage() {
                   display: 'grid', gap: 1.25,
                   gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', lg: '1fr 1fr 1fr' },
                 }}>
-                  {items.map(p => <ProviderCard key={p.slug} provider={p} />)}
+                  {items.map(p => <ProviderCard key={p.slug} provider={p} onOpen={() => setOpen(p)} />)}
                 </Box>
               </Box>
             )
           })}
         </Box>
       )}
+      {open && <ProviderDialog provider={open} onClose={() => setOpen(null)} />}
     </>
   )
 }
 
-function ProviderCard({ provider }: { provider: Provider }) {
+function ProviderCard({ provider, onOpen }: { provider: Provider; onOpen: () => void }) {
   const { t } = useT()
   const meta = providerMeta(provider.slug)
   return (
-    <Card variant="outlined" sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+    <Card variant="outlined">
+      <CardActionArea
+        onClick={onOpen}
+        aria-label={t('providers.open', { name: meta.label })}
+        sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}
+      >
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Box sx={{ fontWeight: 700, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {meta.label}
@@ -87,6 +104,98 @@ function ProviderCard({ provider }: { provider: Provider }) {
         </Box>
       </Box>
       <SeverityChip severity={provider.severity} />
+      </CardActionArea>
+    </Card>
+  )
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Box sx={{ mt: 2.5 }}>
+      <Box sx={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'text.secondary', mb: 1 }}>
+        {title}
+      </Box>
+      {children}
+    </Box>
+  )
+}
+
+/** What a provider's keys look like, how each rule catches them, and why the
+ *  provider carries the severity it does. Everything shown is derived from the
+ *  live ruleset; the example strings are drawings, never values. */
+function ProviderDialog({ provider, onClose }: { provider: Provider; onClose: () => void }) {
+  const { t } = useT()
+  const meta = providerMeta(provider.slug)
+  const rules = provider.rule_details ?? []
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="md" aria-labelledby="provider-dialog-title">
+      <DialogTitle id="provider-dialog-title" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pr: 1.5 }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Box sx={{ fontWeight: 700, fontSize: 18 }}>{meta.label}</Box>
+          <Box sx={{ fontFamily: MONO, fontSize: 12, color: 'text.secondary', fontWeight: 400 }}>
+            {provider.slug} · {meta.category} · {t('providers.rules', { n: provider.rules })}
+          </Box>
+        </Box>
+        <SeverityChip severity={provider.severity} />
+        <IconButton onClick={onClose} aria-label={t('providers.close')} size="small"><CloseIcon fontSize="small" /></IconButton>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Box sx={{ fontSize: 14, lineHeight: 1.6 }}>{t(categoryImpactKey(meta.category))}</Box>
+
+        <Section title={t('providers.why', { severity: provider.severity })}>
+          <Box sx={{ fontSize: 13.5, lineHeight: 1.6 }}>{t(`providers.why.${provider.severity}`)}</Box>
+          <Box sx={{ fontSize: 12.5, lineHeight: 1.6, color: 'text.secondary', mt: .75 }}>{t('providers.why.note')}</Box>
+        </Section>
+
+        <Section title={t('providers.looks')}>
+          {!rules.length ? (
+            <Box sx={{ fontSize: 13, color: 'text.secondary' }}>{t('providers.noDetails')}</Box>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
+              {rules.map(r => <RuleCard key={r.id} rule={r} />)}
+            </Box>
+          )}
+        </Section>
+
+        <Section title={t('providers.after')}>
+          <Box sx={{ fontSize: 13, lineHeight: 1.6, color: 'text.secondary' }}>{t('providers.after.body')}</Box>
+        </Section>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RuleCard({ rule }: { rule: RuleDetail }) {
+  const { t } = useT()
+  return (
+    <Card variant="outlined" sx={{ p: 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ fontFamily: MONO, fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>{rule.id}</Box>
+        <Chip size="small" variant="outlined" label={t(`providers.anchor.${rule.anchor}`)} />
+        <SeverityChip severity={rule.severity} />
+      </Box>
+      <Box
+        aria-label={t('providers.example')}
+        sx={{
+          fontFamily: MONO, fontSize: 13, mt: 1, px: 1.25, py: .75, borderRadius: 1,
+          bgcolor: 'action.hover', wordBreak: 'break-all', letterSpacing: '.02em',
+        }}
+      >
+        {rule.example}
+      </Box>
+      <Box sx={{ fontSize: 13, lineHeight: 1.6, mt: 1 }}>{t(`providers.how.${rule.anchor}`)}</Box>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '130px 1fr' }, columnGap: 1.5, rowGap: .5, mt: 1, fontSize: 12.5 }}>
+        <Box sx={{ color: 'text.secondary' }}>{t('providers.pattern')}</Box>
+        <Box sx={{ fontFamily: MONO, wordBreak: 'break-all' }}>{rule.shape}</Box>
+        {rule.literals.length > 0 && <>
+          <Box sx={{ color: 'text.secondary' }}>{t('providers.literals')}</Box>
+          <Box sx={{ fontFamily: MONO, wordBreak: 'break-all' }}>{rule.literals.join('  ·  ')}</Box>
+        </>}
+        {rule.keywords.length > 0 && <>
+          <Box sx={{ color: 'text.secondary' }}>{t('providers.keywords')}</Box>
+          <Box>{t('providers.keywords.body', { words: rule.keywords.join(', ') })}</Box>
+        </>}
+      </Box>
     </Card>
   )
 }

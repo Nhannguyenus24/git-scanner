@@ -52,6 +52,8 @@ type ProviderInfo struct {
 	Slug     string
 	Rules    int
 	Severity string
+	// Details describes each of the provider's rules, ordered by rule id.
+	Details []RuleInfo
 }
 
 // Providers returns the distinct providers this ruleset can attribute a finding
@@ -70,6 +72,7 @@ func (rs *Ruleset) Providers() []ProviderInfo {
 			agg[r.Provider] = p
 		}
 		p.Rules++
+		p.Details = append(p.Details, r.Info())
 		if severityRank(r.Severity) > severityRank(p.Severity) {
 			p.Severity = r.Severity
 		}
@@ -86,6 +89,7 @@ func (rs *Ruleset) Providers() []ProviderInfo {
 	}
 	out := make([]ProviderInfo, 0, len(agg))
 	for _, p := range agg {
+		sort.Slice(p.Details, func(i, j int) bool { return p.Details[i].ID < p.Details[j].ID })
 		out = append(out, *p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })

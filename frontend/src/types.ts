@@ -126,6 +126,24 @@ export interface Provider {
   slug:     string
   severity: Severity
   rules:    number
+  /** One entry per rule. Absent from an older api, so read it as optional. */
+  rule_details?: RuleDetail[]
+}
+
+/** What makes a rule's match trustworthy: the value's own prefix, the setting
+ *  name before it, a connection URL, a PEM block, or only the value's layout. */
+export type RuleAnchor = 'prefix' | 'setting' | 'url' | 'block' | 'shape'
+
+/** One detection rule, described for people. `example` is a drawing of the
+ *  layout ("•" for every variable character), never a real value. */
+export interface RuleDetail {
+  id:       string
+  severity: Severity
+  anchor:   RuleAnchor
+  shape:    string
+  example:  string
+  literals: string[]
+  keywords: string[]
 }
 
 export interface Count { key: string; count: number }

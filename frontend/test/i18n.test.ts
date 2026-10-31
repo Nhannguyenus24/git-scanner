@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { DICT_UI } from '../src/i18n.ui'
 import { LANGUAGES } from '../src/i18n'
+import { CATEGORY_ORDER, categoryImpactKey } from '../src/providers'
 
 // Partial coverage degrades to an English-ish label rather than blank space, so
 // a missing translation is invisible in the running app. These tests make it
@@ -48,7 +49,7 @@ describe('every key the app asks for exists', () => {
     'components/FindingsTable.tsx', 'components/Layout.tsx', 'components/OnboardingTour.tsx',
     'components/PostureScore.tsx', 'components/SavedFilterMenu.tsx', 'components/ScanTimeline.tsx',
     'components/States.tsx', 'components/TopBar.tsx',
-    'pages/AnalyticsPage.tsx', 'pages/FindingsPage.tsx', 'pages/OverviewPage.tsx',
+    'pages/AnalyticsPage.tsx', 'pages/FindingsPage.tsx', 'pages/OverviewPage.tsx', 'pages/ProvidersPage.tsx',
     'pages/RepositoriesPage.tsx', 'pages/ScanDetailPage.tsx', 'pages/SettingsPage.tsx',
   ]
 
@@ -62,5 +63,16 @@ describe('every key the app asks for exists', () => {
       }
     }
     expect([...missing].sort()).toEqual([])
+  })
+
+  // The provider dialog builds these keys at runtime, so the scan above cannot
+  // see them; every value the API or the category table can produce is listed.
+  it('for the provider dialog keys built at runtime', () => {
+    const keys = [
+      ...['prefix', 'setting', 'url', 'block', 'shape'].flatMap(a => [`providers.anchor.${a}`, `providers.how.${a}`]),
+      ...['critical', 'high', 'medium', 'low'].map(s => `providers.why.${s}`),
+      ...[...CATEGORY_ORDER, 'Unlisted'].map(categoryImpactKey),
+    ]
+    expect(keys.filter(k => !CORE.has(k))).toEqual([])
   })
 })
