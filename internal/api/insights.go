@@ -12,7 +12,7 @@ import (
 // own interface, like ShareStore, so the catalog fakes do not grow a method for
 // every new view.
 type Insights interface {
-	SharedKeys(ctx context.Context, minRepos, limit int) ([]store.SharedKey, int, error)
+	SharedKeys(ctx context.Context, minRepos int, page store.Page) ([]store.SharedKey, int, error)
 	LeakCalendar(ctx context.Context) ([]store.LeakDay, error)
 }
 
@@ -53,7 +53,8 @@ type sharedKeyRepoResponse struct {
 // every other view uses — so the response never carries a value, sealed or not,
 // whatever the masking setting says.
 func (s *Server) handleSharedKeys(w http.ResponseWriter, r *http.Request) {
-	keys, total, err := s.insights.SharedKeys(r.Context(), intParam(r, "min_repos"), intParam(r, "limit"))
+	page := pageParam(r)
+	keys, total, err := s.insights.SharedKeys(r.Context(), intParam(r, "min_repos"), page)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -72,7 +73,12 @@ func (s *Server) handleSharedKeys(w http.ResponseWriter, r *http.Request) {
 			MaskedPreview: k.MaskedPreview, Repos: repos,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"keys": out, "total": total})
+	// The shared-keys page defaults to more rows than other lists: the graph is
+	// the point, and it needs enough keys to show a shape.
+	if page.Limit <= 0 {
+		page.Limit = 100
+	}
+	paged(w, "keys", out, total, page)
 }
 
 type leakDayResponse struct {

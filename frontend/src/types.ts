@@ -285,3 +285,19 @@ export interface AssistFilter {
   severity: string; provider: string; status: string; exposure: string; sort: string; q: string
   explanation: string
 }
+
+/** The window a paged list response says it applied (limit and offset may
+ *  differ from what was asked when that was out of range). */
+export interface PageInfo { total: number; limit: number; offset: number }
+export interface PageParams { limit?: number; offset?: number }
+
+export interface RepositoryFilter extends PageParams {
+  q?:         string
+  only_open?: boolean
+  sort?:      'risk' | 'open' | 'recent' | 'name'
+}
+
+export interface ScanListFilter extends PageParams {
+  id?:    string
+  state?: 'active' | 'done'
+}

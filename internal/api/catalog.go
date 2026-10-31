@@ -16,12 +16,13 @@ import (
 // separate interface from Store so the scan-submission handlers, and the fakes
 // that test them, do not have to carry the whole browsing surface.
 type Catalog interface {
-	ListScanJobs(ctx context.Context, limit int) ([]store.JobSummary, error)
+	ListScanJobs(ctx context.Context, f store.ScanFilter) ([]store.JobSummary, int, error)
 	SearchFindings(ctx context.Context, f store.FindingFilter) ([]store.FindingRow, int, error)
 	SetFindingStatus(ctx context.Context, id entity.ID, status entity.FindingStatus) error
-	ListRepositories(ctx context.Context) ([]store.RepositorySummary, error)
+	ListRepositories(ctx context.Context, f store.RepositoryFilter) ([]store.RepositorySummary, int, error)
+	RepositorySummaryByID(ctx context.Context, id entity.ID) (store.RepositorySummary, error)
 	GetOverview(ctx context.Context) (store.Overview, error)
-	ListProviderCandidates(ctx context.Context) ([]entity.ProviderCandidate, error)
+	ListProviderCandidates(ctx context.Context, page store.Page) ([]entity.ProviderCandidate, int, error)
 	FindingsTimeline(ctx context.Context) ([]store.TimePoint, error)
 	FindingsByAppType(ctx context.Context) ([]store.Count, error)
 	FindingsByRule(ctx context.Context, limit int) ([]store.Count, error)
@@ -44,6 +45,7 @@ func (s *Server) catalogRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/findings", s.handleSearchFindings)
 	mux.HandleFunc("PATCH /v1/findings/{id}", s.handleUpdateFinding)
 	mux.HandleFunc("GET /v1/repositories", s.handleListRepositories)
+	mux.HandleFunc("GET /v1/repositories/{id}", s.handleGetRepository)
 	mux.HandleFunc("GET /v1/candidates", s.handleListCandidates)
 	mux.HandleFunc("GET /v1/analytics", s.handleAnalytics)
 }
@@ -62,7 +64,18 @@ type targetResponse struct {
 }
 
 func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.catalog.ListScanJobs(r.Context(), intParam(r, "limit"))
+	q := r.URL.Query()
+	f := store.ScanFilter{ID: entity.ID(q.Get("id")), Group: q.Get("state"), Page: pageParam(r)}
+	if f.Group != "" && f.Group != "active" && f.Group != "done" {
+		s.writeError(w, http.StatusBadRequest, errors.New("state must be active or done"))
+		return
+	}
+	if f.ID != "" && !validID(f.ID) {
+		s.writeError(w, http.StatusBadRequest, errors.New("invalid scan id"))
+		return
+	}
+	page := f.Page
+	jobs, total, err := s.catalog.ListScanJobs(r.Context(), f)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -75,7 +88,7 @@ func (s *Server) handleListScans(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:       j.CreatedAt, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"scans": out})
+	paged(w, "scans", out, total, page)
 }
 
 type findingResponse struct {
@@ -237,28 +250,67 @@ type noticeResponse struct {
 	SentAt    *time.Time `json:"sent_at,omitempty"`
 }
 
+// repositorySorts mirrors the orders the store accepts, so an unknown one is a
+// 400 rather than a silent fallback the client would mistake for its choice.
+var repositorySorts = map[string]bool{"": true, "risk": true, "open": true, "recent": true, "name": true}
+
+// handleListRepositories serves one page of repositories. Filtering and
+// ordering happen here, on the server, because a page of a list sorted in the
+// browser is the wrong page.
 func (s *Server) handleListRepositories(w http.ResponseWriter, r *http.Request) {
-	repos, err := s.catalog.ListRepositories(r.Context())
+	q := r.URL.Query()
+	sort := q.Get("sort")
+	if !repositorySorts[sort] {
+		s.writeError(w, http.StatusBadRequest, errors.New("sort must be risk, open, recent or name"))
+		return
+	}
+	f := store.RepositoryFilter{
+		Query: q.Get("q"), OnlyOpen: q.Get("only_open") == "true" || q.Get("only_open") == "1",
+		Sort: sort, Page: pageParam(r),
+	}
+	repos, total, err := s.catalog.ListRepositories(r.Context(), f)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	out := make([]repositoryResponse, 0, len(repos))
 	for _, x := range repos {
-		resp := repositoryResponse{
-			ID: x.ID.String(), Owner: x.Owner, Name: x.Name, URL: x.CloneURL,
-			AppType: x.AppType, Stars: x.Stars, IsFork: x.IsFork, LastScannedAt: x.LastScannedAt,
-			Findings: x.Findings, Open: x.Open,
-			Critical: x.Critical, High: x.High, Medium: x.Medium, Low: x.Low,
-		}
-		if n := x.Notice; n != nil {
-			resp.Notification = &noticeResponse{
-				State: n.State, Recipient: n.Recipient, Error: n.Error, CreatedAt: n.CreatedAt, SentAt: n.SentAt,
-			}
-		}
-		out = append(out, resp)
+		out = append(out, toRepositoryResponse(x))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"repositories": out})
+	paged(w, "repositories", out, total, f.Page)
+}
+
+func (s *Server) handleGetRepository(w http.ResponseWriter, r *http.Request) {
+	id := entity.ID(r.PathValue("id"))
+	if !validID(id) {
+		s.writeError(w, http.StatusBadRequest, errors.New("invalid repository id"))
+		return
+	}
+	x, err := s.catalog.RepositorySummaryByID(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRepositoryResponse(x))
+}
+
+func toRepositoryResponse(x store.RepositorySummary) repositoryResponse {
+	resp := repositoryResponse{
+		ID: x.ID.String(), Owner: x.Owner, Name: x.Name, URL: x.CloneURL,
+		AppType: x.AppType, Stars: x.Stars, IsFork: x.IsFork, LastScannedAt: x.LastScannedAt,
+		Findings: x.Findings, Open: x.Open,
+		Critical: x.Critical, High: x.High, Medium: x.Medium, Low: x.Low,
+	}
+	if n := x.Notice; n != nil {
+		resp.Notification = &noticeResponse{
+			State: n.State, Recipient: n.Recipient, Error: n.Error, CreatedAt: n.CreatedAt, SentAt: n.SentAt,
+		}
+	}
+	return resp
 }
 
 type countResponse struct {
@@ -313,7 +365,8 @@ type candidateResponse struct {
 }
 
 func (s *Server) handleListCandidates(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.catalog.ListProviderCandidates(r.Context())
+	page := pageParam(r)
+	cs, total, err := s.catalog.ListProviderCandidates(r.Context(), page)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
 		return
@@ -329,7 +382,7 @@ func (s *Server) handleListCandidates(w http.ResponseWriter, r *http.Request) {
 			FirstSeenAt: c.FirstSeenAt, LastSeenAt: c.LastSeenAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"candidates": out})
+	paged(w, "candidates", out, total, page)
 }
 
 // uuidShape is checked before an id reaches a uuid column, where a malformed

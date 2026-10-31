@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import Box from '@mui/material/Box'
 import Card from '@mui/material/Card'
 import Chip from '@mui/material/Chip'
@@ -8,6 +9,7 @@ import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import { PageHeader } from '../components/Layout'
+import Pager from '../components/Pager'
 import { Empty, LoadError, Loading } from '../components/States'
 import { timeAgo } from '../format'
 import { useResource } from '../hooks/useResource'
@@ -17,9 +19,11 @@ import { useT } from '../i18n'
 export default function CandidatesPage() {
   const { api } = useSettings()
   const { t } = useT()
-  const res = useResource(() => api.candidates(), [api], 15000)
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(50)
+  const res = useResource(() => api.candidates({ limit: size, offset: page * size }), [api, page, size], 15000)
 
-  if (res.loading) return <Loading />
+  if (res.loading && !res.data) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
   const cs = res.data!.candidates
 
@@ -63,6 +67,9 @@ export default function CandidatesPage() {
               </TableBody>
             </Table>
           </TableContainer>
+        )}
+        {res.data!.total > size && (
+          <Pager total={res.data!.total} page={page} size={size} onPage={setPage} onSize={n => { setSize(n); setPage(0) }} />
         )}
       </Card>
     </>

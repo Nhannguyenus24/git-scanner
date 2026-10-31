@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
@@ -16,6 +16,7 @@ import AddIcon from '@mui/icons-material/Add'
 import ReplayIcon from '@mui/icons-material/Replay'
 import DeleteIcon from '@mui/icons-material/DeleteOutline'
 import { PageHeader } from '../components/Layout'
+import Pager from '../components/Pager'
 import { ScanProgress } from '../components/Instrument'
 import StateBadge from '../components/StateBadge'
 import { Empty, LoadError, Loading } from '../components/States'
@@ -33,11 +34,14 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
   const { api } = useSettings()
   const { t } = useT()
   const notify = useToast()
-  const res = useResource(() => api.listScans(200), [api], 3000)
   const [view, setView] = useState<View>('all')
-
-  const scans = useMemo(() => (res.data?.scans ?? []).filter(s =>
-    view === 'all' || (view === 'active') !== TERMINAL.has(s.state)), [res.data, view])
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(50)
+  // The tabs filter on the server, so a page of "active" is a page of active
+  // jobs rather than whatever active ones a page of all jobs happened to hold.
+  const res = useResource(() => api.listScans({ state: view === 'all' ? undefined : view, limit: size, offset: page * size }),
+    [api, view, page, size], 3000)
+  const scans = res.data?.scans ?? []
 
   // Row actions stop the row's navigate-on-click from firing.
   const rescan = (e: MouseEvent, id: string) => {
@@ -52,14 +56,14 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
       .catch(err => notify(err instanceof Error ? err.message : 'Failed', 'error'))
   }
 
-  if (res.loading) return <Loading />
+  if (res.loading && !res.data) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
 
   return (
     <>
       <PageHeader title={t('scans.title')} subtitle={t('scans.subtitle')}
         actions={<>
-          <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v: View | null) => v && setView(v)}>
+          <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, v: View | null) => { if (v) { setView(v); setPage(0) } }}>
             <ToggleButton value="all">{t('common.all')}</ToggleButton>
             <ToggleButton value="active">{t('common.active')}</ToggleButton>
             <ToggleButton value="done">{t('common.finished')}</ToggleButton>
@@ -124,6 +128,9 @@ export default function ScansPage({ onNewScan }: { onNewScan: () => void }) {
               </TableBody>
             </Table>
           </TableContainer>
+        )}
+        {(res.data?.total ?? 0) > size && (
+          <Pager total={res.data!.total} page={page} size={size} onPage={setPage} onSize={n => { setSize(n); setPage(0) }} />
         )}
       </Card>
     </>

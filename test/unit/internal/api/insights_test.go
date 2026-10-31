@@ -15,8 +15,8 @@ type fakeInsights struct {
 	keys            []store.SharedKey
 }
 
-func (f *fakeInsights) SharedKeys(_ context.Context, minRepos, limit int) ([]store.SharedKey, int, error) {
-	f.minRepos, f.limit = minRepos, limit
+func (f *fakeInsights) SharedKeys(_ context.Context, minRepos int, page store.Page) ([]store.SharedKey, int, error) {
+	f.minRepos, f.limit = minRepos, page.Limit
 	return f.keys, 42, nil
 }
 

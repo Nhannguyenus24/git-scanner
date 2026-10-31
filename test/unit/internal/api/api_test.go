@@ -108,8 +108,13 @@ func (s *fakeStore) GetScanJob(_ context.Context, jobID entity.ID) (entity.ScanJ
 	}
 	return j, nil
 }
-func (s *fakeStore) ListFindings(_ context.Context, jobID entity.ID) ([]entity.Finding, error) {
-	return s.findings[jobID], nil
+func (s *fakeStore) ListFindingsPage(_ context.Context, jobID entity.ID, page store.Page) ([]entity.Finding, int, error) {
+	all := s.findings[jobID]
+	limit, offset := page.Bounds()
+	if offset > len(all) {
+		offset = len(all)
+	}
+	return all[offset:min(len(all), offset+limit)], len(all), nil
 }
 func (s *fakeStore) GetRepository(_ context.Context, repoID entity.ID) (entity.Repository, error) {
 	r, ok := s.repos[repoID]

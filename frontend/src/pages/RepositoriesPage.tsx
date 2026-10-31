@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
@@ -22,8 +22,9 @@ import ShareIcon from '@mui/icons-material/IosShare'
 import ShareDialog from '../components/ShareDialog'
 import SearchIcon from '@mui/icons-material/Search'
 import { PageHeader } from '../components/Layout'
+import Pager from '../components/Pager'
 import { Empty, LoadError, TableSkeleton } from '../components/States'
-import { timeAgo } from '../format'
+import { num, timeAgo } from '../format'
 import { useTheme } from '@mui/material/styles'
 import { repoRisk } from '../posture'
 import { useResource } from '../hooks/useResource'
@@ -90,7 +91,28 @@ export default function RepositoriesPage() {
   const { t } = useT()
   const sev = useTheme().chart.severity
   const notify = useToast()
-  const res = useResource(() => api.repositories(), [api], 10000)
+  const [q, setQ] = useState('')
+  const [search, setSearch] = useState('')
+  const [exposedOnly, setExposedOnly] = useState(true)
+  const [sort, setSort] = useState<Sort>('risk')
+  const [page, setPage] = useState(0)
+  const [size, setSize] = useState(50)
+  const [sharing, setSharing] = useState<Repository>()
+
+  // Debounce the search box, and go back to the first page on any change: the
+  // filter and the order are applied on the server, so a new filter is a new
+  // list, not a re-sort of the page already loaded.
+  // Only when the text really changed: firing on mount would reset a page the
+  // reader had already moved to.
+  useEffect(() => {
+    if (q.trim() === search) return
+    const timer = setTimeout(() => { setSearch(q.trim()); setPage(0) }, 300)
+    return () => clearTimeout(timer)
+  }, [q, search])
+
+  const res = useResource(() => api.repositories({ q: search, only_open: exposedOnly, sort, limit: size, offset: page * size }),
+    [api, search, exposedOnly, sort, page, size], 10000)
+  const ov = useResource(() => api.overview(), [api], 10000)
   const settings = useResource(() => api.settings(), [api])
   const mailOn = settings.data?.notifications_enabled ?? false
 
@@ -99,41 +121,26 @@ export default function RepositoriesPage() {
       .then(d => { notify(t('repos.notify.queued', { repo: `${r.owner}/${r.name}`, to: d.recipient })); setTimeout(res.reload, 1500) })
       .catch(e => notify(e instanceof Error ? e.message : 'Error', 'error'))
   }, [api, notify, t, res])
-  const [q, setQ] = useState('')
-  const [exposedOnly, setExposedOnly] = useState(true)
-  const [sort, setSort] = useState<Sort>('risk')
-  const [sharing, setSharing] = useState<Repository>()
-
-  const repos = useMemo(() => {
-    const list = (res.data?.repositories ?? []).filter((r: Repository) =>
-      (!exposedOnly || r.open > 0) && `${r.owner}/${r.name}`.toLowerCase().includes(q.toLowerCase()))
-    const by: Record<Sort, (a: Repository, b: Repository) => number> = {
-      risk:   (a, b) => repoRisk(b).score - repoRisk(a).score,
-      open:   (a, b) => b.open - a.open,
-      recent: (a, b) => +new Date(b.last_scanned_at ?? 0) - +new Date(a.last_scanned_at ?? 0),
-      name:   (a, b) => `${a.owner}/${a.name}`.localeCompare(`${b.owner}/${b.name}`),
-    }
-    return [...list].sort(by[sort])
-  }, [res.data, q, exposedOnly, sort])
 
   if (res.loading && !res.data) return <Card><TableSkeleton rows={8} columns={7} /></Card>
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
-  const all = res.data!.repositories
+  const repos = res.data!.repositories
+  const total = res.data!.total
 
   return (
     <>
-      <PageHeader title={t('repos.title')} subtitle={t('repos.subtitle', { a: all.filter(r => r.open).length, b: all.length })} />
+      <PageHeader title={t('repos.title')} subtitle={ov.data ? t('repos.subtitle', { a: num(ov.data.exposed_repos), b: num(ov.data.repositories) }) : undefined} />
       <Card sx={{ p: 1.5, mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextField placeholder={t('repos.filter')} value={q} onChange={e => setQ(e.target.value)} sx={{ flex: '1 1 220px' }}
           inputProps={{ 'aria-label': t('repos.filter') }}
           InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
-        <TextField select label={t('repos.sort')} value={sort} onChange={e => setSort(e.target.value as Sort)} sx={{ minWidth: 160 }}>
+        <TextField select label={t('repos.sort')} value={sort} onChange={e => { setSort(e.target.value as Sort); setPage(0) }} sx={{ minWidth: 160 }}>
           <MenuItem value="risk">{t('repos.sortRisk')}</MenuItem>
           <MenuItem value="open">{t('repos.sortOpen')}</MenuItem>
           <MenuItem value="recent">{t('repos.sortRecent')}</MenuItem>
           <MenuItem value="name">{t('repos.sortName')}</MenuItem>
         </TextField>
-        <FormControlLabel control={<Switch checked={exposedOnly} onChange={e => setExposedOnly(e.target.checked)} />} label={t('repos.onlyOpen')} />
+        <FormControlLabel control={<Switch checked={exposedOnly} onChange={e => { setExposedOnly(e.target.checked); setPage(0) }} />} label={t('repos.onlyOpen')} />
         <Chip clickable component="a" href={href('settings')} variant="outlined" color={mailOn ? 'warning' : 'default'}
           icon={<MailOutlineIcon fontSize="small" />} label={`${t('repos.notify.switch')}: ${t(mailOn ? 'settings.on' : 'settings.off')}`} />
       </Card>
@@ -214,6 +221,9 @@ export default function RepositoriesPage() {
               </TableBody>
             </Table>
           </TableContainer>
+        )}
+        {total > size && (
+          <Pager total={total} page={page} size={size} onPage={setPage} onSize={n => { setSize(n); setPage(0) }} />
         )}
       </Card>
       {sharing && <ShareDialog repo={sharing} onClose={() => setSharing(undefined)} />}

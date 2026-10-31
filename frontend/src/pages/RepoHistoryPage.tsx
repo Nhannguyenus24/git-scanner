@@ -64,7 +64,7 @@ export default function RepoHistoryPage({ id }: { id: string }) {
   const { t, lang } = useT()
   const { motionOff } = usePrefs()
   const res = useResource(() => api.findings({ repository_id: id, limit: WINDOW }), [api, id])
-  const repos = useResource(() => api.repositories(), [api])
+  const repoRes = useResource(() => api.repository(id), [api, id])
 
   const all = res.data?.findings ?? []
   const timeline = useMemo(() => steps(all), [all])
@@ -88,7 +88,7 @@ export default function RepoHistoryPage({ id }: { id: string }) {
   if (res.loading && !res.data) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
 
-  const repo = repos.data?.repositories.find(r => r.id === id)
+  const repo = repoRes.data
   const name = repo ? `${repo.owner}/${repo.name}` : all[0] ? `${all[0].repository.owner}/${all[0].repository.name}` : id
   const fmt = (ms: number) => new Date(ms).toLocaleDateString(lang, { year: 'numeric', month: 'short', day: 'numeric' })
 

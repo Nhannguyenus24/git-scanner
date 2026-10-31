@@ -30,22 +30,33 @@ type JobSummary struct {
 // ListScanJobs returns the most recent jobs first. The dashboard lists them
 // from here rather than remembering the ids it submitted, so a scan started
 // from the CLI, another browser or before a page reload is still visible.
-func (db *DB) ListScanJobs(ctx context.Context, limit int) ([]JobSummary, error) {
+// ScanFilter narrows ListScanJobs.
+type ScanFilter struct {
+	ID    entity.ID // one job
+	Group string    // "active" (not yet finished) or "done"; empty for all
+	Page
+}
+
+func (db *DB) ListScanJobs(ctx context.Context, f ScanFilter) ([]JobSummary, int, error) {
 	const q = `
 		SELECT j.id, j.target_id, j.state, j.repos_total, j.repos_scanned,
 		       j.blobs_scanned, j.findings_count, j.error,
 		       j.started_at, j.finished_at, j.created_at, j.updated_at,
-		       t.kind, t.value
+		       t.kind, t.value, count(*) OVER ()
 		FROM scan_jobs j JOIN targets t ON t.id = j.target_id
-		ORDER BY j.created_at DESC
-		LIMIT $1`
-	rows, err := db.pool.Query(ctx, q, clampLimit(limit, 50, 500))
+		WHERE ($3 = '' OR j.id::text = $3)
+		  AND ($4 = '' OR (j.state IN ('completed', 'failed', 'cancelled')) = ($4 = 'done'))
+		ORDER BY j.created_at DESC, j.id
+		LIMIT $1 OFFSET $2`
+	limit, offset := f.Bounds()
+	rows, err := db.pool.Query(ctx, q, limit, offset, string(f.ID), f.Group)
 	if err != nil {
-		return nil, fmt.Errorf("store: list scan jobs: %w", err)
+		return nil, 0, fmt.Errorf("store: list scan jobs: %w", err)
 	}
 	defer rows.Close()
 
 	var out []JobSummary
+	total := 0
 	for rows.Next() {
 		var s JobSummary
 		var state string
@@ -53,14 +64,14 @@ func (db *DB) ListScanJobs(ctx context.Context, limit int) ([]JobSummary, error)
 			&s.ID, &s.TargetID, &state, &s.ReposTotal, &s.ReposScanned,
 			&s.BlobsScanned, &s.FindingsCount, &s.Error,
 			&s.StartedAt, &s.FinishedAt, &s.CreatedAt, &s.UpdatedAt,
-			&s.TargetKind, &s.TargetValue,
+			&s.TargetKind, &s.TargetValue, &total,
 		); err != nil {
-			return nil, fmt.Errorf("store: scan job row: %w", err)
+			return nil, 0, fmt.Errorf("store: scan job row: %w", err)
 		}
 		s.State = entity.ScanState(state)
 		out = append(out, s)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // FindingFilter narrows SearchFindings. Zero values mean "any".
@@ -228,29 +239,91 @@ type RepositoryNotice struct {
 	SentAt    *time.Time
 }
 
-// ListRepositories returns every repository, the most exposed first.
-func (db *DB) ListRepositories(ctx context.Context) ([]RepositorySummary, error) {
-	const q = `
-		SELECT r.id, r.owner, r.name, r.clone_url, r.app_type, r.stars, r.is_fork,
-		       r.last_scanned_at,
-		       count(f.id),
-		       count(f.id) FILTER (WHERE f.status = 'open'),
-		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'critical'),
-		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'high'),
-		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity = 'medium'),
-		       count(f.id) FILTER (WHERE f.status = 'open' AND f.severity IN ('low', 'info')),
+// RepositoryFilter narrows and orders ListRepositories.
+type RepositoryFilter struct {
+	ID       entity.ID // one repository; used by GetRepository
+	Query    string    // substring of owner/name
+	OnlyOpen bool      // only repositories with an open finding
+	Sort     string    // risk (default), open, recent, name
+	Page
+}
+
+// repositorySorts are the orders the dashboard offers. risk weighs open
+// findings by severity the way the dashboard's risk score does (10/5/2/1), so
+// the server's order is the one the table explains; every order ends on
+// owner/name so pages never overlap or skip a row between requests.
+var repositorySorts = map[string]string{
+	"risk":   "weighted DESC, open DESC, r.last_scanned_at DESC NULLS LAST, r.owner, r.name",
+	"open":   "open DESC, weighted DESC, r.owner, r.name",
+	"recent": "r.last_scanned_at DESC NULLS LAST, r.owner, r.name",
+	"name":   "r.owner, r.name",
+}
+
+// repositoryCounts aggregates findings per repository. Findings are the small
+// side — hundreds of repositories have any, against every repository a random
+// scan ever listed — so they are grouped once and joined on, rather than
+// grouping the repositories × findings join.
+const repositoryCounts = `
+	WITH c AS (
+		SELECT repository_id,
+		       count(*) AS findings,
+		       count(*) FILTER (WHERE status = 'open') AS open,
+		       count(*) FILTER (WHERE status = 'open' AND severity = 'critical') AS critical,
+		       count(*) FILTER (WHERE status = 'open' AND severity = 'high') AS high,
+		       count(*) FILTER (WHERE status = 'open' AND severity = 'medium') AS medium,
+		       count(*) FILTER (WHERE status = 'open' AND severity IN ('low', 'info')) AS low
+		FROM findings GROUP BY repository_id
+	)`
+
+const repositoryWhere = `
+	WHERE ($1 = '' OR r.id::text = $1)
+	  AND ($2 = '' OR (r.owner || '/' || r.name) ILIKE '%' || $2 || '%' ESCAPE '\')
+	  AND (NOT $3 OR coalesce(c.open, 0) > 0)`
+
+// ListRepositories returns one page of repositories with their finding counts
+// and latest disclosure, and how many matched.
+//
+// The total is a separate count, not count(*) OVER () on the page query. With
+// the window the planner still sees LIMIT 50, picks a nested loop that keeps
+// the (owner, name) index order, and then has to run it over every row for the
+// window — 120 million join comparisons and six seconds for the name sort on
+// 126k repositories, against milliseconds for the two queries apart.
+func (db *DB) ListRepositories(ctx context.Context, f RepositoryFilter) ([]RepositorySummary, int, error) {
+	order, ok := repositorySorts[f.Sort]
+	if !ok {
+		order = repositorySorts["risk"]
+	}
+	args := []any{string(f.ID), escapeLike(strings.TrimSpace(f.Query)), f.OnlyOpen}
+
+	var total int
+	count := repositoryCounts + ` SELECT count(*) FROM repositories r LEFT JOIN c ON c.repository_id = r.id` + repositoryWhere
+	if err := db.pool.QueryRow(ctx, count, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("store: count repositories: %w", err)
+	}
+
+	q := repositoryCounts + `, page AS (
+			SELECT r.id, r.owner, r.name, r.clone_url, r.app_type, r.stars, r.is_fork, r.last_scanned_at,
+			       coalesce(c.findings, 0) AS findings, coalesce(c.open, 0) AS open,
+			       coalesce(c.critical, 0) AS critical, coalesce(c.high, 0) AS high,
+			       coalesce(c.medium, 0) AS medium, coalesce(c.low, 0) AS low,
+			       coalesce(c.critical*10 + c.high*5 + c.medium*2 + c.low, 0) AS weighted
+			FROM repositories r LEFT JOIN c ON c.repository_id = r.id` + repositoryWhere + `
+			ORDER BY ` + order + `
+			LIMIT $4 OFFSET $5
+		)
+		SELECT p.id, p.owner, p.name, p.clone_url, p.app_type, p.stars, p.is_fork, p.last_scanned_at,
+		       p.findings, p.open, p.critical, p.high, p.medium, p.low,
 		       n.state, n.recipient, n.error, n.created_at, n.sent_at
-		FROM repositories r
-		LEFT JOIN findings f ON f.repository_id = r.id
+		FROM page p
 		LEFT JOIN LATERAL (
 			SELECT state, recipient, error, created_at, sent_at FROM notifications
-			WHERE repository_id = r.id ORDER BY created_at DESC LIMIT 1
+			WHERE repository_id = p.id ORDER BY created_at DESC LIMIT 1
 		) n ON true
-		GROUP BY r.id, n.state, n.recipient, n.error, n.created_at, n.sent_at
-		ORDER BY 11 DESC, 12 DESC, 10 DESC, r.owner, r.name`
-	rows, err := db.pool.Query(ctx, q)
+		ORDER BY ` + strings.ReplaceAll(order, "r.", "p.")
+	limit, offset := f.Bounds()
+	rows, err := db.pool.Query(ctx, q, append(args, limit, offset)...)
 	if err != nil {
-		return nil, fmt.Errorf("store: list repositories: %w", err)
+		return nil, 0, fmt.Errorf("store: list repositories: %w", err)
 	}
 	defer rows.Close()
 
@@ -264,7 +337,7 @@ func (db *DB) ListRepositories(ctx context.Context) ([]RepositorySummary, error)
 			&r.LastScannedAt, &r.Findings, &r.Open, &r.Critical, &r.High, &r.Medium, &r.Low,
 			&state, &recipient, &nerr, &created, &sent,
 		); err != nil {
-			return nil, fmt.Errorf("store: repository row: %w", err)
+			return nil, 0, fmt.Errorf("store: repository row: %w", err)
 		}
 		if state != nil {
 			r.Notice = &RepositoryNotice{
@@ -273,7 +346,19 @@ func (db *DB) ListRepositories(ctx context.Context) ([]RepositorySummary, error)
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+// RepositorySummaryByID returns one repository's summary, or ErrNotFound.
+func (db *DB) RepositorySummaryByID(ctx context.Context, id entity.ID) (RepositorySummary, error) {
+	rs, _, err := db.ListRepositories(ctx, RepositoryFilter{ID: id, Page: Page{Limit: 1}})
+	if err != nil {
+		return RepositorySummary{}, err
+	}
+	if len(rs) == 0 {
+		return RepositorySummary{}, ErrNotFound
+	}
+	return rs[0], nil
 }
 
 // Count is one bucket of a breakdown.
@@ -359,34 +444,37 @@ func (db *DB) counts(ctx context.Context, q string) ([]Count, error) {
 
 // ListProviderCandidates returns the unmapped-provider backlog, most frequent
 // first. The sample is already masked when it is stored.
-func (db *DB) ListProviderCandidates(ctx context.Context) ([]entity.ProviderCandidate, error) {
+func (db *DB) ListProviderCandidates(ctx context.Context, page Page) ([]entity.ProviderCandidate, int, error) {
 	const q = `
 		SELECT id, signature, guessed_name, env_var_names, nearby_hosts, sample_masked,
 		       charset_class, length_min, length_max, occurrences, repo_count, status,
-		       promoted_to_slug, first_seen_at, last_seen_at
+		       promoted_to_slug, first_seen_at, last_seen_at, count(*) OVER ()
 		FROM provider_candidates
-		ORDER BY status IN ('mapped', 'ignored'), occurrences DESC, last_seen_at DESC`
-	rows, err := db.pool.Query(ctx, q)
+		ORDER BY status IN ('mapped', 'ignored'), occurrences DESC, last_seen_at DESC, id
+		LIMIT $1 OFFSET $2`
+	limit, offset := page.Bounds()
+	rows, err := db.pool.Query(ctx, q, limit, offset)
 	if err != nil {
-		return nil, fmt.Errorf("store: list candidates: %w", err)
+		return nil, 0, fmt.Errorf("store: list candidates: %w", err)
 	}
 	defer rows.Close()
 
 	var out []entity.ProviderCandidate
+	total := 0
 	for rows.Next() {
 		var c entity.ProviderCandidate
 		var status string
 		if err := rows.Scan(
 			&c.ID, &c.Signature, &c.GuessedName, &c.EnvVarNames, &c.NearbyHosts, &c.SampleMasked,
 			&c.CharsetClass, &c.LengthMin, &c.LengthMax, &c.Occurrences, &c.RepoCount, &status,
-			&c.PromotedToSlug, &c.FirstSeenAt, &c.LastSeenAt,
+			&c.PromotedToSlug, &c.FirstSeenAt, &c.LastSeenAt, &total,
 		); err != nil {
-			return nil, fmt.Errorf("store: candidate row: %w", err)
+			return nil, 0, fmt.Errorf("store: candidate row: %w", err)
 		}
 		c.Status = entity.CandidateStatus(status)
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // severityRank orders severities as text sorts them wrong: "medium" > "high".

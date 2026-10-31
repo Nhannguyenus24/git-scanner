@@ -103,6 +103,26 @@ func (db *DB) ListFindings(ctx context.Context, jobID entity.ID) ([]entity.Findi
 	return collectFindings(rows)
 }
 
+// ListFindingsPage is one page of the findings a scan job recorded, newest
+// first, and how many it recorded in all — the API's view of ListFindings,
+// which the workers' tests still read whole.
+func (db *DB) ListFindingsPage(ctx context.Context, jobID entity.ID, page Page) ([]entity.Finding, int, error) {
+	var total int
+	if err := db.pool.QueryRow(ctx, `SELECT count(*) FROM findings WHERE scan_job_id = $1`, jobID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("store: count findings: %w", err)
+	}
+	limit, offset := page.Bounds()
+	rows, err := db.pool.Query(ctx,
+		"SELECT "+findingColumns+" FROM findings WHERE scan_job_id = $1 ORDER BY detected_at DESC, id LIMIT $2 OFFSET $3",
+		jobID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: list findings: %w", err)
+	}
+	defer rows.Close()
+	out, err := collectFindings(rows)
+	return out, total, err
+}
+
 func scanFinding(row pgx.Row) (entity.Finding, error) {
 	var f entity.Finding
 	var sev, status string

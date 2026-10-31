@@ -63,7 +63,7 @@ func TestSharedKeysGroupsByFingerprint(t *testing.T) {
 		}
 	}
 
-	keys, total, err := db.SharedKeys(ctx, 2, 500)
+	keys, total, err := db.SharedKeys(ctx, 2, store.Page{Limit: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
