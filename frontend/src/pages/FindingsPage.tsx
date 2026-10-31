@@ -9,6 +9,7 @@ import MenuItem from '@mui/material/MenuItem'
 import TablePagination from '@mui/material/TablePagination'
 import TextField from '@mui/material/TextField'
 import SearchIcon from '@mui/icons-material/Search'
+import HistoryIcon from '@mui/icons-material/History'
 import ExportMenu from '../components/ExportMenu'
 import FindingsTable from '../components/FindingsTable'
 import SavedFilterMenu from '../components/SavedFilterMenu'
@@ -155,6 +156,10 @@ export default function FindingsPage({ route }: { route: Route }) {
           <MenuItem value="severity">{t('findings.sortSeverity')}</MenuItem>
         </TextField>
         {serverFilter.repository_id && <Chip label={t('findings.oneRepo')} onDelete={() => set({ repository_id: '' })} />}
+        {serverFilter.repository_id && (
+          <Chip clickable component="a" href={href('history', serverFilter.repository_id)} variant="outlined"
+            icon={<HistoryIcon fontSize="small" />} label={t('history.action')} />
+        )}
         {serverFilter.scan_id && <Chip label={`Scan ${serverFilter.scan_id.slice(0, 8)}`} onDelete={() => set({ scan_id: '' })} />}
       </Card>
 

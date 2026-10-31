@@ -66,6 +66,13 @@ Anything else you type becomes **Search findings for “…”**, which opens Fi
 with that text as the search filter. The palette keeps no history on purpose: a
 search box that remembers is a place a pasted credential could come to rest.
 
+When the server has a Claude API key configured, a query of more than one word
+also offers **Ask Claude: “…”**. It reads a sentence such as *critical AWS keys
+still at HEAD in org acme* into the Findings filters, opens Findings with them,
+and says how it read the question so you can correct it. Only the question and
+the list of filter values are sent to Claude — never a finding — and a question
+that looks like it contains a credential is refused before anything is sent.
+
 ### Introduction
 
 The first time the dashboard opens it offers a seven-step introduction. Skip it
@@ -127,6 +134,10 @@ Below the header:
   on; until then the counters are the truth.
 - **Stages** — Discovering repositories → Scanning repositories (clone, walk
   history, detect) → Classifying providers → Finalising analytics.
+- **Pipeline** — one dot per repository, sitting in the step its worker last
+  reported (clone, read history, attribute, probe, store) and moving on as the
+  next step is reported; finished repositories drop into the bin on the right.
+  Orange means candidate matches so far, red a failed attempt, grey a skip.
 - **Live activity** — streamed from the workers while the scan runs.
 - **Summary** — when the job completes: how many findings in how many
   repositories, how many are high or critical, how many are still reachable
@@ -340,6 +351,50 @@ Settings. While mail is on, **Notify** on a row queues a disclosure to the
 repository owner, listing its findings with masked previews. The **Notified**
 column then reads *sending*, *sent*, *failed* or *opted out*.
 
+### Time machine
+
+The clock icon on a row (or the **Time machine** chip on Findings filtered to
+one repository) replays that repository's exposure commit by commit. Each file
+with a credential gets a lane; a diamond marks the commit that introduced each
+key, and a line runs from there to today — solid while the key is still at
+HEAD, fading out once it was removed.
+
+Drag the slider, step with the previous and next buttons, or press play to walk
+forward from the first leak. At each step the page says how many credentials
+had been committed by then, how many are still at HEAD today, and that all of
+them remain clonable. Below, the commits that introduced a credential are listed
+newest first, with author, date and a link to each finding.
+
+The scan knows when a key was committed, not when it was deleted, so a removed
+key's line fades rather than ending at an invented date. Findings with no
+commit date yet are counted below the list; a rescan places them.
+
+---
+
+## Key spread
+
+Credentials found in more than one repository. Findings are recorded once per
+repository, so the same secret in several places shows up only here, where the
+copies are joined by their fingerprint.
+
+- **Shared keys**, **Cross owners** (keys in repositories of different owners),
+  **Open at HEAD** and **Repos / owners** touched. When there are more shared
+  keys than the graph draws, the first card says how many are drawn.
+- **Found in** — show keys in 2, 3, 5 or 10 repositories or more.
+- **The graph** — a diamond per key, coloured by severity and sized by how far
+  it spread; a circle per repository; a square per owner that has two or more
+  of them. A red line is a copy still at HEAD, a dashed line a copy already
+  triaged. Hover to light a key's neighbourhood.
+- **The list** beside it holds the same keys for keyboard and screen-reader
+  use. Choosing a key in either shows its repositories, each linked to its
+  finding.
+
+One rotation fixes every copy, so a key's detail can **mark every copy**
+*Rotated* or *False positive* at once, after a confirmation. A value pasted
+into many unrelated owners' repositories is usually boilerplate the generic
+pass mistook for a secret — framework class names, sample keys from a
+tutorial — and this view is the quickest way to spot them.
+
 ---
 
 ## Unmapped
@@ -393,6 +448,10 @@ payment providers, up to critical.
 A read on everything scanned so far:
 
 - **Findings** and **Repositories** — totals, open, exposed of scanned.
+- **Leak calendar** — one square per day a year at a time, shaded by how many
+  credentials were committed that day and outlined where one was critical. Pick
+  the year at the top right. Days are UTC: the author's own time zone is not
+  recorded, so a square can be their previous or next day.
 - **Leak introduction timeline** — findings by the month the credential was
   committed.
 - **Open by severity**, **Open by provider** (named providers plus the unmapped
@@ -440,6 +499,22 @@ Saved in this browser only.
 ### Introduction
 
 **Replay the introduction** opens the onboarding tour again.
+
+### Browser notifications
+
+With this on and the browser's permission granted, an open dashboard — a
+background tab is enough — notifies you when a scan it watched finishes and
+when more keys are confirmed live; clicking the notification opens the scan or
+the live keys. While you are looking at the dashboard the same news comes as an
+in-page message instead. Nothing is sent once every dashboard tab is closed.
+Saved in this browser only.
+
+### Installing the dashboard
+
+The dashboard can be installed as an app from the browser's address bar (or
+*Add to Home Screen* on a phone). It then opens in its own window and its shell
+loads without a network; the data still comes from the API and is never kept
+in the browser's cache.
 
 ### Disclosure mail
 
@@ -512,6 +587,12 @@ limits readings appear in the finding drawer.
 - **The list says it refined only 500 findings** — narrow the server-side
   filters (severity, provider, status, repository) so the window covers
   everything.
+- **No “Ask Claude” in the palette** — the server has no `ANTHROPIC_API_KEY`,
+  or the query is a single word (that is a plain search).
+- **Ask Claude refused the question** — it contained something shaped like a
+  credential; rephrase without the value.
+- **No browser notifications** — check the permission for this site in the
+  browser; a blocked site cannot be asked again from the page.
 - **Stale results** — a job deleted, or data wiped, removes its findings;
   rescan to bring them back.
 

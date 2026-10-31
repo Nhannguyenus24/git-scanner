@@ -1,0 +1,18 @@
+{
+  "name": "GitScanner",
+  "short_name": "GitScanner",
+  "description": "Find credentials leaked anywhere in a repository's history.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3efe3",
+  "theme_color": "#1f6f66",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Findings", "url": "/#/findings?status=open" },
+    { "name": "Scans", "url": "/#/scans" }
+  ]
+}

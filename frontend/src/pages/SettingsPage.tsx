@@ -14,10 +14,12 @@ import MailOutlineIcon from '@mui/icons-material/MailOutline'
 import PaletteIcon from '@mui/icons-material/PaletteOutlined'
 import ReplayIcon from '@mui/icons-material/Replay'
 import TourIcon from '@mui/icons-material/ExploreOutlined'
+import NotificationsIcon from '@mui/icons-material/NotificationsActiveOutlined'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOffOutlined'
 import { PageHeader } from '../components/Layout'
 import { LoadError, Loading } from '../components/States'
 import { useResource } from '../hooks/useResource'
+import { alertsSupported } from '../hooks/useDesktopAlerts'
 import { href } from '../hooks/useRoute'
 import { usePrefs } from '../store/preferences'
 import { useSettings } from '../store/settings'
@@ -189,6 +191,8 @@ export default function SettingsPage({ onRestartTour }: { onRestartTour?: () => 
         </Card>
       )}
 
+      <AlertsCard />
+
       <Card sx={{ mb: 2 }}>
         <Row icon={<MailOutlineIcon />} title={t('settings.mail.title')} color="warning"
           body={<>{t('settings.mail.body')} <Link href={href('notifications')}>{t('settings.mail.log')}</Link></>}
@@ -232,5 +236,39 @@ export default function SettingsPage({ onRestartTour }: { onRestartTour?: () => 
         </Box>
       </Card>
     </>
+  )
+}
+
+// Browser notifications are a per-browser preference, stored with the other
+// local preferences; the permission itself belongs to the browser, so a denial
+// is reported as such rather than retried.
+function AlertsCard() {
+  const { t } = useT()
+  const { prefs, set } = usePrefs()
+  const notify = useToast()
+  const supported = alertsSupported()
+  const denied = supported && Notification.permission === 'denied'
+
+  const toggle = async (on: boolean) => {
+    if (!on) { set('desktopAlerts', false); return }
+    const p = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
+    if (p === 'granted') { set('desktopAlerts', true); notify(t('alerts.enabled')) }
+    else notify(t('alerts.denied'), 'error')
+  }
+
+  return (
+    <Card sx={{ mb: 2 }}>
+      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', p: 2.5 }}>
+        <Box sx={{ color: 'text.secondary', pt: .25, alignSelf: 'flex-start' }}><NotificationsIcon /></Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box sx={{ fontWeight: 700, fontSize: 15 }}>{t('alerts.title')}</Box>
+          <Box sx={{ color: 'text.secondary', fontSize: 13, mt: .5, lineHeight: 1.55 }}>
+            {!supported ? t('alerts.unsupported') : denied ? t('alerts.blocked') : t('alerts.body')}
+          </Box>
+        </Box>
+        <Switch checked={prefs.desktopAlerts && supported && !denied} disabled={!supported || denied}
+          onChange={e => toggle(e.target.checked)} inputProps={{ 'aria-label': t('alerts.title') }} />
+      </Box>
+    </Card>
   )
 }

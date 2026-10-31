@@ -90,6 +90,15 @@ const REPOSITORY = {
   findings: 3, open: 2, critical: 1, high: 1, medium: 0, low: 0,
 }
 
+const SHARED_KEY = {
+  key_id: '0123456789abcdef', provider: 'stripe', rule_id: 'stripe-secret-key', severity: 'critical',
+  masked_preview: 'sk_l****9c1d',
+  repositories: [
+    { finding_id: 'f1', id: 'r1', owner: 'acme', name: 'web', status: 'open', reachable_from_head: true },
+    { finding_id: 'f9', id: 'r9', owner: 'globex', name: 'api', status: 'rotated', reachable_from_head: false },
+  ],
+}
+
 /** Answers every endpoint the dashboard calls, by path. */
 function stubFetch() {
   return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -110,6 +119,10 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/assist'         ? { enabled: true, model: 'claude-opus-5-5' }
+      : path === '/v1/assist/filter'  ? { severity: 'critical', provider: 'aws', status: 'open', exposure: 'head', sort: '', q: 'acme', explanation: 'critical AWS keys at HEAD in acme' }
+      : path === '/v1/analytics/calendar' ? { days: [{ day: '2026-01-02', findings: 3, critical: 1 }] }
+      : path === '/v1/keys/shared'    ? { keys: [SHARED_KEY], total: 1 }
       : path === '/v1/shared/tok-valid' ? SHARED
       : path === '/v1/repositories/r1/shares' && init?.method === 'POST'
         ? { ...SHARE, token: 'tok-new' }
@@ -178,6 +191,8 @@ describe('every page mounts', () => {
     ['#/candidates', 'Unmapped'],
     ['#/notifications', 'Notifications'],
     ['#/providers', 'Providers'],
+    ['#/spread', 'Key spread'],
+    ['#/history/r1', 'time machine'],
     ['#/settings', 'Settings'],
     ['#/help', 'Help'],
   ]
@@ -211,6 +226,35 @@ describe('overview', () => {
   })
 })
 
+describe('key spread', () => {
+  it('lists a shared key and opens its repositories from the list', async () => {
+    await open('#/spread')
+    expect(await screen.findByText(/2 repositories · 2 owners/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /sk_l\*\*\*\*9c1d/ })) })
+    expect(screen.getByRole('link', { name: 'globex/api' }).getAttribute('href')).toContain('finding=f9')
+    expect(screen.getByText(/One rotation fixes all 2/)).toBeTruthy()
+  })
+})
+
+describe('leak calendar', () => {
+  it('draws the latest year with leaks and its busiest day', async () => {
+    await open('#/analytics')
+    expect(await screen.findByText(/3 credentials on 1 days in 2026/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Calendar of 2026/ })).toBeTruthy()
+  })
+})
+
+describe('time machine', () => {
+  it('starts at today and steps back before the first leak', async () => {
+    await open('#/history/r1')
+    expect(screen.getByText(/1 credentials had been committed/)).toBeTruthy()
+    expect(screen.getByText(/all 1 can still be cloned/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /previous commit/i })) })
+    expect(screen.getByText(/Nothing has leaked yet/)).toBeTruthy()
+    expect(screen.getByRole('slider', { name: /point in the history/i }).getAttribute('aria-valuetext')).toMatch(/before the first leak/i)
+  })
+})
+
 describe('command palette', () => {
   it('opens on Ctrl+K and filters as you type', async () => {
     await open('#/overview')
@@ -219,6 +263,21 @@ describe('command palette', () => {
     await act(async () => { fireEvent.change(box, { target: { value: 'midnight' } }) })
     const list = screen.getByRole('listbox')
     expect(within(list).getAllByText(/Midnight/i).length).toBeGreaterThan(0)
+  })
+
+  it('asks Claude for a sentence and opens the filter it returns', async () => {
+    await open('#/overview')
+    await act(async () => { fireEvent.keyDown(window, { key: 'k', ctrlKey: true }) })
+    const box = screen.getByPlaceholderText(/search pages/i)
+    await act(async () => { fireEvent.change(box, { target: { value: 'critical aws keys at head in acme' } }) })
+    const ask = within(screen.getByRole('listbox')).getByText(/^Ask Claude:/)
+    await act(async () => { fireEvent.click(ask) })
+    await waitFor(() => expect(window.location.hash).toMatch(/#\/findings\?/))
+    const params = new URLSearchParams(window.location.hash.split('?')[1])
+    expect(params.get('severity')).toBe('critical')
+    expect(params.get('provider')).toBe('aws')
+    expect(params.get('exposure')).toBe('head')
+    expect(params.get('q')).toBe('acme')
   })
 
   it('applies a theme preset chosen from it', async () => {
@@ -411,11 +470,13 @@ describe('scan detail', () => {
     expect(screen.getByText('deploy/values.yaml')).toBeTruthy()
     expect(screen.getByText(/complete · 4 repositories queued/)).toBeTruthy()
     expect(screen.getByText(/globex\/billing: cloned in 0.9s/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Pipeline: 1 repositories in progress, 0 finished/ })).toBeTruthy()
 
     await act(async () => {
       es.emit({ seq: 5, job_id: 'j2', repo_id: 'r9', stage: 'repo', status: 'done', findings: 2, blobs: 4096, elapsed_ms: 5000, at })
     })
     expect(screen.getByText(/2 new findings · 4,096 blobs/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Pipeline: 0 repositories in progress, 1 finished, 2 new findings/ })).toBeTruthy()
   })
 
   it('does not open a stream for a finished scan', async () => {

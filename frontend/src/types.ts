@@ -257,3 +257,31 @@ export interface Candidate {
   first_seen_at: string
   last_seen_at:  string
 }
+
+/** One credential found in more than one repository (GET /v1/keys/shared). */
+export interface SharedKey {
+  key_id:         string
+  provider:       string
+  rule_id:        string
+  severity:       Severity
+  masked_preview: string
+  repositories:   SharedKeyRepo[]
+}
+
+export interface SharedKeyRepo {
+  finding_id:          string
+  id:                  string
+  owner:               string
+  name:                string
+  status:              FindingStatus
+  reachable_from_head: boolean
+}
+
+/** Findings committed on one UTC day (GET /v1/analytics/calendar). */
+export interface LeakDay { day: string; findings: number; critical: number }
+
+/** A plain-words question read into findings filter fields (POST /v1/assist/filter). */
+export interface AssistFilter {
+  severity: string; provider: string; status: string; exposure: string; sort: string; q: string
+  explanation: string
+}

@@ -17,6 +17,7 @@ import Switch from '@mui/material/Switch'
 import Tooltip from '@mui/material/Tooltip'
 import IconButton from '@mui/material/IconButton'
 import MailOutlineIcon from '@mui/icons-material/MailOutline'
+import HistoryIcon from '@mui/icons-material/History'
 import ShareIcon from '@mui/icons-material/IosShare'
 import ShareDialog from '../components/ShareDialog'
 import SearchIcon from '@mui/icons-material/Search'
@@ -190,6 +191,14 @@ export default function RepositoriesPage() {
                           </Tooltip>
                         ) : (
                           <Box component="span" sx={{ fontSize: 12, color: 'text.secondary' }}>{t(risk.action)}</Box>
+                        )}
+                        {r.findings > 0 && (
+                          <Tooltip title={t('history.action')}>
+                            <IconButton size="small" aria-label={t('history.actionFor', { repo: `${r.owner}/${r.name}` })}
+                              href={href('history', r.id)} onClick={e => e.stopPropagation()}>
+                              <HistoryIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         )}
                         {r.findings > 0 && (
                           <Tooltip title={t('share.action')}>

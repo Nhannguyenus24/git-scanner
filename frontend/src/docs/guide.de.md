@@ -65,6 +65,14 @@ Alles andere, was Sie eingeben, wird zu **Funde nach „…“ durchsuchen** und
 mit diesem Text als Suchfilter. Die Palette speichert bewusst keinen Verlauf: Ein Suchfeld,
 das sich etwas merkt, ist ein Ort, an dem eingefügte Anmeldedaten liegen bleiben könnten.
 
+Ist auf dem Server ein Claude-API-Schlüssel konfiguriert, bietet eine Eingabe aus mehr als
+einem Wort zusätzlich **Claude fragen: „…“** an. Daraus wird ein Satz wie *kritische
+AWS-Schlüssel noch auf HEAD in der Organisation acme* in die Filter der Funde übersetzt, die
+Funde werden damit geöffnet, und Sie sehen, wie die Frage verstanden wurde, sodass Sie sie
+korrigieren können. An Claude gehen nur die Frage und die Liste der Filterwerte — niemals ein
+Fund —, und eine Frage, die nach Anmeldedaten aussieht, wird abgelehnt, bevor irgendetwas
+gesendet wird.
+
 ### Einführung
 
 Beim ersten Öffnen bietet das Dashboard eine Einführung in sieben Schritten an. Überspringen
@@ -129,6 +137,10 @@ Unterhalb der Kopfzeile:
   bis dahin sind die Zähler maßgeblich.
 - **Phasen** — Repositories ermitteln → Repositories scannen (klonen, Historie durchlaufen,
   erkennen) → Anbieter zuordnen → Auswertung abschließen.
+- **Pipeline** — ein Punkt pro Repository, in dem Schritt, den sein Worker zuletzt gemeldet
+  hat (klonen, Historie lesen, zuordnen, prüfen, speichern), und er rückt weiter, sobald der
+  nächste Schritt gemeldet wird; fertige Repositories fallen in den Behälter rechts. Orange
+  heißt bisher Kandidaten-Treffer, rot ein fehlgeschlagener Versuch, grau übersprungen.
 - **Live-Aktivität** — während des Scans von den Workern gestreamt.
 - **Zusammenfassung** — wenn der Auftrag abgeschlossen ist: wie viele Funde in wie vielen
   Repositories, wie viele davon hoch oder kritisch sind, wie viele noch vom Standard-Branch
@@ -346,6 +358,52 @@ einen Hinweis an den Repository-Eigentümer ein, der dessen Funde mit maskierten
 auflistet. Die Spalte **Benachrichtigt** zeigt dann *wird gesendet*, *gesendet*,
 *fehlgeschlagen* oder *abgemeldet*.
 
+### Zeitmaschine
+
+Das Uhrsymbol in einer Zeile (oder der Chip **Zeitmaschine** in den auf ein Repository
+gefilterten Funden) spielt die Exposition dieses Repositorys Commit für Commit ab. Jede Datei
+mit Anmeldedaten bekommt eine Bahn; eine Raute markiert den Commit, der den jeweiligen
+Schlüssel eingeführt hat, und von dort führt eine Linie bis heute — durchgezogen, solange der
+Schlüssel noch auf HEAD liegt, verblassend, sobald er entfernt wurde.
+
+Ziehen Sie den Schieberegler, gehen Sie mit den Schaltflächen Zurück und Weiter schrittweise
+vor oder drücken Sie Abspielen, um vom ersten Leck an vorwärts zu laufen. Bei jedem Schritt
+zeigt die Seite, wie viele Anmeldedaten bis dahin committet waren, wie viele heute noch auf
+HEAD liegen und dass alle weiterhin klonbar sind. Darunter stehen die Commits, die
+Anmeldedaten eingeführt haben, neueste zuerst, mit Autor, Datum und einem Link zu jedem Fund.
+
+Der Scan weiß, wann ein Schlüssel committet wurde, nicht aber, wann er gelöscht wurde; die
+Linie eines entfernten Schlüssels verblasst deshalb, statt an einem erfundenen Datum zu
+enden. Funde ohne Commit-Datum werden unter der Liste gezählt; ein erneuter Scan ordnet sie
+ein.
+
+---
+
+## Schlüsselverbreitung
+
+Anmeldedaten, die in mehr als einem Repository gefunden wurden. Funde werden einmal pro
+Repository erfasst, daher zeigt sich dasselbe Geheimnis an mehreren Stellen nur hier, wo die
+Kopien über ihren Fingerabdruck verbunden werden.
+
+- **Geteilte Schlüssel**, **Über Eigentümer hinweg** (Schlüssel in Repositorys verschiedener
+  Eigentümer), **Offen auf HEAD** und betroffene **Repos / Eigentümer**. Gibt es mehr geteilte
+  Schlüssel, als der Graph zeichnet, nennt die erste Karte, wie viele gezeichnet sind.
+- **Gefunden in** — Schlüssel in 2, 3, 5 oder 10 und mehr Repositories anzeigen.
+- **Der Graph** — eine Raute pro Schlüssel, nach Schweregrad gefärbt und nach Verbreitung
+  skaliert; ein Kreis pro Repository; ein Quadrat für jeden Eigentümer mit zwei oder mehr
+  davon. Eine rote Linie ist eine Kopie, die noch auf HEAD liegt, eine gestrichelte eine
+  bereits gesichtete Kopie. Mit der Maus heben Sie die Nachbarschaft eines Schlüssels hervor.
+- **Die Liste** daneben enthält dieselben Schlüssel für Tastatur und Screenreader. Wird ein
+  Schlüssel in einer der beiden gewählt, erscheinen seine Repositories, jedes mit seinem Fund
+  verlinkt.
+
+Eine Rotation behebt jede Kopie, daher kann die Detailansicht eines Schlüssels nach einer
+Bestätigung auf einmal **alle Kopien markieren**, als *Erneuert* oder *Fehlalarm*. Ein
+Wert, der in die Repositories vieler voneinander unabhängiger Eigentümer kopiert wurde, ist
+meist Boilerplate, die der generische Durchlauf für ein Geheimnis gehalten hat —
+Framework-Klassennamen, Beispielschlüssel aus einem Tutorial —, und diese Ansicht ist der
+schnellste Weg, sie zu erkennen.
+
 ---
 
 ## Nicht zugeordnet
@@ -399,6 +457,10 @@ Zahlungsanbietern, bis maximal kritisch.
 Ein Blick auf alles, was bisher gescannt wurde:
 
 - **Funde** und **Repositories** — Gesamtzahlen, offen, exponiert von gescannt.
+- **Leck-Kalender** — ein Quadrat pro Tag, jeweils ein Jahr, schattiert nach der Zahl der an
+  diesem Tag committeten Anmeldedaten und umrandet, wo eine kritisch war. Das Jahr wählen Sie
+  oben rechts. Die Tage sind UTC: Die Zeitzone des Autors wird nicht erfasst, ein Quadrat kann
+  also dessen vorherigen oder nächsten Tag sein.
 - **Zeitachse der Leakeinführung** — Funde nach dem Monat, in dem die Anmeldedaten
   committet wurden.
 - **Offen nach Schweregrad**, **Offen nach Anbieter** (benannte Anbieter plus die nicht
@@ -446,6 +508,22 @@ Nur in diesem Browser gespeichert.
 ### Einführung
 
 **Einführung erneut ansehen** öffnet die Einführungstour noch einmal.
+
+### Browser-Benachrichtigungen
+
+Ist dies eingeschaltet und die Berechtigung des Browsers erteilt, benachrichtigt Sie ein
+offenes Dashboard — ein Hintergrund-Tab genügt —, wenn ein von ihm verfolgter Scan endet und
+wenn weitere Schlüssel als aktiv bestätigt werden; ein Klick auf die Benachrichtigung öffnet
+den Scan oder die aktiven Schlüssel. Während Sie auf das Dashboard schauen, kommt dieselbe
+Nachricht stattdessen als Meldung in der Seite. Sind alle Dashboard-Tabs geschlossen, wird
+nichts gesendet. Nur in diesem Browser gespeichert.
+
+### Das Dashboard installieren
+
+Das Dashboard lässt sich über die Adressleiste des Browsers als App installieren (oder auf
+einem Telefon mit *Zum Startbildschirm hinzufügen*). Es öffnet sich dann in einem eigenen
+Fenster, und seine Oberfläche lädt auch ohne Netzwerk; die Daten kommen weiterhin von der API
+und werden nie im Browser-Cache gespeichert.
 
 ### Hinweis-Mails
 
@@ -520,6 +598,12 @@ Kontingent und Limits erscheinen in der Detail-Seitenleiste des Fundes.
 - **Die Liste meldet, dass nur 500 Funde verfeinert wurden** — grenzen Sie die
   serverseitigen Filter (Schweregrad, Anbieter, Status, Repository) ein, damit das Fenster
   alles abdeckt.
+- **Kein „Claude fragen“ in der Palette** — der Server hat keinen `ANTHROPIC_API_KEY`, oder
+  die Eingabe ist nur ein Wort (das ist eine normale Suche).
+- **Claude fragen hat die Frage abgelehnt** — sie enthielt etwas, das wie Anmeldedaten
+  aussieht; formulieren Sie sie ohne den Wert neu.
+- **Keine Browser-Benachrichtigungen** — prüfen Sie die Berechtigung für diese Seite im
+  Browser; eine blockierte Seite kann von der Seite aus nicht erneut gefragt werden.
 - **Veraltete Ergebnisse** — ein gelöschter Auftrag oder gelöschte Daten entfernen die
   zugehörigen Funde; ein erneuter Scan bringt sie zurück.
 

@@ -69,6 +69,14 @@ Rilevamenti con quel testo come filtro di ricerca. La palette non conserva
 volutamente alcuna cronologia: una casella di ricerca che ricorda è un posto in
 cui una credenziale incollata potrebbe restare.
 
+Quando il server ha una chiave API di Claude configurata, una ricerca di più di
+una parola offre anche **Chiedi a Claude: “…”**. Traduce una frase come *chiavi
+AWS critiche ancora su HEAD nell'organizzazione acme* nei filtri di Rilevamenti,
+apre Rilevamenti con quei filtri e dice come ha interpretato la domanda, così
+puoi correggerla. A Claude vengono inviati solo la domanda e l'elenco dei valori
+di filtro — mai un rilevamento — e una domanda che sembra contenere una
+credenziale viene rifiutata prima che venga inviato qualsiasi cosa.
+
 ### Introduzione
 
 La prima volta che la dashboard si apre propone un'introduzione in sette passi.
@@ -137,6 +145,11 @@ Sotto l'intestazione:
 - **Fasi** — Individuazione dei repository → Scansione dei repository (clone,
   percorso della cronologia, rilevamento) → Classificazione dei provider →
   Finalizzazione delle analisi.
+- **Pipeline** — un punto per repository, fermo nel passo segnalato per ultimo
+  dal suo worker (clone, leggi storia, attribuisci, verifica, salva) e che
+  avanza quando viene segnalato il passo successivo; i repository completati
+  finiscono nel contenitore a destra. Arancione indica corrispondenze candidate
+  finora, rosso un tentativo fallito, grigio un repository saltato.
 - **Attività in tempo reale** — trasmessa dai worker mentre la scansione è in
   corso.
 - **Riepilogo** — al termine dell'operazione: quanti rilevamenti in quanti
@@ -372,6 +385,55 @@ coda una segnalazione al proprietario del repository, con l'elenco dei suoi
 rilevamenti in anteprima mascherata. La colonna **Segnalato** indica poi *in
 invio*, *inviata*, *fallita* o *esclusa*.
 
+### Macchina del tempo
+
+L'icona dell'orologio su una riga (o il chip **Macchina del tempo** in
+Rilevamenti filtrati su un solo repository) riproduce l'esposizione di quel
+repository commit per commit. Ogni file con una credenziale ha una corsia; un
+rombo segna il commit che ha introdotto ciascuna chiave, e da lì una linea arriva
+a oggi — continua finché la chiave è ancora su HEAD, sfumata una volta rimossa.
+
+Trascina il cursore, avanza con i pulsanti precedente e successivo, oppure premi
+play per scorrere in avanti dalla prima fuga. A ogni passo la pagina dice quante
+credenziali erano state committate fino a quel momento, quante sono ancora su
+HEAD oggi e che tutte restano clonabili. Sotto, i commit che hanno introdotto una
+credenziale sono elencati dal più recente, con autore, data e un collegamento a
+ciascun rilevamento.
+
+La scansione sa quando una chiave è stata committata, non quando è stata
+cancellata, quindi la linea di una chiave rimossa sfuma invece di finire a una
+data inventata. I rilevamenti ancora senza data di commit sono contati sotto
+l'elenco; una nuova scansione li colloca.
+
+---
+
+## Diffusione chiavi
+
+Credenziali trovate in più di un repository. I rilevamenti sono registrati una
+volta per repository, quindi lo stesso segreto in più posti compare solo qui,
+dove le copie sono collegate dalla loro impronta.
+
+- **Chiavi condivise**, **Tra proprietari** (chiavi in repository di proprietari
+  diversi), **Aperte su HEAD** e **Repository / proprietari** toccati. Quando ci
+  sono più chiavi condivise di quante il grafo ne disegni, la prima scheda dice
+  quante sono disegnate.
+- **Trovata in** — mostra le chiavi presenti in 2, 3, 5 o 10 repository o più.
+- **Il grafo** — un rombo per chiave, colorato per gravità e dimensionato in base
+  a quanto si è diffusa; un cerchio per repository; un quadrato per ogni
+  proprietario che ne ha due o più. Una linea rossa è una copia ancora su HEAD,
+  una tratteggiata una copia già gestita. Passa il mouse per illuminare i vicini
+  di una chiave.
+- **L'elenco** accanto contiene le stesse chiavi, per l'uso da tastiera e con
+  lettore di schermo. Scegliere una chiave in uno dei due mostra i suoi
+  repository, ciascuno collegato al proprio rilevamento.
+
+Una sola rotazione sistema ogni copia, quindi il dettaglio di una chiave può
+**segnare ogni copia** come *Ruotato* o *Falso positivo* in un colpo solo, dopo
+una conferma. Un valore incollato nei repository di molti proprietari non
+collegati è di solito codice boilerplate che il passaggio generico ha scambiato
+per un segreto — nomi di classi di un framework, chiavi di esempio di un
+tutorial — e questa vista è il modo più rapido per individuarli.
+
 ---
 
 ## Non mappati
@@ -427,6 +489,11 @@ provider cloud e di pagamento, fino a critico.
 Una lettura di tutto ciò che è stato scansionato finora:
 
 - **Rilevamenti** e **Repository** — totali, aperti, esposti / scansionati.
+- **Calendario delle fughe** — un quadrato per giorno, un anno alla volta,
+  ombreggiato in base a quante credenziali sono state committate quel giorno e
+  bordato dove una era critica. Scegli l'anno in alto a destra. I giorni sono in
+  UTC: il fuso orario dell'autore non è registrato, quindi un quadrato può
+  corrispondere al suo giorno precedente o successivo.
 - **Cronologia introduzione leak** — rilevamenti in base al mese in cui la
   credenziale è stata committata.
 - **Aperti per gravità**, **Aperti per provider** (provider noti più la
@@ -480,6 +547,23 @@ Salvato solo in questo browser.
 ### Introduzione
 
 **Rivedi l'introduzione** riapre il tour introduttivo.
+
+### Notifiche del browser
+
+Con questa opzione attiva e il permesso del browser concesso, una dashboard
+aperta — basta una scheda in background — ti avvisa quando una scansione che
+stava seguendo finisce e quando altre chiavi risultano attive; un clic sulla
+notifica apre la scansione o le chiavi attive. Mentre stai guardando la
+dashboard, la stessa notizia arriva invece come messaggio nella pagina. Nulla
+viene inviato quando tutte le schede della dashboard sono chiuse. Salvato solo in
+questo browser.
+
+### Installare la dashboard
+
+La dashboard può essere installata come app dalla barra degli indirizzi del
+browser (o con *Aggiungi a schermata Home* su un telefono). Si apre allora in una
+finestra propria e la sua struttura si carica senza rete; i dati arrivano
+comunque dall'API e non vengono mai conservati nella cache del browser.
 
 ### Email di segnalazione
 
@@ -563,6 +647,13 @@ rilevamento.
 - **L'elenco dice di aver affinato solo 500 rilevamenti** — restringi i filtri
   lato server (gravità, provider, stato, repository) in modo che la finestra
   copra tutto.
+- **Nessun “Chiedi a Claude” nella palette** — il server non ha
+  `ANTHROPIC_API_KEY`, oppure la ricerca è di una sola parola (quella è una
+  ricerca semplice).
+- **Chiedi a Claude ha rifiutato la domanda** — conteneva qualcosa con la forma
+  di una credenziale; riformulala senza il valore.
+- **Nessuna notifica del browser** — controlla il permesso per questo sito nel
+  browser; a un sito bloccato non si può chiedere di nuovo dalla pagina.
 - **Risultati obsoleti** — eliminare un'operazione o cancellare i dati ne
   rimuove i rilevamenti; riscansiona per recuperarli.
 

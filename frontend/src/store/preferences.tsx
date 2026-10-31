@@ -38,6 +38,8 @@ export interface UiPreferences {
   widgets:          WidgetId[]      // visible, in order
   savedFilters:     SavedFilter[]
   onboarded:        boolean
+  /** Browser notifications for finished scans and new live keys. */
+  desktopAlerts:    boolean
 }
 
 export const DEFAULTS: UiPreferences = {
@@ -49,6 +51,7 @@ export const DEFAULTS: UiPreferences = {
   widgets: [...ALL_WIDGETS],
   savedFilters: [],
   onboarded: false,
+  desktopAlerts: false,
 }
 
 /** The dashboard arrangements offered in settings, each a widget order. */
@@ -114,6 +117,7 @@ export function loadPreferences(): UiPreferences {
     widgets: widgets?.length ? widgets : [...DEFAULTS.widgets],
     savedFilters: filters,
     onboarded: raw.onboarded === true,
+    desktopAlerts: raw.desktopAlerts === true,
   }
 }
 

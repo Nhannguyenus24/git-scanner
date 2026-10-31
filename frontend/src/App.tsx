@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import CommandPalette from './components/CommandPalette'
 import Layout from './components/Layout'
 import NewScanDialog from './components/NewScanDialog'
 import OnboardingTour from './components/OnboardingTour'
 import { useHotkeys } from './hooks/useHotkeys'
+import { useDesktopAlerts } from './hooks/useDesktopAlerts'
 import { useResource } from './hooks/useResource'
 import { href, navigate, useRoute, type Route } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
@@ -14,9 +15,15 @@ import HelpPage from './pages/HelpPage'
 import AnalyticsPage from './pages/AnalyticsPage'
 import OverviewPage from './pages/OverviewPage'
 import ProvidersPage from './pages/ProvidersPage'
+import RepoHistoryPage from './pages/RepoHistoryPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
+import { Loading } from './components/States'
+
+// The graph pulls in d3-force; loading the page on demand keeps it out of the
+// bundle everyone else downloads.
+const KeySpreadPage = lazy(() => import('./pages/KeySpreadPage'))
 import SharedReportPage from './pages/SharedReportPage'
 import { usePrefs } from './store/preferences'
 import { useSettings } from './store/settings'
@@ -43,6 +50,7 @@ function Dashboard({ route }: { route: Route }) {
   // without clearing the completion flag.
   const [tourOpen, setTourOpen] = useState(!prefs.onboarded)
   const ov = useResource(() => api.overview(), [api], 10000)
+  useDesktopAlerts(prefs.desktopAlerts)
 
   const startScan = async (kind: TargetKind, value: string, forks: boolean) => {
     const job = kind === 'repo' ? await api.scanRepo(value)
@@ -74,16 +82,18 @@ function Dashboard({ route }: { route: Route }) {
                             ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
     case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
+    case 'history':      body = route.id ? <RepoHistoryPage key={route.id} id={route.id} /> : <RepositoriesPage />; break
     case 'candidates':   body = <CandidatesPage />; break
     case 'notifications': body = <NotificationsPage />; break
     case 'settings':     body = <SettingsPage onRestartTour={() => setTourOpen(true)} />; break
     case 'providers':    body = <ProvidersPage />; break
+    case 'spread':       body = <Suspense fallback={<Loading />}><KeySpreadPage /></Suspense>; break
     case 'help':         body = <HelpPage />; break
     default:             body = <OverviewPage onNewScan={open} />
   }
 
   return (
-    <Layout page={page} onNewScan={open} onCommands={() => setPaletteOpen(true)}
+    <Layout page={page === 'history' ? 'repositories' : page} onNewScan={open} onCommands={() => setPaletteOpen(true)}
       badges={{ findings: ov.data?.open_findings ?? 0, scans: ov.data?.active_scans ?? 0, candidates: ov.data?.candidates ?? 0 }}>
       {body}
       <NewScanDialog open={scanOpen} onClose={() => setScanOpen(false)} onSubmit={startScan} />
