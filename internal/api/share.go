@@ -256,7 +256,9 @@ func (s *Server) handleSharedReportFile(w http.ResponseWriter, r *http.Request) 
 func filenameSafe(s string) string {
 	b := []byte(s)
 	for i, c := range b {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_', c == '.':
+		default:
 			b[i] = '-'
 		}
 	}
