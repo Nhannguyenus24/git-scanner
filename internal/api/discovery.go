@@ -2,10 +2,12 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/mservice/gitscanner/internal/dispatch"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 )
@@ -119,9 +121,29 @@ func (s *Server) startDiscovery(w http.ResponseWriter, r *http.Request, kind ent
 // handlePause asks a running job to stop at its next checkpoint. It sets the
 // flag the workers poll; the state flips to paused when a worker observes it,
 // so the response reports "pause requested" rather than an immediate stop.
+//
+// Only a queued or running job is pausable. Any other is refused: the flag would
+// be left set on a row no worker will read again, and a 202 would tell the
+// caller something was about to stop when nothing was running.
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 	id := entity.ID(r.PathValue("id"))
-	if err := s.control.RequestPause(r.Context(), id); err != nil {
+	ctx := r.Context()
+
+	job, err := s.store.GetScanJob(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.writeError(w, http.StatusNotFound, errors.New("scan not found"))
+		return
+	}
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if job.State != entity.ScanQueued && job.State != entity.ScanRunning {
+		s.writeError(w, http.StatusConflict, fmt.Errorf("scan is %s and cannot be paused", job.State))
+		return
+	}
+
+	if err := s.control.RequestPause(ctx, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.writeError(w, http.StatusNotFound, errors.New("scan not found"))
 			return
@@ -169,6 +191,8 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("scan resumed", "job", id.String())
+	// job was read before the state change; report the state just written.
+	job.State = entity.ScanRunning
 	writeJSON(w, http.StatusAccepted, toScanResponse(job))
 }
 
@@ -185,5 +209,6 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("scan cancelled", "job", id.String())
+	s.progress.Publish(r.Context(), progress.Event{JobID: id.String(), Stage: progress.StageJob, Status: progress.StatusCancelled})
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": id.String(), "state": "cancelled"})
 }

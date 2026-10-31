@@ -12,6 +12,7 @@ import (
 	"github.com/mservice/gitscanner/internal/app"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/probe"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/scanworker"
 	"github.com/mservice/gitscanner/internal/secrets"
@@ -63,7 +64,9 @@ func build(_ context.Context, d *app.Deps) (app.Parts, error) {
 	if err != nil {
 		return app.Parts{}, fmt.Errorf("scan-worker: %w", err)
 	}
-	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log).WithSealer(sealer)
+	worker := scanworker.New(engine, d.DB, dispatch.New(publisher), d.Log).
+		WithSealer(sealer).
+		WithProgress(progress.NewPublisher(d.DB, d.Log))
 	if sealer != nil {
 		d.Log.Warn("secret sealing is ON — credentials of unmask-listed owners are kept, encrypted")
 	}

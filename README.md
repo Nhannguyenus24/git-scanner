@@ -18,21 +18,36 @@ rolled up for analytics, and can be disclosed by mail.
 | 3 | enricher — registry resolution and the unmapped backlog | done |
 | 5 | notifier — responsible disclosure under a shared rate cap | done |
 | 6 | analytics — findings stream into rollups | done |
-| 4, 7+ | provider registry API, ownership-verified probes, tuning | not started |
+| 4, 7+ | provider registry API, per-scan ownership gate on probes, tuning | not started |
 
 Detection currently runs on the built-in bootstrap ruleset
 (`internal/scan/bootstrap_rules.go`). Phase 4 replaces it with the
 registry-backed, hot-reloadable detector that the enricher already resolves
 against.
 
+Liveness probing exists (`internal/probe`) but is switched by one process-wide
+flag, `PROBE_SECRETS`, on the scan-worker. The task carries
+`ownership_verified`, but nothing reads it yet, so with the flag on every
+scan is probed — enable it only on a deployment that scans targets the
+operator owns.
+
 ## Layout
 
 ```
-cmd/<service>/main.go   one per service — a declaration, ~15 lines, no logic
+cmd/<service>/main.go   one per service — a Spec and a build function, no domain logic
 internal/
   app/                  the one bootstrap: config → connect → build → serve → drain
   api/                  REST handlers
-  scan/                 scan engine
+  discovery/            discovery-worker: expand a target into repositories
+  github/               GitHub enumeration used by discovery
+  dispatch/             the one place domain work becomes queue messages
+  scan/                 scan engine: clone, blob walk, detection
+  scanworker/           scan-worker: consume scan tasks, run the engine
+  probe/                opt-in liveness probes (PROBE_SECRETS)
+  secrets/              fingerprint, mask, and sealing for the unmask list
+  enrich/               enricher: provider resolution, unmapped backlog
+  notify/               notifier: disclosure mail under a shared rate cap
+  analytics/            analytics: finding stream into rollups
   store/                Postgres pool and migrations
 libs/                   shared, importable conventions
   entity/               domain types + validation, stdlib only
@@ -96,7 +111,9 @@ and `git_services` in the Tiltfile.
 make bootstrap     # buf, sqlc, golangci-lint (Go tools)
 brew install k3d helm tilt-dev/tap/tilt
 
-make check         # vet, lint, test
+make check         # vet, lint, unit tests — the Go part of CI only
+make frontend-check  # frontend type-check, tests, build
+make chart-lint    # Helm chart render
 make build         # binaries into ./bin
 make help          # every target
 ```
@@ -138,8 +155,12 @@ leave the dev values pointing at `host.k3d.internal`. Details in
 Three things in this codebase are load-bearing and should not be "simplified":
 
 - **Secrets are never stored in plaintext.** `findings` holds an HMAC
-  fingerprint and a masked preview only (§6).
-- **Discovered credentials are never used to authenticate.** Risk is derived
-  offline; live probes run only on ownership-verified scans (§0.2).
+  fingerprint and a masked preview only (§6). The one exception is
+  `sealed_secrets`: ciphertext kept only for owners on the unmask list and
+  shown only while masking is off.
+- **Discovered credentials are not used to authenticate by default.** Risk is
+  derived offline. Live probes are off unless `PROBE_SECRETS=true`, and that
+  flag must only be set where every target is owned by the operator — the
+  per-scan ownership gate (§0.2) is not enforced in code yet.
 - **Bulk scanning targets authorized sets only** — an org or an explicit
   allowlist, never all of public GitHub (§0.1).

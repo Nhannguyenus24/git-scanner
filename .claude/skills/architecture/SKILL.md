@@ -44,15 +44,34 @@ do work; an event reports that something already happened. Both ride RabbitMQ
 with the same retry and dead-letter bindings, and the queue name says which it
 is — `*.tasks` against `findings.events`.
 
+A handler's return value is the routing decision (`libs/rabbit/consumer.go`): a
+plain error retries (nack → `gitscanner.retry`, 30s TTL); `rabbit.ErrDrop`, or
+any failure on the final attempt, is published to `<queue>.dead` and then acked;
+`rabbit.ErrRetryLater` is republished to the retry exchange without spending an
+attempt. Dead-lettering is always publish-then-ack, never a nack — see CLAUDE.md.
+
 The finding stream was on Kafka for its retention, so a corrected aggregation
 could be replayed over the log. That is gone: once analytics acks an event, the
 rollups are rebuilt by reading the `findings` table instead, which is the system
 of record (plan.md §1, §10). What survives the change is that delivery is still
 at-least-once, which is why the dedupe tables below are not optional.
 
+**Live progress is a third kind of message, and it skips the broker.**
+discovery-worker and scan-worker narrate each step (`internal/progress`) with
+Postgres `NOTIFY` on `scan_progress`; the api runs a `progress.Hub` that
+`LISTEN`s on one hijacked connection, keeps a short replay per job, and serves
+it as Server-Sent Events at `GET /v1/scans/{id}/events`. It is deliberately
+at-most-once: nothing reads it back, the job counters stay authoritative, and a
+RabbitMQ queue would bring retry and dead-letter semantics a stale progress tick
+must never get. Two rules keep it harmless — publishing never fails or blocks a
+scan, and an event never carries a credential. The hub runs on the api's build
+context, not as its Worker, so open streams close on SIGTERM before the HTTP
+drain instead of holding it to the deadline.
+
 ## Every service is the same shape
 
-`cmd/<name>/main.go` is a declaration of about fifteen lines; `internal/app`
+`cmd/<name>/main.go` is a short declaration — a `Spec` plus a `build` function
+wiring the service's parts; `internal/app`
 does the rest in a fixed order: load config → connect backends → `Build` →
 serve probes → ready → run → unready → drain → close.
 
@@ -139,6 +158,10 @@ The mechanical steps are in the README. What to get right beyond them: pick
 `internal/<domain>` with the wiring in a worker package, so the domain code
 stays testable. If it shells out to `git`, it needs the runtime-git image —
 `GIT_SERVICES` in the Makefile and `git_services` in the Tiltfile.
+
+A consumer whose task advances a job must honour `rabbit.Delivery.Final`: on the
+last attempt, record the outcome (count the repository, fail the job) before
+returning the error, or the job waits forever for a task that is gone.
 
 ## Where to read further
 

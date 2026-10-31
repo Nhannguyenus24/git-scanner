@@ -6,7 +6,8 @@ import ErrorIcon from '@mui/icons-material/Cancel'
 import PendingIcon from '@mui/icons-material/RadioButtonUnchecked'
 import { useTheme } from '@mui/material/styles'
 import { useT } from '../i18n'
-import { TERMINAL, type ScanSummary } from '../types'
+import { REPO_STEPS } from '../live'
+import { TERMINAL, type ProgressStage, type ScanSummary } from '../types'
 
 // What stage a scan is in, read off the counters the API already returns.
 //
@@ -89,7 +90,12 @@ export function etaSeconds(s: ScanSummary): number | undefined {
   return Math.round(perRepo * (s.repos_total - s.repos_scanned))
 }
 
-export default function ScanTimeline({ scan }: { scan: ScanSummary }) {
+/**
+ * `steps`, when the live stream is connected, is how many repositories are in
+ * each step right now; the scan stage then shows those instead of the generic
+ * step names, because for once the boundaries are known rather than guessed.
+ */
+export default function ScanTimeline({ scan, steps }: { scan: ScanSummary; steps?: Partial<Record<ProgressStage, number>> }) {
   const { t } = useT()
   const ch = useTheme().chart
   const stages = stagesFor(scan, t)
@@ -125,7 +131,20 @@ export default function ScanTimeline({ scan }: { scan: ScanSummary }) {
                 {t(s.key)}
               </Box>
               {s.detail && <Box sx={{ fontSize: 12, color: 'text.secondary', mt: .15 }}>{s.detail}</Box>}
-              {s.steps && s.state !== 'pending' && (
+              {s.steps && steps && s.state === 'active' && (
+                <Box sx={{ display: 'flex', gap: .75, mt: .5, flexWrap: 'wrap' }} aria-label={t('live.stepsNow')}>
+                  {REPO_STEPS.filter(k => k !== 'probe' || steps.probe).map(k => (
+                    <Box key={k} sx={{
+                      fontSize: 10.5, fontFamily: '"IBM Plex Mono", monospace', px: .6, py: .1,
+                      border: 1, borderRadius: .5,
+                      borderColor: steps[k] ? 'primary.main' : 'divider',
+                      color: steps[k] ? 'primary.main' : 'text.secondary',
+                      fontWeight: steps[k] ? 700 : 400,
+                    }}>{t(`live.stepName.${k}`)}{steps[k] ? ` · ${steps[k]}` : ''}</Box>
+                  ))}
+                </Box>
+              )}
+              {s.steps && !(steps && s.state === 'active') && s.state !== 'pending' && (
                 <Box sx={{ display: 'flex', gap: .75, mt: .5, flexWrap: 'wrap' }}>
                   {s.steps.map(k => (
                     <Box key={k} sx={{
@@ -140,7 +159,7 @@ export default function ScanTimeline({ scan }: { scan: ScanSummary }) {
         ))}
       </Box>
       <Tooltip title={t('stage.noteTip')}>
-        <Box sx={{ fontSize: 11, color: 'text.disabled', mt: 2, cursor: 'help' }}>{t('stage.note')}</Box>
+        <Box sx={{ fontSize: 11, color: 'text.disabled', mt: 2, cursor: 'help' }}>{t(steps ? 'stage.noteLive' : 'stage.note')}</Box>
       </Tooltip>
     </Box>
   )

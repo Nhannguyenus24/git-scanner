@@ -36,7 +36,7 @@ make run-local
 
 Builds every binary into `./bin/`, starts each service in the background, and
 writes stdout and stderr to `/tmp/gitscanner-logs/<service>.log`. The api starts
-first — it applies migrations — then the workers.
+first and is given two seconds to apply migrations, then the workers.
 
 | Service | Port | Service | Port |
 |---|---|---|---|
@@ -58,7 +58,7 @@ Always restart with the ports cleared:
 ```bash
 make stop-local
 for port in 8080 8081 8082 8083 8084 8085; do
-  pid=$(lsof -ti tcp:$port 2>/dev/null); [ -n "$pid" ] && kill $pid
+  pid=$(lsof -ti tcp:$port -sTCP:LISTEN 2>/dev/null); [ -n "$pid" ] && kill $pid
 done
 make run-local
 ```
@@ -72,7 +72,10 @@ mkdir -p /tmp/gitscanner-logs/prev && mv /tmp/gitscanner-logs/*.log /tmp/gitscan
 
 The health block printed by `run-local` is sampled moments after launch, so an
 occasional FAIL there is a slow start rather than a failure. Re-check before
-acting on it:
+acting on it. A service that cannot reach Postgres or RabbitMQ keeps retrying
+for `CONNECT_TIMEOUT` (default `1m`), logging "backend not reachable yet,
+retrying", before it exits — so a FAIL that persists while the PID is still
+running means a backend is down, not a slow start:
 
 ```bash
 for p in 8080 8081 8082 8083 8084 8085; do
@@ -90,6 +93,8 @@ bin/logs enricher analytics   # several
 
 The services log structured JSON; `bin/logs` renders it as a timestamp, level,
 message and fields. For raw lines use `tail -f /tmp/gitscanner-logs/api.log`.
+`bin/` is gitignored, so `bin/logs` is a local helper that a fresh clone does
+not have; `tail -f /tmp/gitscanner-logs/*.log` always works.
 
 ## Submit work
 
@@ -120,7 +125,8 @@ curl -s -X PATCH http://localhost:8080/v1/findings/<id> -d '{"status":"false_pos
 of `open`, `rotated`, `false_positive`, `ignored`.
 
 A scan is asynchronous: the POST returns a queued job, and the pipeline runs
-api → discovery-worker → scan-worker → enricher, with findings published to the
+api → discovery-worker → scan-worker → enricher (a `/v1/scans/repo` scan goes
+straight from api to scan-worker), with findings published to the
 `findings.events` queue for analytics. Expect to wait, and watch the logs rather
 than the response.
 
@@ -149,7 +155,9 @@ Mail is off until switched on — the "Disclosure mail" switch on the
 Repositories page, or `PUT /v1/settings {"notifications_enabled":true}`. While
 off, the api refuses `disclose` with 409 and the notifier drops anything already
 queued. Without `SMTP_ADDR` the notifier logs the mail instead of sending it,
-which is the safe way to read a rendered disclosure.
+which is the safe way to read a rendered disclosure. But `.env.example` fills
+it in and `run-local` always sources `.env.local`, so comment `SMTP_ADDR` out
+there before relying on log-only mode — otherwise real mail goes out.
 
 ## Frontend
 
@@ -174,6 +182,9 @@ make run-local \
   INFRA_RABBIT='amqp://user:pass@host:5672/' \
   RUN_LOG_DIR=/your/log/path
 ```
+
+Pass the same `RUN_LOG_DIR` to `make stop-local`, and export it for `bin/logs`;
+both otherwise look in `/tmp/gitscanner-logs` and find nothing.
 
 ## When it looks stuck
 

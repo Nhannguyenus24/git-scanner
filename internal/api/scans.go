@@ -167,6 +167,22 @@ func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Everything that can reject the request is checked before the job exists:
+	// a job created and then refused would sit queued forever, since nothing
+	// was dispatched to move it.
+	var owner, name string
+	switch target.Kind {
+	case entity.TargetRepo:
+		if owner, name, err = github.ParseRepoURL(target.Value); err != nil {
+			s.writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	case entity.TargetUser, entity.TargetOrg:
+	default:
+		s.writeError(w, http.StatusBadRequest, fmt.Errorf("cannot rescan target kind %q", target.Kind))
+		return
+	}
+
 	job, err := s.store.CreateScanJob(ctx, target.ID)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, err)
@@ -175,11 +191,6 @@ func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 
 	switch target.Kind {
 	case entity.TargetRepo:
-		owner, name, perr := github.ParseRepoURL(target.Value)
-		if perr != nil {
-			s.writeError(w, http.StatusBadRequest, perr)
-			return
-		}
 		repo, rerr := s.store.UpsertRepository(ctx, entity.Repository{
 			TargetID: target.ID, Owner: owner, Name: name, CloneURL: target.Value,
 		})
@@ -205,9 +216,6 @@ func (s *Server) handleRescan(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-	default:
-		s.writeError(w, http.StatusBadRequest, fmt.Errorf("cannot rescan target kind %q", target.Kind))
-		return
 	}
 
 	s.log.Info("rescan queued", "job", job.ID.String(), "from", old.ID.String(), "kind", string(target.Kind))

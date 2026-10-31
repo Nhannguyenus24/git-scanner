@@ -2,8 +2,10 @@ package discovery_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/mservice/gitscanner/internal/discovery"
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
@@ -353,5 +356,47 @@ func TestDiscoverFailsTheJobOnlyOnTheFinalAttempt(t *testing.T) {
 	}
 	if st, _ := orgFailure(t, boom, true); st.state != entity.ScanFailed {
 		t.Errorf("state after the final attempt = %s, want failed", st.state)
+	}
+}
+
+type recNotifier struct{ events []progress.Event }
+
+func (n *recNotifier) Notify(_ context.Context, _ string, payload string) error {
+	var ev progress.Event
+	_ = json.Unmarshal([]byte(payload), &ev)
+	n.events = append(n.events, ev)
+	return nil
+}
+
+func (n *recNotifier) statuses() string {
+	var out []string
+	for _, ev := range n.events {
+		out = append(out, ev.Stage+":"+ev.Status)
+	}
+	return strings.Join(out, " ")
+}
+
+// Each page is narrated: started, how many repositories it added, and whether
+// the listing is exhausted.
+func TestDiscoverReportsProgress(t *testing.T) {
+	n := &recNotifier{}
+	pub := progress.NewPublisher(n, slog.New(slog.DiscardHandler))
+	gh, st, disp, pause := &fakeLister{}, &fakeStore{}, &fakeDisp{}, &fakePause{}
+	w := discovery.New(gh, st, disp, pause, slog.New(slog.DiscardHandler)).WithProgress(pub)
+
+	_ = w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat"}))
+	_ = w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat", Cursor: "2"}))
+	if got := n.statuses(); got != "discover:start discover:progress discover:start discover:done" {
+		t.Errorf("events = %s", got)
+	}
+	if n.events[1].Repos != 1 {
+		t.Errorf("first page added %d repositories, want 1", n.events[1].Repos)
+	}
+
+	n.events = nil
+	pause.paused = true
+	_ = w.Handle(context.Background(), deliver(t, &gpb.DiscoveryTask{JobId: "job", TargetId: "tgt", Kind: "user", Value: "octocat"}))
+	if got := n.statuses(); got != "discover:start discover:paused" {
+		t.Errorf("paused events = %s", got)
 	}
 }

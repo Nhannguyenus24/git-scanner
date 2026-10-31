@@ -81,7 +81,7 @@ func TestRuleDetailsDescribeEachRule(t *testing.T) {
 	cases := []struct{ id, anchor, shape, example string }{
 		// The parser factors AKIA|ASIA into A(KIA|SIA); it is still a prefix.
 		{"aws-access-key-id", "prefix", "A(KIA|SIA)[0-9A-Z]{16}", "AKIA" + strings.Repeat("•", 16)},
-		{"github-pat", "prefix", "gh[opsu]_[0-9A-Za-z]{36}", "gh•_" + strings.Repeat("•", 36)},
+		{"github-pat", "prefix", "gh[oprsu]_[0-9A-Za-z]{36}", "gh•_" + strings.Repeat("•", 36)},
 		// (?i) folding adds ſ and K to the class; they are not shown.
 		{"cohere-api-key", "setting", "[0-9A-Za-z]{40}", strings.Repeat("•", 40)},
 		{"mailchimp-api-key", "shape", "[0-9a-f]{32}-us[0-9]{1,2}", strings.Repeat("•", 32) + "-us•"},

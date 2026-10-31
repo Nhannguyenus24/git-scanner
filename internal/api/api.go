@@ -21,6 +21,7 @@ import (
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/notify"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/internal/scan"
@@ -74,6 +75,8 @@ type Server struct {
 	discloseInfo notify.DisclosureInfo
 	sealer       *secrets.Sealer // optional: opens credentials kept for unmask-listed owners
 	providers []scan.ProviderInfo // the detection catalogue the dashboard lists
+	hub       ProgressHub         // optional: live progress streams
+	progress  *progress.Publisher // optional: announces api-side steps such as a cancel
 	log       *slog.Logger
 }
 
@@ -104,6 +107,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/scans/{id}", s.handleGetScan)
 	mux.HandleFunc("DELETE /v1/scans/{id}", s.handleDeleteScan)
 	mux.HandleFunc("GET /v1/scans/{id}/findings", s.handleListFindings)
+	mux.HandleFunc("GET /v1/scans/{id}/events", s.handleScanEvents)
 	mux.HandleFunc("POST /v1/scans/{id}/pause", s.handlePause)
 	mux.HandleFunc("POST /v1/scans/{id}/resume", s.handleResume)
 	mux.HandleFunc("POST /v1/scans/{id}/cancel", s.handleCancel)

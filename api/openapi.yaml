@@ -8,6 +8,21 @@ info:
     All scan work is async — submit a target, then poll `/v1/scans/{id}` until
     `state` reaches a terminal value (`completed`, `failed`, or `cancelled`).
 
+    Every error body is `{"error": "..."}`. A 4xx carries the reason verbatim;
+    a 5xx is logged server-side and returned as `internal error`, so no
+    internal detail reaches the caller.
+
+    The browsing routes (overview, scan list, findings search and triage,
+    repositories, candidates, analytics) and the notifications routes are
+    registered only when the server is wired with a catalog and a notice log
+    respectively. The `api` binary always wires both; a server built without
+    them answers those paths with 404.
+
+    Path ids are not shape-checked on the `/v1/scans/{id}*` routes or on
+    `/v1/repositories/{id}/disclose`: a value that is not a UUID reaches
+    Postgres and comes back as a 500, not a 400. The findings, triage and
+    notifications routes do check, and answer 400.
+
 servers:
   - url: http://localhost:8080
     description: Local dev
@@ -18,7 +33,13 @@ tags:
   - name: scans
     description: Submit and manage scan jobs
   - name: findings
-    description: Detected credentials
+    description: Detected credentials and their triage
+  - name: catalog
+    description: Dashboard browsing — overview, repositories, candidates, analytics
+  - name: notifications
+    description: Responsible-disclosure mail
+  - name: settings
+    description: Runtime switches and the unmask list
 
 paths:
   /healthz:
@@ -40,7 +61,9 @@ paths:
     get:
       tags: [meta]
       summary: Readiness probe
-      description: Returns 200 when all backend dependencies (Postgres, RabbitMQ) are reachable.
+      description: |
+        Returns 200 once startup has finished and every backend dependency
+        (Postgres, RabbitMQ) answers its check. The checks share a 3 s budget.
       operationId: getReadiness
       responses:
         "200":
@@ -49,9 +72,11 @@ paths:
             text/plain:
               schema:
                 type: string
-                example: "readyOK"
+                example: "ready"
         "503":
-          description: Not ready — dependency check failed
+          description: |
+            Not ready. The body is `starting up` before startup finishes, or the
+            name of the first failing check followed by its error.
           content:
             text/plain:
               schema:
@@ -75,7 +100,99 @@ paths:
                 service: api
                 version: dev
                 commit: abc1234
-                go_version: go1.24.0
+                go_version: go1.26.10
+
+  /v1/providers:
+    get:
+      tags: [meta]
+      summary: List supported providers
+      description: |
+        The detection catalogue — every provider a finding can be attributed to,
+        derived from the same bootstrap ruleset the scan-worker runs. A server
+        configured without providers returns an empty list rather than a 404.
+      operationId: listProviders
+      responses:
+        "200":
+          description: Provider catalogue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProvidersResponse"
+
+  /v1/overview:
+    get:
+      tags: [catalog]
+      summary: Dashboard headline numbers
+      description: |
+        Live aggregates over findings, repositories, scan jobs, candidates and
+        notifications. The severity and provider breakdowns count open findings
+        only; `by_provider` uses `unmapped` for findings no named rule attributed.
+      operationId: getOverview
+      responses:
+        "200":
+          description: Overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Overview"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/analytics:
+    get:
+      tags: [catalog]
+      summary: Analytics breakdowns
+      description: |
+        Leak timeline by commit month, open findings by repository app type
+        (`unknown` when undetected), the most-triggered rules, live-probe
+        outcomes (keyed by the finding's `probe_status` metadata; empty when
+        probing never ran), and disclosure attempts by state.
+      operationId: getAnalytics
+      parameters:
+        - name: rules
+          in: query
+          required: false
+          description: How many rules `by_rule` returns. 0, absent or invalid means 12; capped at 50.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 50
+            default: 12
+      responses:
+        "200":
+          description: Analytics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/scans:
+    get:
+      tags: [scans]
+      summary: List scan jobs
+      description: |
+        Most recent jobs first, with the target each one expands from, so a scan
+        started from the CLI, another browser or before a page reload is still
+        visible.
+      operationId: listScans
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Scan jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scans:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScanSummary"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /v1/scans/repo:
     post:
@@ -165,6 +282,37 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/scans/random:
+    post:
+      tags: [scans]
+      summary: Scan randomly sampled public repositories (dev only)
+      description: |
+        A precision-testing aid: starts a discovery job over randomly sampled
+        public repositories. This is deliberately not an authorised target and
+        must not be used where disclosure mail or live probing is enabled.
+        `count` of 0 (or omitted) runs until the job is paused or cancelled.
+      operationId: scanRandom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRandomRequest"
+            example:
+              count: 50
+              include_forks: false
+      responses:
+        "202":
+          description: Job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/scans/{id}:
     get:
       tags: [scans]
@@ -184,6 +332,23 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [scans]
+      summary: Delete a scan job
+      description: |
+        Removes the job and the findings it recorded (the database cascades).
+        The repository and target survive, so a later scan of the same target
+        still has them.
+      operationId: deleteScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /v1/scans/{id}/findings:
     get:
@@ -192,7 +357,8 @@ paths:
       description: |
         Returns all credentials detected so far. Results grow while the job
         is still `running`. Each finding exposes a masked preview
-        (e.g. `sk_live_4f2a…9c1d`) — the plaintext secret is never stored.
+        (e.g. `sk_live_4f2a…9c1d`) — the plaintext secret is never returned
+        here. An unknown job id returns an empty list, not a 404.
       operationId: listFindings
       parameters:
         - $ref: "#/components/parameters/JobID"
@@ -206,6 +372,53 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/scans/{id}/events:
+    get:
+      tags: [scans]
+      summary: Stream live progress (Server-Sent Events)
+      description: |
+        A `text/event-stream` of what the workers are doing for this job:
+        discovery pages, and for each repository its steps — `clone`, `walk`
+        (reading every unique blob and running detection, with a tick at most
+        every 750 ms carrying the blob count and the file being read),
+        `attribute` and `store` (only when something was found), `probe`
+        (only when probing is enabled) — and how each repository ended.
+
+        Each message's `data` is one `ProgressEvent` and its `id` the event's
+        `seq`, so a reconnecting browser sends `Last-Event-ID` and resumes from
+        the server's recent replay. The stream opens with that replay (up to
+        300 recent events), sends a `: ping` comment every 15 s, and ends with
+        an `end` event once the job ends — immediately, after the replay, for a
+        job that has already ended.
+
+        This is narration, not a record: delivery is at-most-once (Postgres
+        LISTEN/NOTIFY), so an event can be lost. The job's counters from
+        `GET /v1/scans/{id}` stay authoritative. Events never carry a
+        credential.
+      operationId: streamScanEvents
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+        - name: after
+          in: query
+          required: false
+          description: Replay only events with a larger `seq`; overrides `Last-Event-ID`.
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ProgressEvent"
+        "404":
+          description: Unknown job, or live progress is not enabled on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/scans/{id}/pause:
     post:
       tags: [scans]
@@ -213,7 +426,8 @@ paths:
       description: |
         Sets a flag on the job that the workers poll. The job's `state` flips to `paused`
         when a worker observes the flag at its next checkpoint — it is not
-        immediate. Only valid for a `running` job.
+        immediate. The API does not check the job's state: the flag is set on
+        any existing job, and only a `running` job can act on it.
       operationId: pauseScan
       parameters:
         - $ref: "#/components/parameters/JobID"
@@ -245,6 +459,9 @@ paths:
         discovery from the stored cursor so enumeration picks up where it left
         off. In-flight scan tasks for already-discovered repos were never
         cancelled, so they continue normally. Only valid for a `paused` job.
+
+        The response body is the job as read before the transition, so its
+        `state` is still `paused`; poll `/v1/scans/{id}` to see `running`.
       operationId: resumeScan
       parameters:
         - $ref: "#/components/parameters/JobID"
@@ -273,7 +490,8 @@ paths:
       description: |
         Moves the job to the terminal `cancelled` state. Workers that see the
         terminal state stop enqueuing new tasks; in-flight tasks finish or
-        dead-letter harmlessly. Valid from `queued`, `running`, or `paused`.
+        dead-letter harmlessly. Valid from `queued`, `running`, or `paused`;
+        cancelling an already `cancelled` job is a no-op that still returns 202.
       operationId: cancelScan
       parameters:
         - $ref: "#/components/parameters/JobID"
@@ -294,11 +512,511 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Job is already in a terminal state
+          description: |
+            Job is `completed` or `failed` and cannot move to `cancelled`. Any
+            other store error is also reported as 409, with the store's error text
+            as the body.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /v1/scans/{id}/rescan:
+    post:
+      tags: [scans]
+      summary: Rescan a job's target
+      description: |
+        Starts a fresh scan of an existing job's target as a new job, so the
+        history of both runs is kept. A repository target is re-enqueued
+        directly (`repos_total` = 1); a user or organisation is re-enumerated
+        through discovery. `include_forks` is not stored on the target, so a
+        rescan of a user or organisation excludes forks. Other target kinds
+        (e.g. `random`) are rejected with 400.
+      operationId: rescanScan
+      parameters:
+        - $ref: "#/components/parameters/JobID"
+      responses:
+        "202":
+          description: New job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanJob"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/findings:
+    get:
+      tags: [findings]
+      summary: Search findings
+      description: |
+        One page of findings across every scan, most severe first, then newest.
+        `total` is the number matching the filter, for paging.
+
+        `secret` is present only when all of these hold: the server has a
+        sealing key, masking is switched off in `/v1/settings`, the repository
+        owner is on the unmask list, and the scan kept a value that has not yet
+        expired. Otherwise only `masked_preview` is returned.
+      operationId: searchFindings
+      parameters:
+        - name: severity
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Severity"
+        - name: provider
+          in: query
+          required: false
+          description: Provider slug, or `unmapped` for findings no named rule attributed.
+          schema:
+            type: string
+            example: aws
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/FindingStatus"
+        - name: repository_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: scan_id
+          in: query
+          required: false
+          description: Restrict to findings recorded by this scan job.
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring of the file path, rule id, provider slug or `owner/name`.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Findings page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  findings:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FindingDetail"
+                  total:
+                    type: integer
+                    description: Findings matching the filter, ignoring `limit` and `offset`.
+        "400":
+          description: Unknown `severity` or `status`, or a malformed `repository_id` / `scan_id`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/findings/{id}:
+    patch:
+      tags: [findings]
+      summary: Triage a finding
+      description: Sets the finding's remediation status.
+      operationId: updateFinding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: "#/components/schemas/FindingStatus"
+            example:
+              status: rotated
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    $ref: "#/components/schemas/FindingStatus"
+        "400":
+          description: Malformed id, invalid body, or unknown status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/repositories:
+    get:
+      tags: [catalog]
+      summary: List repositories
+      description: |
+        Every repository ever scanned, with finding counts and the latest
+        disclosure attempt. Ordered by open critical, then open high, then open
+        findings, each descending, then by `owner/name`. Not paged.
+      operationId: listRepositories
+      responses:
+        "200":
+          description: Repositories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repositories:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Repository"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/repositories/{id}/disclose:
+    post:
+      tags: [notifications]
+      summary: Queue a responsible-disclosure mail
+      description: |
+        Queues one disclosure mail about a repository. Queueing is all this
+        does: the notifier still applies the suppression list, the shared rate
+        cap and the one-mail-per-repository constraint, so 202 means "accepted
+        for consideration", not "sent".
+
+        With no `recipient`, the mail goes to the repository owner's public
+        GitHub email. With no `finding_ids`, it covers every open finding the
+        repository has. The body is required; send `{}` to take both defaults.
+      operationId: discloseRepository
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Repository id
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscloseRequest"
+            example: {}
+      responses:
+        "202":
+          description: Disclosure queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repository_id:
+                    type: string
+                    format: uuid
+                  recipient:
+                    type: string
+                    description: The address the mail is queued for, resolved from GitHub when none was given.
+                  findings:
+                    type: integer
+                    description: Number of findings the mail covers.
+                  state:
+                    type: string
+                    example: queued
+        "400":
+          description: |
+            Invalid body, or the resulting notification is invalid (malformed
+            recipient address).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: |
+            Notifications are turned off in `/v1/settings`, or the repository has
+            no open findings to disclose.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: notifications are turned off
+        "422":
+          description: No recipient given and the owner publishes no email on GitHub
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: GitHub rate limit reached while looking up the owner's email
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: The GitHub owner lookup failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/candidates:
+    get:
+      tags: [catalog]
+      summary: List provider candidates
+      description: |
+        The unmapped-provider backlog: credential shapes no named rule
+        attributes, grouped by signature. Open candidates (`new`, `triaged`)
+        come first, then by occurrences and recency. Not paged.
+      operationId: listCandidates
+      responses:
+        "200":
+          description: Candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  candidates:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Candidate"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/notifications:
+    get:
+      tags: [notifications]
+      summary: List disclosure attempts
+      description: |
+        One page of the disclosure log, newest first, with the total matching
+        count and a breakdown of every attempt by state (unfiltered).
+      operationId: listNotifications
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/NotificationState"
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring of the recipient or `owner/name`.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Notifications page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+                  total:
+                    type: integer
+                    description: Notifications matching the filter, ignoring `limit` and `offset`.
+                  by_state:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Count"
+        "400":
+          description: Unknown `state`
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/notifications/{id}/message:
+    get:
+      tags: [notifications]
+      summary: Preview a disclosure mail
+      description: |
+        Re-renders the mail from the findings it covered. The mail itself is not
+        stored, so this reflects the findings as they are now — enrichment that
+        landed after the send shows up here. Findings appear as masked previews.
+      operationId: getNotificationMessage
+      parameters:
+        - $ref: "#/components/parameters/NotificationID"
+      responses:
+        "200":
+          description: Rendered mail
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  to:
+                    type: string
+                  subject:
+                    type: string
+                  text:
+                    type: string
+                    description: Plain-text body.
+                  html:
+                    type: string
+                    description: HTML body.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/notifications/{id}/resend:
+    post:
+      tags: [notifications]
+      summary: Resend a failed disclosure
+      description: |
+        Queues a failed disclosure again, to the same recipient about the same
+        findings. Only a `failed` one: a sent mail is the one-per-repository
+        promise kept, and a suppressed one is the recipient's wish.
+      operationId: resendNotification
+      parameters:
+        - $ref: "#/components/parameters/NotificationID"
+      responses:
+        "202":
+          description: Resend queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  state:
+                    type: string
+                    example: queued
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The notification is not `failed`, or notifications are turned off
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/settings:
+    get:
+      tags: [settings]
+      summary: Get settings
+      operationId: getSettings
+      responses:
+        "200":
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags: [settings]
+      summary: Change settings
+      description: |
+        Changes only the switches the body names; an omitted field is left
+        alone. At least one must be given. Returns the settings after the change.
+      operationId: putSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsRequest"
+            example:
+              notifications_enabled: true
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/settings/unmask-owners/{owner}:
+    put:
+      tags: [settings]
+      summary: Add an owner to the unmask list
+      description: |
+        Credentials found in this owner's repositories are kept sealed by later
+        scans and shown unmasked while masking is off. Returns the settings
+        after the change.
+      operationId: addUnmaskOwner
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [settings]
+      summary: Remove an owner from the unmask list
+      description: |
+        Also destroys the sealed values kept for that owner. Returns the
+        settings after the change.
+      operationId: removeUnmaskOwner
+      parameters:
+        - $ref: "#/components/parameters/Owner"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Settings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -314,20 +1032,65 @@ components:
         format: uuid
         example: "0195f3e2-1234-7abc-8def-000000000001"
 
+    NotificationID:
+      name: id
+      in: path
+      required: true
+      description: Notification id. A malformed value is rejected with 400.
+      schema:
+        type: string
+        format: uuid
+
+    Owner:
+      name: owner
+      in: path
+      required: true
+      description: GitHub user or organisation login (1–39 chars, alphanumeric + inner hyphens). Stored lower-cased.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+        example: octocat
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size. 0, absent or invalid means 50; capped at 500.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 500
+        default: 50
+
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Rows to skip. Negative or invalid means 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
   schemas:
     ScanRepoRequest:
       type: object
       required: [url]
+      additionalProperties: false
       properties:
         url:
           type: string
           format: uri
-          description: HTTPS clone URL. Must start with `https://`; SSH and file URLs are rejected.
+          description: |
+            HTTPS clone URL of a github.com repository, `https://github.com/<owner>/<repo>`
+            (a trailing `.git` is accepted). SSH and file URLs, and URLs with
+            embedded credentials, are rejected.
           example: "https://github.com/owner/repo"
 
     ScanTargetRequest:
       type: object
       required: [name]
+      additionalProperties: false
       properties:
         name:
           type: string
@@ -338,6 +1101,20 @@ components:
           default: false
           description: When true, forked repositories are included in the scan.
 
+    ScanRandomRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        count:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Repositories to scan. 0 runs until the job is paused or cancelled.
+        include_forks:
+          type: boolean
+          default: false
+          description: When true, forked repositories may be sampled.
+
     ScanJob:
       type: object
       properties:
@@ -346,15 +1123,7 @@ components:
           format: uuid
           description: UUIDv7 job identifier. Use this to poll status and retrieve findings.
         state:
-          type: string
-          enum: [queued, running, paused, completed, failed, cancelled]
-          description: |
-            State machine:
-            - `queued` → `running` or `cancelled`
-            - `running` → `paused`, `completed`, `failed`, or `cancelled`
-            - `paused` → `running` or `cancelled`
-            - `failed` → `queued` (retry)
-            - `completed`, `cancelled` — terminal
+          $ref: "#/components/schemas/ScanState"
         progress:
           type: number
           format: float
@@ -375,7 +1144,53 @@ components:
           description: Credentials detected so far.
         error:
           type: string
-          description: Human-readable error message when `state` is `failed`. Empty otherwise.
+          description: Human-readable error message when `state` is `failed` or `cancelled`. Omitted when empty.
+
+    ScanState:
+      type: string
+      enum: [queued, running, paused, completed, failed, cancelled]
+      description: |
+        State machine:
+        - `queued` → `running` or `cancelled`
+        - `running` → `paused`, `completed`, `failed`, or `cancelled`
+        - `paused` → `running` or `cancelled`
+        - `failed` → `queued` (retry)
+        - `completed`, `cancelled` — terminal
+
+    ScanSummary:
+      description: A scan job with the target it expands from and its timestamps.
+      allOf:
+        - $ref: "#/components/schemas/ScanJob"
+        - type: object
+          properties:
+            target:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum: [repo, user, org, allowlist, random]
+                value:
+                  type: string
+                  description: Repo URL, login, or (for `random`) the requested count.
+            created_at:
+              type: string
+              format: date-time
+            started_at:
+              type: string
+              format: date-time
+              description: Omitted until the job first runs.
+            finished_at:
+              type: string
+              format: date-time
+              description: Omitted until the job reaches `completed`, `failed` or `cancelled`.
+
+    Severity:
+      type: string
+      enum: [info, low, medium, high, critical]
+
+    FindingStatus:
+      type: string
+      enum: [open, rotated, false_positive, ignored]
 
     Finding:
       type: object
@@ -388,15 +1203,14 @@ components:
           description: Identifier of the detection rule that fired (e.g. `aws-access-key`).
         provider:
           type: string
-          description: Resolved provider slug from the registry (e.g. `aws`). Empty until enriched.
+          description: Resolved provider slug from the registry (e.g. `aws`). Empty when no named rule attributed it.
         severity:
-          type: string
-          enum: [info, low, medium, high, critical]
+          $ref: "#/components/schemas/Severity"
         masked_preview:
           type: string
           description: |
             Safe-to-display preview of the secret, e.g. `sk_live_4f2a…9c1d`.
-            Always contains the `…` separator. The plaintext is never stored.
+            Always contains the `…` separator.
         file_path:
           type: string
           description: Path inside the repository where the credential was found.
@@ -411,8 +1225,7 @@ components:
             True when the blob is reachable from the default branch HEAD.
             A credential in history only still needs rotating — history is public.
         status:
-          type: string
-          enum: [open, rotated, false_positive, ignored]
+          $ref: "#/components/schemas/FindingStatus"
 
     FindingsResponse:
       type: object
@@ -421,6 +1234,360 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Finding"
+
+    FindingDetail:
+      description: A finding as the dashboard search returns it, with its repository and commit.
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        scan_job_id:
+          type: string
+          format: uuid
+        repository:
+          $ref: "#/components/schemas/RepositoryRef"
+        rule_id:
+          type: string
+        provider:
+          type: string
+          description: Provider slug; empty when no named rule attributed it.
+        severity:
+          $ref: "#/components/schemas/Severity"
+        status:
+          $ref: "#/components/schemas/FindingStatus"
+        masked_preview:
+          type: string
+          description: Safe-to-display preview, e.g. `sk_live_4f2a…9c1d`.
+        file_path:
+          type: string
+        line_number:
+          type: integer
+        commit_sha:
+          type: string
+          description: Commit that introduced the blob; empty until attributed.
+        author_name:
+          type: string
+        committed_at:
+          type: string
+          format: date-time
+          description: Omitted until the commit is attributed.
+        reachable_from_head:
+          type: boolean
+        detected_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Enrichment key/values (e.g. `probe_status`). Always an object, possibly empty.
+        secret:
+          type: string
+          description: |
+            The unmasked credential. Omitted unless masking is off, the owner is
+            on the unmask list, the server has a sealing key, and the scan kept
+            the value and it has not expired. A value that no longer decrypts is
+            omitted rather than failing the page.
+
+    RepositoryRef:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          description: Repository URL (the clone URL on findings, `https://github.com/<owner>/<name>` on notifications).
+
+    Repository:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          type: string
+        name:
+          type: string
+        url:
+          type: string
+          description: HTTPS clone URL.
+        app_type:
+          type: string
+          description: Detected application type; empty when undetected.
+        stars:
+          type: integer
+        is_fork:
+          type: boolean
+        last_scanned_at:
+          type: string
+          format: date-time
+          description: Omitted when never scanned.
+        findings:
+          type: integer
+          description: All findings, any status.
+        open:
+          type: integer
+          description: Open findings.
+        critical:
+          type: integer
+          description: Open critical findings.
+        high:
+          type: integer
+          description: Open high findings.
+        medium:
+          type: integer
+          description: Open medium findings.
+        low:
+          type: integer
+          description: Open low and info findings.
+        notification:
+          description: Latest disclosure attempt; omitted when never contacted.
+          type: object
+          properties:
+            state:
+              $ref: "#/components/schemas/NotificationState"
+            recipient:
+              type: string
+            error:
+              type: string
+              description: Omitted when empty.
+            created_at:
+              type: string
+              format: date-time
+            sent_at:
+              type: string
+              format: date-time
+              description: Omitted until sent.
+
+    DiscloseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        recipient:
+          type: string
+          format: email
+          description: |
+            Address to write to. Omitted, the repository owner's public GitHub
+            email is used; the committer is never used.
+        finding_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Findings the mail covers. Omitted or empty, every open finding of the repository.
+
+    NotificationState:
+      type: string
+      enum: [pending, sent, failed, suppressed]
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repository:
+          $ref: "#/components/schemas/RepositoryRef"
+        recipient:
+          type: string
+        findings:
+          type: integer
+          description: Number of findings the mail covers.
+        state:
+          $ref: "#/components/schemas/NotificationState"
+        error:
+          type: string
+          description: Why the send failed. Omitted when empty.
+        created_at:
+          type: string
+          format: date-time
+        sent_at:
+          type: string
+          format: date-time
+          description: Omitted until sent.
+
+    Candidate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        guessed_name:
+          type: string
+          description: Best guess at the provider, from nearby variable names and hosts.
+        env_var_names:
+          type: array
+          items:
+            type: string
+          description: Variable names seen next to the value. Always an array.
+        nearby_hosts:
+          type: array
+          items:
+            type: string
+          description: Hostnames seen near the value. Always an array.
+        sample_masked:
+          type: string
+          description: Masked sample of one occurrence — never the plaintext.
+        charset_class:
+          type: string
+        length_min:
+          type: integer
+        length_max:
+          type: integer
+        occurrences:
+          type: integer
+        repo_count:
+          type: integer
+        status:
+          type: string
+          enum: [new, triaged, mapped, ignored]
+        first_seen_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+
+    Count:
+      type: object
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+
+    Overview:
+      type: object
+      properties:
+        findings:
+          type: integer
+          description: All findings, any status.
+        open_findings:
+          type: integer
+        reachable_from_head:
+          type: integer
+          description: Open findings still present at HEAD.
+        repositories:
+          type: integer
+        exposed_repos:
+          type: integer
+          description: Repositories with at least one open finding.
+        active_scans:
+          type: integer
+        candidates:
+          type: integer
+        notified_repos:
+          type: integer
+          description: Repositories with a disclosure sent or pending.
+        awaiting_notice:
+          type: integer
+          description: Exposed repositories never successfully contacted.
+        by_severity:
+          type: array
+          description: Open findings by severity, most severe first.
+          items:
+            $ref: "#/components/schemas/Count"
+        by_provider:
+          type: array
+          description: Open findings by provider slug; `unmapped` for the catch-all.
+          items:
+            $ref: "#/components/schemas/Count"
+        by_status:
+          type: array
+          description: All findings by status.
+          items:
+            $ref: "#/components/schemas/Count"
+        by_scan_state:
+          type: array
+          description: Scan jobs by state.
+          items:
+            $ref: "#/components/schemas/Count"
+
+    Analytics:
+      type: object
+      properties:
+        timeline:
+          type: array
+          description: Findings by the month the credential was committed; findings without a commit date are left out.
+          items:
+            type: object
+            properties:
+              period:
+                type: string
+                description: Month, `YYYY-MM`.
+                example: "2025-03"
+              findings:
+                type: integer
+        by_app_type:
+          type: array
+          items:
+            $ref: "#/components/schemas/Count"
+        by_rule:
+          type: array
+          items:
+            $ref: "#/components/schemas/Count"
+        live_probes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Count"
+        notifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/Count"
+
+    ProvidersResponse:
+      type: object
+      properties:
+        providers:
+          type: array
+          items:
+            type: object
+            properties:
+              slug:
+                type: string
+                example: aws
+              severity:
+                type: string
+                description: The most serious severity any of the provider's rules carries.
+              rules:
+                type: integer
+                description: Number of rules that attribute to this provider.
+
+    Settings:
+      type: object
+      properties:
+        notifications_enabled:
+          type: boolean
+          description: When false, disclosure and resend requests are refused with 409.
+        masking_enabled:
+          type: boolean
+          description: When false, findings of unmask-listed owners are shown unmasked.
+        unmask_owners:
+          type: array
+          items:
+            type: string
+          description: Owners whose credentials are kept sealed for unmasking. Always an array.
+        sealing_available:
+          type: boolean
+          description: |
+            False when the server has no sealing key (`SECRET_SEAL_KEY` unset); the
+            unmask list and the masking switch then have nothing to act on.
+
+    SettingsRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        notifications_enabled:
+          type: boolean
+        masking_enabled:
+          type: boolean
 
     VersionResponse:
       type: object
@@ -436,7 +1603,7 @@ components:
           example: abc1234
         go_version:
           type: string
-          example: go1.24.0
+          example: go1.26.10
 
     Error:
       type: object
@@ -445,6 +1612,35 @@ components:
           type: string
           description: Human-readable error message.
           example: "scan not found"
+
+    ProgressEvent:
+      type: object
+      description: One step of a running scan. Fields that do not apply are omitted.
+      required: [job_id, stage, status, at]
+      properties:
+        seq: { type: integer, format: int64, description: Per-api-process sequence; the SSE id. }
+        job_id: { type: string, format: uuid }
+        repo_id: { type: string, format: uuid }
+        repo: { type: string, description: owner/name }
+        stage:
+          type: string
+          enum: [discover, queue, clone, walk, attribute, probe, store, repo, job]
+        status:
+          type: string
+          enum: [start, progress, done, failed, skipped, deferred, paused, cancelled]
+        at: { type: string, format: date-time }
+        elapsed_ms: { type: integer, format: int64 }
+        attempt: { type: integer, description: 1 for the first attempt. }
+        blobs: { type: integer }
+        matches: { type: integer, description: Detector hits so far, before storage dedupe. }
+        findings: { type: integer, description: New findings stored by this attempt. }
+        reclassified: { type: integer }
+        live: { type: integer, description: Probes that found a live credential. }
+        page: { type: integer }
+        repos: { type: integer, description: Repositories discovery enqueued in this step. }
+        path: { type: string, description: The file being read during the walk, clipped to 300 bytes. }
+        app_type: { type: string }
+        error: { type: string, description: Clipped to 300 bytes. }
 
   responses:
     BadRequest:

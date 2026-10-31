@@ -42,6 +42,28 @@ const SCAN = {
   created_at: '2026-02-02T00:00:00Z', started_at: '2026-02-02T00:00:00Z', finished_at: '2026-02-02T00:30:00Z',
 }
 
+const RUNNING = {
+  ...SCAN, id: 'j2', state: 'running', progress: .25, repos_scanned: 1, finished_at: undefined,
+  target: { kind: 'org', value: 'globex' },
+}
+
+/** A stand-in for the browser's EventSource: the test pushes frames through
+ *  `emit`, and every stream the page opens is recorded. */
+class FakeEventSource {
+  static CLOSED = 2
+  static opened: FakeEventSource[] = []
+  readyState = 1
+  onopen: (() => void) | null = null
+  onmessage: ((m: MessageEvent<string>) => void) | null = null
+  onerror: (() => void) | null = null
+  listeners: Record<string, (() => void)[]> = {}
+  closed = false
+  constructor(public url: string) { FakeEventSource.opened.push(this) }
+  addEventListener(name: string, fn: () => void) { (this.listeners[name] ??= []).push(fn) }
+  close() { this.closed = true; this.readyState = 2 }
+  emit(data: object) { this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent<string>) }
+}
+
 const REPOSITORY = {
   id: 'r1', owner: 'acme', name: 'web', url: 'https://github.com/acme/web',
   app_type: 'web', stars: 7, is_fork: false, last_scanned_at: '2026-02-02T00:30:00Z',
@@ -60,7 +82,7 @@ function stubFetch() {
           by_rule: [{ key: 'github-pat', count: 4 }], live_probes: [{ key: 'live', count: 1 }],
           notifications: [{ key: 'sent', count: 1 }],
         }
-      : path === '/v1/scans'          ? { scans: [SCAN] }
+      : path === '/v1/scans'          ? { scans: [SCAN, RUNNING] }
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
@@ -299,6 +321,43 @@ describe('onboarding', () => {
 })
 
 describe('scan detail', () => {
+  it('streams what each repository is doing while the scan runs', async () => {
+    FakeEventSource.opened = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    await open('#/scans/j2')
+    const es = FakeEventSource.opened.at(-1)!
+    expect(es.url).toMatch(/\/v1\/scans\/j2\/events$/)
+
+    const at = '2026-02-02T00:10:00Z'
+    await act(async () => {
+      es.onopen?.()
+      es.emit({ seq: 1, job_id: 'j2', stage: 'discover', status: 'done', repos: 4, at })
+      es.emit({ seq: 2, job_id: 'j2', repo_id: 'r9', repo: 'globex/billing', stage: 'repo', status: 'start', attempt: 1, at })
+      es.emit({ seq: 3, job_id: 'j2', repo_id: 'r9', stage: 'clone', status: 'done', elapsed_ms: 900, at })
+      es.emit({ seq: 4, job_id: 'j2', repo_id: 'r9', stage: 'walk', status: 'progress', blobs: 2048, matches: 3, path: 'deploy/values.yaml', at })
+    })
+    expect(screen.getByText('Live activity')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toMatch(/live/)
+    expect(screen.getByText('globex/billing')).toBeTruthy()
+    expect(screen.getByText(/2,048 blobs · 3 candidate matches/)).toBeTruthy()
+    expect(screen.getByText('deploy/values.yaml')).toBeTruthy()
+    expect(screen.getByText(/complete · 4 repositories queued/)).toBeTruthy()
+    expect(screen.getByText(/globex\/billing: cloned in 0.9s/)).toBeTruthy()
+
+    await act(async () => {
+      es.emit({ seq: 5, job_id: 'j2', repo_id: 'r9', stage: 'repo', status: 'done', findings: 2, blobs: 4096, elapsed_ms: 5000, at })
+    })
+    expect(screen.getByText(/2 new findings · 4,096 blobs/)).toBeTruthy()
+  })
+
+  it('does not open a stream for a finished scan', async () => {
+    FakeEventSource.opened = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    await open('#/scans/j1')
+    expect(FakeEventSource.opened).toHaveLength(0)
+    expect(screen.queryByText('Live activity')).toBeNull()
+  })
+
   it('shows the stage timeline and the completion summary', async () => {
     await open('#/scans/j1')
     expect(screen.getAllByText(/Stages/i).length).toBeGreaterThan(0)

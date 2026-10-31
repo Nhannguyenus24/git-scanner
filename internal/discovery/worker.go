@@ -18,6 +18,7 @@ import (
 
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/store"
 	"github.com/mservice/gitscanner/libs/entity"
 	gpb "github.com/mservice/gitscanner/libs/proto/gen/gitscanner/v1"
@@ -54,6 +55,25 @@ type Worker struct {
 	disp  Dispatcher
 	pause Pauser
 	log   *slog.Logger
+
+	// progress shows enumeration on the dashboard as it happens. Nil publishes
+	// nothing.
+	progress *progress.Publisher
+}
+
+// WithProgress publishes live discovery progress.
+func (w *Worker) WithProgress(p *progress.Publisher) *Worker {
+	w.progress = p
+	return w
+}
+
+// report publishes one discovery step for task's job.
+func (w *Worker) report(ctx context.Context, task *gpb.DiscoveryTask, status string, repos int, err error) {
+	ev := progress.Event{JobID: task.JobId, Stage: progress.StageDiscover, Status: status, Repos: repos}
+	if err != nil {
+		ev.Error = err.Error()
+	}
+	w.progress.Publish(ctx, ev)
 }
 
 // New builds a discovery worker.
@@ -77,6 +97,7 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 	var limited *github.RateLimitError
 	if errors.As(err, &limited) {
 		w.log.Warn("discovery rate limited", "job", task.JobId, "target", task.Value, "retry_after", limited.RetryAfter.String())
+		w.report(ctx, &task, progress.StatusDeferred, 0, err)
 		return fmt.Errorf("%w: %v", rabbit.ErrRetryLater, err)
 	}
 
@@ -88,6 +109,8 @@ func (w *Worker) Handle(ctx context.Context, d rabbit.Delivery) error {
 			w.log.Error("could not mark job failed", "job", task.JobId, "error", failErr)
 		} else {
 			w.log.Error("job failed, discovery gave up", "job", task.JobId, "target", task.Value, "attempt", d.Attempt, "error", err)
+			w.report(ctx, &task, progress.StatusFailed, 0, err)
+			w.progress.Publish(ctx, progress.Event{JobID: task.JobId, Stage: progress.StageJob, Status: progress.StatusFailed, Error: err.Error()})
 		}
 	}
 	return err
@@ -115,6 +138,7 @@ func (w *Worker) handle(ctx context.Context, task *gpb.DiscoveryTask) error {
 	}
 
 	_ = w.store.SetScanState(ctx, jobID, entity.ScanRunning, "")
+	w.report(ctx, task, progress.StatusStart, 0, nil)
 
 	// An operator may pause between pages; honour it before doing more work.
 	paused, err := w.pause.PauseRequested(ctx, jobID)
@@ -126,6 +150,7 @@ func (w *Worker) handle(ctx context.Context, task *gpb.DiscoveryTask) error {
 		if err := w.store.SetScanCursor(ctx, jobID, task.Cursor); err != nil {
 			return err
 		}
+		w.report(ctx, task, progress.StatusPaused, 0, nil)
 		return w.store.SetScanState(ctx, jobID, entity.ScanPaused, "")
 	}
 
@@ -209,8 +234,10 @@ func (w *Worker) expandRandom(ctx context.Context, task *gpb.DiscoveryTask) erro
 
 	if want > 0 && done >= want {
 		w.log.Info("random discovery complete", "job", task.JobId, "enqueued", done)
+		w.report(ctx, task, progress.StatusDone, enqueued, nil)
 		return nil // completion follows when the scans themselves finish
 	}
+	w.report(ctx, task, progress.StatusProgress, enqueued, nil)
 	// More to do (or forever): continue in a fresh delivery so this one does not
 	// hold a prefetch slot while the whole sample runs.
 	next := requestFromTask(task)
@@ -247,8 +274,10 @@ func (w *Worker) expandPage(ctx context.Context, task *gpb.DiscoveryTask) error 
 
 	if page.NextCursor == "" {
 		w.log.Info("discovery complete", "job", task.JobId, "target", task.Value)
+		w.report(ctx, task, progress.StatusDone, enqueued, nil)
 		return nil // target fully expanded; completion follows when scans finish
 	}
+	w.report(ctx, task, progress.StatusProgress, enqueued, nil)
 	// Continue from the next page in a fresh delivery. The request is built from
 	// the task rather than copying the task itself: a generated protobuf message
 	// carries an internal mutex, so assigning one by value is a data race vet
@@ -275,7 +304,11 @@ func (w *Worker) expandAllowlist(ctx context.Context, task *gpb.DiscoveryTask) e
 	if err != nil {
 		return err
 	}
-	return w.store.AddReposTotal(ctx, jobID, enqueued)
+	if err := w.store.AddReposTotal(ctx, jobID, enqueued); err != nil {
+		return err
+	}
+	w.report(ctx, task, progress.StatusDone, enqueued, nil)
+	return nil
 }
 
 // enqueueRepos upserts each repository and enqueues a scan task for it,

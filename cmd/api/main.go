@@ -12,6 +12,7 @@ import (
 	"github.com/mservice/gitscanner/internal/dispatch"
 	"github.com/mservice/gitscanner/internal/github"
 	"github.com/mservice/gitscanner/internal/notify"
+	"github.com/mservice/gitscanner/internal/progress"
 	"github.com/mservice/gitscanner/internal/scan"
 	"github.com/mservice/gitscanner/internal/secrets"
 	"github.com/mservice/gitscanner/libs/config"
@@ -62,6 +63,14 @@ var serveSpec = app.Spec{
 				InfoURL:   config.GetOr("DISCLOSURE_INFO_URL", ""),
 			}).
 			WithProviders(scan.BootstrapRuleset().Providers())
+
+		// The hub listens for the whole life of the process, on the build
+		// context rather than as the service's Worker: that context ends on
+		// SIGTERM, before the HTTP server drains, so open event streams close
+		// and do not hold the drain until its deadline.
+		hub := progress.NewHub(d.Log)
+		go hub.Run(ctx, d.DB)
+		srv.WithProgress(hub, progress.NewPublisher(d.DB, d.Log))
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},
