@@ -286,7 +286,13 @@ func namedSuppressed(ruleID, path string, blob []byte, lo, hi int, secret string
 // documentationKeys are published example credentials (AWS's own docs use
 // AKIAIOSFODNN7EXAMPLE and its secret). Matched by prefix, so the variants
 // people make by changing the last letter are caught too.
-var documentationKeys = []string{"AKIAIOSFODNN7", "wJalrXUtnFEMI/K7MDENG"}
+var documentationKeys = []string{
+	"AKIAIOSFODNN7", "wJalrXUtnFEMI/K7MDENG",
+	// Azurite, the local Azure storage emulator: one fixed, public account key.
+	"Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1",
+	// MoMo's public sandbox secretKeys, copied verbatim from its integration docs.
+	"K951B6PE1waDMi640xX08PD3vg6EkVlz", "at67qH6mk8w5Y1nAyMoYKMWACiEi2bsa",
+}
 
 // isFakeValue reports a value with the shape of a credential but the content of
 // a published example. It matches only exact documentation keys — a run-based
