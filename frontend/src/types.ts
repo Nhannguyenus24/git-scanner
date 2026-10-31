@@ -176,6 +176,45 @@ export interface ProgressEvent {
   error?:         string
 }
 
+/** How much a share link reveals: counts only, or locations too. */
+export type ShareDetail = 'summary' | 'full'
+
+/** A read-only link to one repository's results. `token` is present only in
+ *  the response that creates it — the server keeps a hash, not the token. */
+export interface ShareLink {
+  id:               string
+  repository_id:    string
+  detail:           ShareDetail
+  include_resolved: boolean
+  state:            'active' | 'expired' | 'revoked'
+  created_at:       string
+  expires_at:       string
+  revoked_at?:      string
+  views:            number
+  last_viewed_at?:  string
+  token?:           string
+}
+
+/** What a share link opens. `findings` and `guide` are empty at the summary level. */
+export interface SharedReport {
+  repo:             string
+  repo_url:         string
+  detail:           ShareDetail
+  include_resolved: boolean
+  generated_at:     string
+  expires_at:       string
+  last_scanned_at?: string
+  summary: {
+    total: number; open: number; live: number; on_head: number; files: number
+    by_severity: Count[]; by_provider: Count[]; by_status: Count[]
+  }
+  findings: {
+    provider: string; rule: string; severity: Severity; status: string; location: string; masked: string
+    commit?: string; committed_at?: string; link?: string; on_head: boolean; live: boolean
+  }[]
+  guide: { title: string; text: string[]; commands: string[] }[]
+}
+
 export interface Count { key: string; count: number }
 export interface TimePoint { period: string; findings: number }
 

@@ -28,6 +28,7 @@ UNION ALL SELECT 'provider_candidates', count(*) FROM provider_candidates
 UNION ALL SELECT 'analytics_rollups', count(*) FROM analytics_rollups
 UNION ALL SELECT 'notifications', count(*) FROM notifications
 UNION ALL SELECT 'sealed_secrets', count(*) FROM sealed_secrets
+UNION ALL SELECT 'share_links', count(*) FROM share_links
 ORDER BY 1;"
 ```
 
@@ -53,8 +54,8 @@ done
 ## Full wipe
 
 `targets` is the root of the foreign-key tree: deleting it cascades to
-`scan_jobs`, `repositories`, and through them `findings`, `notifications` and
-`sealed_secrets`.
+`scan_jobs`, `repositories`, and through them `findings`, `notifications`,
+`sealed_secrets` and `share_links`.
 The analytics tables and `provider_candidates` hang off nothing, so they have to
 be named explicitly — forgetting them leaves rollups describing findings that no
 longer exist.
@@ -64,7 +65,7 @@ One transaction, so a failure part-way cannot leave a half-emptied database:
 ```bash
 PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -v ON_ERROR_STOP=1 <<'SQL'
 BEGIN;
-DELETE FROM targets;                   -- cascades: scan_jobs, repositories, findings, notifications, sealed_secrets
+DELETE FROM targets;                   -- cascades: scan_jobs, repositories, findings, notifications, sealed_secrets, share_links
 DELETE FROM analytics_rollups;
 DELETE FROM analytics_seen_findings;
 DELETE FROM analytics_seen_repos;
@@ -83,6 +84,8 @@ always creates a new job) runs against repositories already discovered.
 `notifications` and `sealed_secrets` go too: the first holds an id array with no
 foreign key and its one-per-repository index would block new disclosures; the
 second holds sealed credential values that only cascade from `repositories`.
+`share_links` go as well: a link opened after the wipe would show an empty
+report to whoever it was sent to.
 
 ```sql
 BEGIN;
@@ -93,6 +96,7 @@ DELETE FROM analytics_seen_repos;
 DELETE FROM provider_candidates;
 DELETE FROM notifications;
 DELETE FROM sealed_secrets;
+DELETE FROM share_links;
 COMMIT;
 ```
 
@@ -136,7 +140,8 @@ UNION ALL SELECT 'targets', count(*) FROM targets
 UNION ALL SELECT 'provider_candidates', count(*) FROM provider_candidates
 UNION ALL SELECT 'analytics_rollups', count(*) FROM analytics_rollups
 UNION ALL SELECT 'notifications', count(*) FROM notifications
-UNION ALL SELECT 'sealed_secrets', count(*) FROM sealed_secrets ORDER BY 1;"
+UNION ALL SELECT 'sealed_secrets', count(*) FROM sealed_secrets
+UNION ALL SELECT 'share_links', count(*) FROM share_links ORDER BY 1;"
 
 # schema and migrations must still be there
 PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -tAc \

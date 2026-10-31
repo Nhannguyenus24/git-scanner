@@ -5,7 +5,7 @@ import NewScanDialog from './components/NewScanDialog'
 import OnboardingTour from './components/OnboardingTour'
 import { useHotkeys } from './hooks/useHotkeys'
 import { useResource } from './hooks/useResource'
-import { href, navigate, useRoute } from './hooks/useRoute'
+import { href, navigate, useRoute, type Route } from './hooks/useRoute'
 import CandidatesPage from './pages/CandidatesPage'
 import NotificationsPage from './pages/NotificationsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -17,6 +17,7 @@ import ProvidersPage from './pages/ProvidersPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
 import ScansPage from './pages/ScansPage'
+import SharedReportPage from './pages/SharedReportPage'
 import { usePrefs } from './store/preferences'
 import { useSettings } from './store/settings'
 import { useT } from './i18n'
@@ -24,7 +25,14 @@ import { useToast } from './store/toast'
 import type { TargetKind } from './types'
 
 export default function App() {
-  const route  = useRoute()
+  const route = useRoute()
+  // A share link opens one repository's report and nothing else: no dashboard,
+  // no navigation, none of the requests the dashboard makes.
+  if (route.page === 'shared' && route.id) return <SharedReportPage key={route.id} token={route.id} />
+  return <Dashboard route={route} />
+}
+
+function Dashboard({ route }: { route: Route }) {
   const { api } = useSettings()
   const { t } = useT()
   const notify = useToast()

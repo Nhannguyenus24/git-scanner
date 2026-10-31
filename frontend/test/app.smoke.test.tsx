@@ -42,6 +42,26 @@ const SCAN = {
   created_at: '2026-02-02T00:00:00Z', started_at: '2026-02-02T00:00:00Z', finished_at: '2026-02-02T00:30:00Z',
 }
 
+const SHARE = {
+  id: 's1', repository_id: 'r1', detail: 'summary', include_resolved: false, state: 'active',
+  created_at: '2026-02-02T00:00:00Z', expires_at: '2026-02-09T00:00:00Z', views: 4,
+}
+
+const SHARED = {
+  repo: 'acme/web', repo_url: 'https://github.com/acme/web', detail: 'full', include_resolved: false,
+  generated_at: '2026-02-03T00:00:00Z', expires_at: '2026-02-09T00:00:00Z', last_scanned_at: '2026-02-02T00:30:00Z',
+  summary: {
+    total: 1, open: 1, live: 1, on_head: 1, files: 1,
+    by_severity: [{ key: 'critical', count: 1 }], by_provider: [{ key: 'Stripe', count: 1 }], by_status: [{ key: 'open', count: 1 }],
+  },
+  findings: [{
+    provider: 'Stripe', rule: 'stripe-secret-key', severity: 'critical', status: 'open', location: '.env:3',
+    masked: 'sk_l…9c1d', commit: '0123456789ab', committed_at: '2026-01-02',
+    link: 'https://github.com/acme/web/blob/0123456789ab/.env#L3', on_head: true, live: true,
+  }],
+  guide: [{ title: 'Rotate the affected credentials at the provider.', text: ['This is the step that matters.'], commands: [] }],
+}
+
 const RUNNING = {
   ...SCAN, id: 'j2', state: 'running', progress: .25, repos_scanned: 1, finished_at: undefined,
   target: { kind: 'org', value: 'globex' },
@@ -72,8 +92,12 @@ const REPOSITORY = {
 
 /** Answers every endpoint the dashboard calls, by path. */
 function stubFetch() {
-  return vi.fn(async (url: RequestInfo | URL) => {
+  return vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url).replace(/^https?:\/\/[^/]+/, '').split('?')[0]
+    // An unknown share token gets the api's one answer for every dead link.
+    if (path.startsWith('/v1/shared/') && path !== '/v1/shared/tok-valid') {
+      return { ok: false, status: 404, json: async () => ({ error: 'this link does not exist or is no longer valid' }) } as Response
+    }
     const body =
       path === '/v1/version'      ? { service: 'api', version: 'test', commit: 'abc', go_version: 'go1' }
       : path === '/v1/overview'   ? OVERVIEW
@@ -86,6 +110,10 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/shared/tok-valid' ? SHARED
+      : path === '/v1/repositories/r1/shares' && init?.method === 'POST'
+        ? { ...SHARE, token: 'tok-new' }
+      : path === '/v1/repositories/r1/shares' ? { shares: [SHARE] }
       : path === '/v1/providers'      ? { providers: [
           { slug: 'github', severity: 'high', rules: 1, rule_details: [{
             id: 'github-pat', severity: 'high', anchor: 'prefix', shape: 'gh[opsu]_[0-9A-Za-z]{36}',
@@ -317,6 +345,46 @@ describe('onboarding', () => {
     await waitFor(() => expect(screen.queryByText('Step 3 of 7')).toBeNull())
     await replay()
     expect(screen.getByText('Step 1 of 7')).toBeTruthy()
+  })
+})
+
+describe('share links', () => {
+  it('opens a shared report on its own, without the dashboard', async () => {
+    await open('#/shared/tok-valid')
+    expect(await screen.findByRole('heading', { name: 'acme/web' })).toBeTruthy()
+    // None of the dashboard's chrome: the holder of the link sees this report only.
+    expect(screen.queryByRole('link', { name: /Overview/i })).toBeNull()
+    expect(screen.getByText('.env:3')).toBeTruthy()
+    expect(screen.getByText('sk_l…9c1d')).toBeTruthy()
+    expect(screen.getByText(/LIVE — rotate first/)).toBeTruthy()
+    expect(screen.getByText(/Rotate the affected credentials/)).toBeTruthy()
+    const md = screen.getByRole('link', { name: /Download Markdown/i })
+    expect(md.getAttribute('href')).toMatch(/\/v1\/shared\/tok-valid\/report\?format=md$/)
+    const pdf = screen.getByRole('link', { name: /Printable report/i })
+    expect(pdf.getAttribute('href')).toMatch(/format=html$/)
+    expect(pdf.getAttribute('rel')).toContain('noreferrer')
+  })
+
+  it('says a dead link is gone, the same way whatever the reason', async () => {
+    await open('#/shared/tok-revoked')
+    expect(await screen.findByText(/does not exist or is no longer valid/i)).toBeTruthy()
+  })
+
+  it('creates a summary link by default and shows it once', async () => {
+    await open('#/repositories')
+    await act(async () => { fireEvent.click(await screen.findByRole('button', { name: /Share results of acme\/web/i })) })
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('radio', { name: /Summary/i })).toHaveProperty('checked', true)
+    expect(await within(dialog).findByText(/4 views/)).toBeTruthy()
+
+    await act(async () => { fireEvent.click(within(dialog).getByRole('button', { name: /Create link/i })) })
+    const field = within(dialog).getByLabelText('Share link') as HTMLInputElement
+    expect(field.value).toMatch(/#\/shared\/tok-new$/)
+    expect(within(dialog).getByText(/cannot be shown again/i)).toBeTruthy()
+
+    const post = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .find(([u, i]) => String(u).endsWith('/v1/repositories/r1/shares') && (i as RequestInit | undefined)?.method === 'POST')!
+    expect(JSON.parse(String((post[1] as RequestInit).body))).toEqual({ detail: 'summary', expires_in_days: 7, include_resolved: false })
   })
 })
 

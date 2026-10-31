@@ -49,7 +49,7 @@ describe('every key the app asks for exists', () => {
     'components/FindingsTable.tsx', 'components/Layout.tsx', 'components/OnboardingTour.tsx',
     'components/PostureScore.tsx', 'components/SavedFilterMenu.tsx', 'components/ScanTimeline.tsx',
     'components/States.tsx', 'components/TopBar.tsx',
-    'pages/AnalyticsPage.tsx', 'pages/FindingsPage.tsx', 'pages/OverviewPage.tsx', 'pages/ProvidersPage.tsx',
+    'pages/AnalyticsPage.tsx', 'pages/FindingsPage.tsx', 'pages/OverviewPage.tsx', 'pages/ProvidersPage.tsx', 'pages/SharedReportPage.tsx', 'components/ShareDialog.tsx',
     'pages/RepositoriesPage.tsx', 'pages/ScanDetailPage.tsx', 'pages/SettingsPage.tsx',
   ]
 
@@ -72,7 +72,9 @@ describe('every key the app asks for exists', () => {
       ...['prefix', 'setting', 'url', 'block', 'shape'].flatMap(a => [`providers.anchor.${a}`, `providers.how.${a}`]),
       ...['critical', 'high', 'medium', 'low'].map(s => `providers.why.${s}`),
       ...[...CATEGORY_ORDER, 'Unlisted'].map(categoryImpactKey),
+      ...['active', 'expired', 'revoked'].map(s => `share.state.${s}`),
+      ...['summary', 'full'].map(s => `share.${s}`),
     ]
-    expect(keys.filter(k => !CORE.has(k))).toEqual([])
+    expect(keys.filter(k => !CORE.has(k) && !(k in DICT_UI))).toEqual([])
   })
 })

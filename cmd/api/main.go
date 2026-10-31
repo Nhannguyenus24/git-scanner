@@ -71,6 +71,7 @@ var serveSpec = app.Spec{
 		hub := progress.NewHub(d.Log)
 		go hub.Run(ctx, d.DB)
 		srv.WithProgress(hub, progress.NewPublisher(d.DB, d.Log))
+		srv.WithShares(d.DB)
 
 		return app.Parts{HTTP: srv.Routes()}, nil
 	},
