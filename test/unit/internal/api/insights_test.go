@@ -20,6 +20,31 @@ func (f *fakeInsights) SharedKeys(_ context.Context, minRepos, limit int) ([]sto
 	return f.keys, 42, nil
 }
 
+func (f *fakeInsights) LeakCalendar(context.Context) ([]store.LeakDay, error) {
+	return []store.LeakDay{{Day: "2024-02-29", Findings: 3, Critical: 1}}, nil
+}
+
+func TestLeakCalendarRoute(t *testing.T) {
+	srv, _, _ := newServer(t)
+	srv.WithInsights(&fakeInsights{})
+	rec := do(srv, http.MethodGet, "/v1/analytics/calendar", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Days []struct {
+			Day                string
+			Findings, Critical int
+		}
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Days) != 1 || got.Days[0].Day != "2024-02-29" || got.Days[0].Findings != 3 || got.Days[0].Critical != 1 {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+
 func TestSharedKeysRoute(t *testing.T) {
 	srv, _, _ := newServer(t)
 	ins := &fakeInsights{keys: []store.SharedKey{{

@@ -276,3 +276,6 @@ export interface SharedKeyRepo {
   status:              FindingStatus
   reachable_from_head: boolean
 }
+
+/** Findings committed on one UTC day (GET /v1/analytics/calendar). */
+export interface LeakDay { day: string; findings: number; critical: number }

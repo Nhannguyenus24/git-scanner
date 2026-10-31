@@ -119,6 +119,7 @@ function stubFetch() {
       : path === '/v1/findings'       ? { findings: [FINDING], total: 1 }
       : path === '/v1/repositories'   ? { repositories: [REPOSITORY] }
       : path === '/v1/candidates'     ? { candidates: [] }
+      : path === '/v1/analytics/calendar' ? { days: [{ day: '2026-01-02', findings: 3, critical: 1 }] }
       : path === '/v1/keys/shared'    ? { keys: [SHARED_KEY], total: 1 }
       : path === '/v1/shared/tok-valid' ? SHARED
       : path === '/v1/repositories/r1/shares' && init?.method === 'POST'
@@ -230,6 +231,14 @@ describe('key spread', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /sk_l\*\*\*\*9c1d/ })) })
     expect(screen.getByRole('link', { name: 'globex/api' }).getAttribute('href')).toContain('finding=f9')
     expect(screen.getByText(/One rotation fixes all 2/)).toBeTruthy()
+  })
+})
+
+describe('leak calendar', () => {
+  it('draws the latest year with leaks and its busiest day', async () => {
+    await open('#/analytics')
+    expect(await screen.findByText(/3 credentials on 1 days in 2026/)).toBeTruthy()
+    expect(screen.getByRole('img', { name: /Calendar of 2026/ })).toBeTruthy()
   })
 })
 

@@ -94,3 +94,41 @@ func (db *DB) SharedKeys(ctx context.Context, minRepos, limit int) ([]SharedKey,
 	}
 	return out, total, nil
 }
+
+// LeakDay is one UTC calendar day on which credentials were committed.
+type LeakDay struct {
+	Day      string // YYYY-MM-DD, UTC
+	Findings int
+	Critical int // of which critical: the calendar marks the days that matter most
+}
+
+// LeakCalendar counts findings by the UTC day their credential was committed,
+// across all time, for the dashboard's calendar. It is day-granular on
+// purpose: committed_at is stored as an instant, the author's own offset is
+// gone, and an hour-of-day reading would be a reading of UTC, not of habit.
+// Findings not yet traced to a commit have no day and are left out.
+func (db *DB) LeakCalendar(ctx context.Context) ([]LeakDay, error) {
+	const q = `
+		SELECT to_char(committed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+		       count(*), count(*) FILTER (WHERE severity = 'critical')
+		FROM findings
+		WHERE committed_at IS NOT NULL
+		GROUP BY 1 ORDER BY 1`
+	rows, err := db.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("store: leak calendar: %w", err)
+	}
+	defer rows.Close()
+	var out []LeakDay
+	for rows.Next() {
+		var d LeakDay
+		if err := rows.Scan(&d.Day, &d.Findings, &d.Critical); err != nil {
+			return nil, fmt.Errorf("store: leak calendar: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: leak calendar: %w", err)
+	}
+	return out, nil
+}

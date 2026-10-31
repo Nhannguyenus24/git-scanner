@@ -1,5 +1,5 @@
 import type {
-  SharedKey,
+  SharedKey, LeakDay,
   AppSettings, Analytics, ShareDetail, ShareLink, SharedReport, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
@@ -35,6 +35,7 @@ export function createClient(rawBase: string) {
     version:      ()                                     => r<VersionResponse>('GET', '/v1/version'),
     overview:     ()                                     => r<Overview>('GET', '/v1/overview'),
     analytics:    ()                                     => r<Analytics>('GET', '/v1/analytics'),
+    leakCalendar: ()                                     => r<{ days: LeakDay[] }>('GET', '/v1/analytics/calendar'),
     listScans:    (limit = 100)                          => r<{ scans: ScanSummary[] }>('GET', `/v1/scans?limit=${limit}`),
     getScan:      (id: string)                           => r<ScanJob>('GET', `/v1/scans/${id}`),
     /** The Server-Sent Events stream of a scan's live progress. */

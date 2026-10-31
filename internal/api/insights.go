@@ -13,6 +13,7 @@ import (
 // every new view.
 type Insights interface {
 	SharedKeys(ctx context.Context, minRepos, limit int) ([]store.SharedKey, int, error)
+	LeakCalendar(ctx context.Context) ([]store.LeakDay, error)
 }
 
 // WithInsights enables the cross-repository views.
@@ -26,6 +27,7 @@ func (s *Server) insightRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /v1/keys/shared", s.handleSharedKeys)
+	mux.HandleFunc("GET /v1/analytics/calendar", s.handleLeakCalendar)
 }
 
 type sharedKeyResponse struct {
@@ -71,4 +73,26 @@ func (s *Server) handleSharedKeys(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"keys": out, "total": total})
+}
+
+type leakDayResponse struct {
+	Day      string `json:"day"`
+	Findings int    `json:"findings"`
+	Critical int    `json:"critical"`
+}
+
+// handleLeakCalendar returns findings per UTC day of commit, all time. The
+// dashboard picks the year to draw; the payload is one row per day that had a
+// leak, which stays small however large the corpus grows.
+func (s *Server) handleLeakCalendar(w http.ResponseWriter, r *http.Request) {
+	days, err := s.insights.LeakCalendar(r.Context())
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := make([]leakDayResponse, 0, len(days))
+	for _, d := range days {
+		out = append(out, leakDayResponse{Day: d.Day, Findings: d.Findings, Critical: d.Critical})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"days": out})
 }

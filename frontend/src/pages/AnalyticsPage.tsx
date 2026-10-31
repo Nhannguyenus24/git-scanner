@@ -10,6 +10,7 @@ import DownloadIcon from '@mui/icons-material/FileDownloadOutlined'
 import { useTheme } from '@mui/material/styles'
 import BarList from '../components/BarList'
 import Figure from '../components/charts/Figure'
+import LeakCalendar from '../components/LeakCalendar'
 import Columns from '../components/charts/Columns'
 import Ring, { countsToSlices } from '../components/charts/Ring'
 import { PageHeader } from '../components/Layout'
@@ -121,6 +122,8 @@ export default function AnalyticsPage() {
         <Grid item xs={6} md={3}><StatCard label={t('analytics.repositories')} value={`${o.exposed_repos}/${o.repositories}`} hint={t('analytics.exposedOf')} accent={ch.categorical[2]} onClick={() => navigate(href('repositories'))} /></Grid>
         <Grid item xs={6} md={3}><StatCard label={t('overview.unmapped')} value={o.candidates} hint={t('overview.unmappedHint')} accent={ch.categorical[3]} onClick={() => navigate(href('candidates'))} /></Grid>
       </Grid>
+
+      <Box sx={{ mb: 2 }}><LeakCalendar /></Box>
 
       <Grid container spacing={2}>
         <Grid item xs={12} md={8}>
