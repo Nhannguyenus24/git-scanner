@@ -788,6 +788,139 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /v1/repositories/{id}/shares:
+    post:
+      tags: [repositories]
+      summary: Create a share link to a repository's results
+      description: |
+        Returns a read-only link token, shown only in this response: the server
+        stores its SHA-256, not the token. `summary` (the default) gives counts
+        by severity, provider and status and no locations. `full` adds each
+        finding's file, line, masked value and commit link plus the removal
+        guide — what the disclosure mail gives the owner. Neither level carries
+        a secret, a fingerprint, the committer, or what a probe learned about
+        whose account a key opens.
+
+        Refused with 409 for a repository only a random sample reached:
+        sharing is a form of disclosure (plan.md §0.1).
+      operationId: createShareLink
+      parameters:
+        - $ref: "#/components/parameters/RepositoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                detail: { type: string, enum: [summary, full], default: summary }
+                expires_in_days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+                include_resolved: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Created; `token` is present only here.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShareLink" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The repository was only reached by a random sample.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [repositories]
+      summary: List a repository's share links
+      operationId: listShareLinks
+      parameters:
+        - $ref: "#/components/parameters/RepositoryID"
+      responses:
+        "200":
+          description: Newest first, in every state; never with the token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  shares: { type: array, items: { $ref: "#/components/schemas/ShareLink" } }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/shares/{id}:
+    delete:
+      tags: [repositories]
+      summary: Revoke a share link
+      operationId: revokeShareLink
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Revoked (revoking twice keeps the first time). }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/shared/{token}:
+    get:
+      tags: [repositories]
+      summary: Open a shared report
+      description: |
+        The report a share link opens, and counts the view. A malformed,
+        unknown, expired or revoked token gets one identical 404, so trying
+        tokens reveals nothing. Sent with `Cache-Control: no-store`,
+        `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex, nofollow`.
+      operationId: openSharedReport
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SharedReport" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/shared/{token}/report:
+    get:
+      tags: [repositories]
+      summary: Download a shared report
+      description: |
+        `md` is a Markdown attachment for an issue or ticket. `html` is a
+        self-contained page to read or print to PDF; it loads nothing from the
+        network and is served with a `default-src 'none'` content security
+        policy. Opening either counts a view.
+      operationId: downloadSharedReport
+      parameters:
+        - $ref: "#/components/parameters/ShareToken"
+        - name: format
+          in: query
+          required: true
+          schema: { type: string, enum: [md, html] }
+      responses:
+        "200":
+          description: The report
+          content:
+            text/markdown: { schema: { type: string } }
+            text/html: { schema: { type: string } }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /v1/candidates:
     get:
       tags: [catalog]
@@ -1022,6 +1155,18 @@ paths:
 
 components:
   parameters:
+    RepositoryID:
+      name: id
+      in: path
+      required: true
+      description: Repository id.
+      schema: { type: string, format: uuid }
+    ShareToken:
+      name: token
+      in: path
+      required: true
+      description: The 256-bit base64url token from the share link.
+      schema: { type: string }
     JobID:
       name: id
       in: path
@@ -1612,6 +1757,76 @@ components:
           type: string
           description: Human-readable error message.
           example: "scan not found"
+
+    ShareLink:
+      type: object
+      required: [id, repository_id, detail, include_resolved, state, created_at, expires_at, views]
+      properties:
+        id: { type: string, format: uuid }
+        repository_id: { type: string, format: uuid }
+        detail: { type: string, enum: [summary, full] }
+        include_resolved: { type: boolean }
+        state: { type: string, enum: [active, expired, revoked] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        revoked_at: { type: string, format: date-time }
+        views: { type: integer }
+        last_viewed_at: { type: string, format: date-time }
+        token: { type: string, description: 256-bit base64url token. Only in the response that creates the link. }
+
+    SharedReport:
+      type: object
+      properties:
+        repo: { type: string }
+        repo_url: { type: string }
+        detail: { type: string, enum: [summary, full] }
+        include_resolved: { type: boolean }
+        generated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_scanned_at: { type: string, format: date-time }
+        summary:
+          type: object
+          properties:
+            total: { type: integer }
+            open: { type: integer }
+            live: { type: integer }
+            on_head: { type: integer }
+            files: { type: integer }
+            by_severity: { type: array, items: { $ref: "#/components/schemas/ShareCount" } }
+            by_provider: { type: array, items: { $ref: "#/components/schemas/ShareCount" } }
+            by_status: { type: array, items: { $ref: "#/components/schemas/ShareCount" } }
+        findings:
+          type: array
+          description: Empty at the summary level.
+          items:
+            type: object
+            properties:
+              provider: { type: string }
+              rule: { type: string }
+              severity: { type: string }
+              status: { type: string }
+              location: { type: string, description: "path:line" }
+              masked: { type: string }
+              commit: { type: string }
+              committed_at: { type: string, format: date }
+              link: { type: string }
+              on_head: { type: boolean }
+              live: { type: boolean }
+        guide:
+          type: array
+          description: Removal steps for the open findings. Empty at the summary level.
+          items:
+            type: object
+            properties:
+              title: { type: string }
+              text: { type: array, items: { type: string } }
+              commands: { type: array, items: { type: string } }
+
+    ShareCount:
+      type: object
+      properties:
+        key: { type: string }
+        count: { type: integer }
 
     ProgressEvent:
       type: object

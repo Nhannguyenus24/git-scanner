@@ -1,5 +1,5 @@
 import type {
-  AppSettings, Analytics, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
+  AppSettings, Analytics, ShareDetail, ShareLink, SharedReport, Count, NotificationFilter, NotificationMessage, NotificationRow, Candidate, Finding, FindingFilter, FindingStatus, Overview, Provider, Repository, ScanJob, ScanSummary,
 } from '../types'
 
 export interface VersionResponse { service: string; version: string; commit: string; go_version: string }
@@ -53,6 +53,13 @@ export function createClient(rawBase: string) {
     candidates:   ()                                     => r<{ candidates: Candidate[] }>('GET', '/v1/candidates'),
     providers:    ()                                     => r<{ providers: Provider[] }>('GET', '/v1/providers'),
     disclose:     (repoId: string)                       => r<{ recipient: string; findings: number }>('POST', `/v1/repositories/${repoId}/disclose`, {}),
+    shares:       (repoId: string)                       => r<{ shares: ShareLink[] }>('GET', `/v1/repositories/${repoId}/shares`),
+    createShare:  (repoId: string, detail: ShareDetail, expires_in_days: number, include_resolved: boolean) =>
+                    r<ShareLink>('POST', `/v1/repositories/${repoId}/shares`, { detail, expires_in_days, include_resolved }),
+    revokeShare:  (id: string)                           => r<unknown>('DELETE', `/v1/shares/${id}`),
+    sharedReport: (token: string)                        => r<SharedReport>('GET', `/v1/shared/${encodeURIComponent(token)}`),
+    /** The report as a file: Markdown to download, HTML to read or print to PDF. */
+    sharedReportUrl: (token: string, format: 'md' | 'html') => `${base}/v1/shared/${encodeURIComponent(token)}/report?format=${format}`,
     settings:     ()                                     => r<AppSettings>('GET', '/v1/settings'),
     setSettings:  (s: Partial<Pick<AppSettings, 'notifications_enabled' | 'masking_enabled'>>) => r<AppSettings>('PUT', '/v1/settings', s),
     addUnmaskOwner:    (owner: string)                   => r<AppSettings>('PUT', `/v1/settings/unmask-owners/${encodeURIComponent(owner)}`),
