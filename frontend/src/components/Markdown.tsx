@@ -7,7 +7,7 @@ import Typography from '@mui/material/Typography'
 // in this repository and trusted, so it builds React nodes directly (no
 // dangerouslySetInnerHTML, no HTML passthrough) and supports just the subset the
 // guide uses: #/##/### headings, paragraphs, - lists, ``` fences, `code`,
-// **bold**, [links](url) and --- rules.
+// **bold**, *italic*, [links](url) and --- rules.
 
 export default function Markdown({ source }: { source: string }) {
   return <Box sx={{ '& > :first-of-type': { mt: 0 } }}>{renderBlocks(source)}</Box>
@@ -98,9 +98,11 @@ function renderBlocks(src: string): React.ReactNode[] {
   return out
 }
 
-// inline renders `code`, **bold** and [text](url) within a run of text.
+// inline renders `code`, **bold**, *italic* and [text](url) within a run of text.
+// Italic needs a non-space after the opening star, so a bare "*" in prose stays
+// literal.
 function inline(text: string): React.ReactNode[] {
-  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g)
+  const tokens = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|\[[^\]]+\]\([^)]+\))/g)
   return tokens.filter(Boolean).map((tok, k) => {
     if (tok.startsWith('`') && tok.endsWith('`')) {
       return <Box component="code" key={k} sx={{
@@ -110,6 +112,9 @@ function inline(text: string): React.ReactNode[] {
     }
     if (tok.startsWith('**') && tok.endsWith('**')) {
       return <Box component="strong" key={k} sx={{ fontWeight: 700 }}>{tok.slice(2, -2)}</Box>
+    }
+    if (tok.length > 2 && tok.startsWith('*') && tok.endsWith('*')) {
+      return <Box component="em" key={k}>{tok.slice(1, -1)}</Box>
     }
     const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok)
     if (link) {
