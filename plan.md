@@ -25,6 +25,10 @@ but seed it from an authorized set:
 Only the seed source changes. `discovery-worker` does not care where the repo list
 came from.
 
+One deliberate exception: a dev-only `random` target samples public repositories
+to measure detection precision on code nobody tuned against. It is not an
+authorized set, so it must never run where disclosure mail or probing is on.
+
 ### 0.2 No live authentication with discovered credentials
 
 Calling a provider's API with someone else's key to test whether it works is
@@ -40,6 +44,11 @@ the provider:
 
 Real verification is gated behind proof of ownership: the requester scanning their
 own repo, or an installed GitHub App. It runs only on that path.
+
+Not built yet (Phase 7). Today the gate is the operator: `PROBE_SECRETS`, off by
+default, turns probing on for the whole `scan-worker`, and may only be set where
+every target is one the operator owns. The probes themselves are compiled into
+`internal/probe`, not read from the registry.
 
 The provider registry (§5) **stores** probe definitions for every provider; the
 ownership gate decides **when** one is allowed to execute. Storing the capability
@@ -58,16 +67,22 @@ The donation link lives on our own site, not in the notice.
 
 ## 1. Stack
 
-Go has no LTS — the two most recent majors receive security fixes. Pin the current
-stable release in `go.mod` with a `toolchain` directive.
+Go has no LTS — the two most recent majors receive security fixes. Pin the patched
+release in the `go` directive of `go.mod` itself: CI's setup-go and govulncheck
+read that line, so it decides which standard library ships.
 
 | Concern | Choice |
 |---|---|
-| HTTP | `go-chi/chi/v5`, `log/slog`, OpenTelemetry |
-| Postgres | `pgx/v5` + `sqlc`, `golang-migrate` |
+| HTTP | stdlib `net/http` (method-and-path routing), `log/slog` |
+| Postgres | `pgx/v5`, hand-written SQL, embedded migrations applied under an advisory lock |
 | RabbitMQ | `rabbitmq/amqp091-go` |
-| SMTP | `wneessen/go-mail` |
+| SMTP | stdlib `net/smtp` |
 | Git | `git` binary over `cat-file --batch` pipes, behind an interface |
+
+The standard library covered routing and mail once Go 1.22 added method patterns,
+so the planned chi, go-mail, sqlc and golang-migrate dependencies were never
+taken. OpenTelemetry is still the plan (Phase 8); not built yet, and
+`OTLP_ENDPOINT` is reserved for it.
 
 **Git library note.** `go-git` is pure Go but degrades badly on large histories;
 `git2go` requires cgo. Shelling out to `git` is fastest and most robust. Keep it
@@ -120,7 +135,7 @@ gitscanner/                      module github.com/mservice/gitscanner
   libs/                          # shared across services
     entity/        domain types + validation, zero I/O
     proto/         buf workspace: proto/ definitions, gen/ generated Go
-    rabbit/        reconnect, confirms, prefetch, DLX backoff, cancellable consumer
+    rabbit/        confirms, prefetch, TTL retry + dead-letter, cancellable consumer
     observability/ slog + OTel wiring, health probes
     config/        env loading and validation
     lifecycle/     signal handling, ordered shutdown
@@ -128,21 +143,28 @@ gitscanner/                      module github.com/mservice/gitscanner
     id/            UUIDv7
   internal/                      # service-private, not importable outside
     app/           shared bootstrap: config, connect, build, serve, drain
-    api/           http handlers, middleware, openapi
-    scan/          engine: clone, blob walk, detect, entropy; blob index, pause/cursor
-    rules/         embedded gitleaks-compatible TOML (bootstrap ruleset)
-    registry/      provider catalog, versioned definitions, candidates, probes
-    classify/      severity scoring, app-type detection
+    api/           http handlers
+    scan/          engine: clone, blob walk, detect, entropy; bootstrap ruleset
+    scanworker/    scan-worker wiring: task → engine → store and events
+    discovery/     target → repository pages, pause/cursor
+    dispatch/      publishing tasks and finding events
+    enrich/        registry resolution, unmapped candidates
+    probe/         live credential probes (gated, §0.2)
     notify/        smtp, templates, suppression
     analytics/     rollups
-    store/         postgres (pgx + sqlc)
-    github/        REST + GraphQL client, token pool, rate limiter
-    secrets/       fingerprint, mask, envelope crypto
-  migrations/
+    store/         postgres (pgx), migrations/ embedded
+    github/        REST client
+    secrets/       fingerprint, mask, sealing
+  api/             openapi.yaml
   deploy/
   build/           Dockerfile
-  Makefile  Tiltfile  buf.yaml  sqlc.yaml  .golangci.yaml
+  test/            unit/ and integration/, external _test packages
+  Makefile  Tiltfile  .golangci.yaml
 ```
+
+`registry/`, `classify/` and `rules/` are the Phase 3–4 targets in §5; until
+then detection rules are compiled into `internal/scan/bootstrap_rules.go`. The
+buf workspace lives at `libs/proto/buf.yaml`.
 
 **Why one module rather than a module per lib.** A single `go.mod` means no
 `replace` directives, no version skew between services deployed together, and one
@@ -177,10 +199,17 @@ buys independent evolution of the two.
 
 ### 3.4 Keep the transport libraries thin
 
-`libs/rabbit` encodes **our conventions** — queue and
-queue naming, proto serialization, trace headers, consumer-group setup, retry and
-DLQ topology, graceful shutdown (§13.3), OTel spans. It does not attempt to hide
-amqp091.
+`libs/rabbit` encodes **our conventions** — queue naming, retry and dead-letter
+topology, publisher confirms, bounded prefetch, graceful drain (§13.3). It does
+not attempt to hide amqp091. Trace headers and OTel spans belong here too once
+OTel lands (§1); not built yet.
+
+Two of those conventions are easy to undo by accident. Every queue's
+dead-letter exchange is the *retry* exchange, so dead-lettering is an explicit
+confirmed publish to `.dead` followed by an ack, never a nack (CLAUDE.md has
+the failure that taught this). And a lost broker connection ends the process
+rather than reconnecting: the orchestrator restarts it, and a consumer that
+quietly stopped consuming is worse than one that exits.
 
 A wrapper that re-exports every driver option is strictly worse than the driver: it
 carries the same complexity plus a layer to debug through. When a service needs
@@ -200,8 +229,13 @@ content hundreds of times.
 
 ### 4.1 Pipeline
 
-1. `git clone --mirror` into a scratch dir with a per-job disk quota and guaranteed
-   cleanup on every exit path.
+1. `git clone --bare` into a scratch dir, removed on every exit path. Bare, not
+   `--mirror`: a mirror fetches `refs/*`, which on GitHub includes one ref per
+   pull request ever opened — gigabytes of other people's fork commits that are
+   neither the target's history nor an authorized target. A clone that stalls
+   below 1 KB/s for 60 s is aborted, and none may run past 30 minutes. A per-job
+   disk quota is not built yet; the scratch volume's `sizeLimit` (§13.3) is the
+   only disk bound today.
 2. `git rev-list --objects --all` → dedupe blob OIDs → drop OIDs already scanned in
    a prior run. Incremental rescans become nearly free. (Not implemented: the
    Redis-backed index was never wired in and went with Redis; a revival belongs
@@ -212,21 +246,34 @@ content hundreds of times.
    obvious trap. Run one Aho-Corasick pass over rule literal prefixes (`AKIA`,
    `sk_live_`, `ghp_`, `xoxb-`, …) and evaluate only the rules whose anchor hit.
    Order-of-magnitude difference on large repos. The automaton is built from the
-   active registry version (§5.6).
+   active registry version (§5.6). Not built yet: today the prefilter is one
+   `bytes.Contains` per distinct literal over the bootstrap ruleset, which is
+   cheap at its size, behind the interface Aho-Corasick will slot into. It does
+   not fold case, so a rule's literals must list every casing.
 5. Detection layers:
-   - provider detection rules from the registry (§5.2)
+   - named provider rules — from the registry (§5.2) once Phase 4 lands; today
+     the bootstrap ruleset compiled into `internal/scan`
    - Shannon entropy plus keyword proximity for generic high-entropy strings
-   - structural decoders: JWT parse, AWS key-ID checksum, base64 inflation
+   - structural decoders (AWS key-ID checksum, base64 inflation) — not built.
+     JWTs are recognised today only to keep them out of the generic pass.
+
+   The exact order of gates — matches per rule, keyword window, suppressions,
+   dev-local URLs, split database settings — changes with tuning and is
+   documented beside the code in `internal/scan/detect.go` and the
+   `detection-engine` skill rather than here.
 6. False-positive filters: path denylist (`vendor/`, `testdata/`, `*.min.js`,
    lockfiles), placeholder detection (`EXAMPLE`, `your_key_here`, repeated runs).
 7. Attribution: resolve blob → introducing commit, author, date **lazily**, only for
-   confirmed findings. `git log --find-object` is expensive.
+   confirmed findings — in one `git log --raw` pass over history for just the
+   blobs that produced findings, not one invocation per finding. A repo with no
+   findings never pays for it.
 
 ### 4.2 Concurrency
 
-One RabbitMQ consumer per worker with `prefetch = N`; each task fans out over a
-bounded `errgroup` across blobs. Backpressure comes from prefetch, not from an
-unbounded in-process queue.
+One RabbitMQ consumer per worker with a small `prefetch` (2 for `scan-worker`).
+Each repository is walked sequentially; parallelism comes from prefetch and
+replica count, not from in-process fan-out. Backpressure comes from prefetch,
+not from an unbounded in-process queue.
 
 ### 4.3 Classification — two axes
 
@@ -235,11 +282,13 @@ built:
 
 - **Credential provider taxonomy** — which service the key belongs to. Resolved
   entirely from the registry (§5), never hard-coded.
-- **Repo stack / app type** — detected from manifests at HEAD (`go.mod`,
-  `package.json`, `requirements.txt`, `Dockerfile`, `pom.xml`).
+- **Repo stack / app type** — detected from manifest paths (`go.mod`,
+  `package.json`, `requirements.txt`, `Dockerfile`, `pom.xml`) seen during the
+  blob walk, which covers all of history rather than HEAD alone.
 
-Stack feeds severity: a leaked DB URL in a deployed service outranks the same string
-in a tutorial repo.
+Stack should feed severity: a leaked DB URL in a deployed service outranks the
+same string in a tutorial repo. Today app type is recorded with each finding and
+rolled up in analytics; feeding it into severity does not appear to be wired yet.
 
 ---
 
@@ -249,6 +298,10 @@ Everything the system knows about a provider lives here: how to recognise its ke
 what can be read off the key offline, and which API endpoint turns that key into
 account info. `scan-worker` and `enricher` hard-code no provider — both load from
 the registry.
+
+That is the target. Not built yet (Phase 4): `scan-worker`'s rules are compiled
+in (`internal/scan/bootstrap_rules.go`), and the enricher resolves against
+`providers` rows seeded by migration.
 
 ### 5.1 Deployment
 
@@ -374,6 +427,8 @@ it feeds analytics (§10).
 ### 5.6 Versioning and rollout
 
 A definition version is immutable: `draft → test → published → deprecated`.
+`test` is a step, not a stored state — `provider_versions.state` holds only
+`draft | published | deprecated`.
 
 - **test** runs the version against stored fixtures. Fixtures are **synthetic keys
   only** — never a real leaked credential from the findings table.
@@ -391,8 +446,8 @@ Worth separating, because it decides how expensive a catalog change is:
 - **New mapping for an already-detected key** (pure classification): replay
   enrichment over stored findings. No repo is cloned again. Cheap.
 - **New detection rule** (a pattern nothing ever matched): blobs must be walked
-  again. The blob-OID dedupe in §4.1 makes this far cheaper than a cold scan, but
-  it is not free.
+  again. The blob-OID dedupe in §4.1 would make this far cheaper than a cold
+  scan; until it is built, a new rule means a full rescan.
 
 So version `detect` separately from `extract`/`probe` inside a definition. Then the
 publish step can tell the operator which of the two a change triggers, instead of
@@ -414,6 +469,13 @@ construction**. Non-negotiable controls:
   length, measure compile time, and require a literal anchor so the pattern can
   participate in the prefilter.
 
+Database-URL probes (`internal/probe/db.go`) are the one exception to the
+private-range block. Their host comes from the repository, not a fixed provider
+endpoint, so the dialer refuses loopback, link-local (including
+`169.254.169.254`) and unspecified addresses on the resolved IP — but allows
+RFC1918 on purpose, because an internal database that accepts a leaked
+password is the finding.
+
 ---
 
 ## 6. Secret storage
@@ -425,8 +487,8 @@ The `findings` row holds:
 - a keyed **HMAC-SHA256 fingerprint** — for dedupe and idempotency
 - a masked preview — `sk_live_4f2a…9c1d`
 
-If an owner-verified flow genuinely requires the full value, envelope-encrypt it per
-row under a separate KMS key with a short TTL.
+If an owner-verified flow genuinely requires the full value, seal it per row under
+a separate key with a bounded TTL.
 
 That flow exists for detection testing: owners on `unmask_owners` (the operator's
 own accounts) have each credential sealed with AES-256-GCM under `SECRET_SEAL_KEY`
@@ -437,50 +499,70 @@ secret-free, mail is always masked, and no other repository is ever sealed.
 Without this, our Postgres becomes more valuable than any single repository it
 scanned.
 
-The fingerprint also supplies free idempotency:
-`ON CONFLICT (fingerprint, repo_id) DO NOTHING` makes RabbitMQ redelivery harmless.
+The fingerprint also supplies free idempotency: `ON CONFLICT (fingerprint,
+repository_id)` makes RabbitMQ redelivery harmless. Its one narrow update arm
+lets a named rule replace the unattributed catch-all — never one provider
+another — so improving a rule takes effect on repositories already scanned.
 
 ---
 
 ## 7. Schema
 
-- `targets`
-- `scan_jobs` — state machine `queued | running | paused | completed | failed`,
-  progress counters, resume cursor
+Authoritative definitions: `internal/store/migrations`.
+
+- `targets` — kind `repo | user | org | allowlist | random` (§0.1)
+- `scan_jobs` — state machine `queued | running | paused | completed | failed |
+  cancelled`, progress counters, resume cursor, `pause_requested` (§8)
 - `repositories`
-- `findings` — fingerprint, rule_id, provider_slug, blob_oid, commit_sha, path, line,
-  author, severity, status
-- `providers` — slug, name, category, status, current_version
+- `findings` — fingerprint, masked preview, rule_id, provider_slug, blob_oid,
+  commit_sha, file_path, line_number, author name/email, committed_at,
+  reachable_from_head, severity, status, metadata
+- `providers` — slug, name, category, current_version
 - `provider_versions` — immutable definition JSONB, author, state
+  (`draft | published | deprecated`)
 - `provider_candidates` — shape signature, guessed name, occurrences, masked sample,
   first/last seen, status (`new | triaged | mapped | ignored`)
 - `provider_fixtures` — synthetic test vectors and their expected parse
+- `registry_state` — the global registry version
 - `notifications`
 - `suppressions`
 - `analytics_rollups`
+- `analytics_seen_findings`, `analytics_seen_repos` — rollup dedupe, because
+  delivery is at-least-once (§10)
+- `rate_buckets` — shared token buckets (§13.5)
+- `app_settings` — one row: the disclosure switch, off until an operator turns it
+  on so a deploy never mails strangers (§0.3), and the masking switch (§6)
+- `unmask_owners`, `sealed_secrets` — the owner-only sealed-credential flow (§6)
 
 ---
 
 ## 8. API
 
+The core of it; [api/openapi.yaml](api/openapi.yaml) is the full reference.
+
 ```
-POST   /v1/scans/repo        {url, ruleset}
-POST   /v1/scans/user        {username, include_forks, include_gists}
-POST   /v1/scans/bulk        {org | allowlist}        # bounded, authorized sets
+POST   /v1/scans/repo        {url}
+POST   /v1/scans/user        {name, include_forks}
+POST   /v1/scans/org         {name, include_forks}    # bounded, authorized sets
+POST   /v1/scans/random      {count, include_forks}   # dev-only, §0.1
 GET    /v1/scans/{id}                                 # status + progress
 POST   /v1/scans/{id}/pause
 POST   /v1/scans/{id}/resume
 POST   /v1/scans/{id}/cancel
-GET    /v1/findings?provider=&severity=&repo=
-GET    /v1/analytics/summary
-GET    /v1/analytics/trends
-GET    /v1/analytics/providers
+GET    /v1/findings
+GET    /v1/analytics
 ```
 
-Registry endpoints: §5.5. Auth: API key or JWT, scoped per tenant.
+Registry endpoints: §5.5 — only `GET /v1/providers` (the bootstrap catalogue)
+exists so far.
 
-**Pause/resume.** The worker checks `scan_jobs.pause_requested` each batch, flushes its cursor to
-`scan_jobs`, and acks. Resume re-enqueues from the stored cursor.
+Auth: API key or JWT, scoped per tenant. Not built yet — the api is
+unauthenticated today and must not be exposed beyond the operator.
+
+**Pause/resume.** The discovery worker checks `scan_jobs.pause_requested` between
+pages, stores its page cursor and moves the job to `paused`. Resume re-enqueues
+discovery from that cursor. Repositories already queued still scan: pause stops
+enumeration, not in-flight work.
 
 ---
 
@@ -492,14 +574,20 @@ Registry endpoints: §5.5. Auth: API key or JWT, scoped per tenant.
 - ETag conditional requests
 - GraphQL for user and org repo enumeration — one query rather than N REST calls
 
+Today only `Retry-After` handling is built: one optional `GITHUB_TOKEN`, REST
+enumeration, no pool, bucket or ETags. The client sits behind an interface so
+GraphQL can replace REST without touching the discovery worker.
+
 ---
 
 ## 10. Analytics
 
-`scan-worker` and `enricher` publish to the `findings.events` queue. The
-`analytics` consumer upserts rollups: findings by provider per day, repos scanned, top firing
-rules, time-to-remediation, false-positive rate, and **registry coverage** (§5.5).
-Served from `/v1/analytics/*`.
+`scan-worker` publishes each finding to the `findings.events` queue. The
+`analytics` consumer upserts per-day rollups by provider, severity, rule and app
+type, plus distinct repos under each. Served from `/v1/analytics`.
+
+Still planned, not built yet: time-to-remediation, false-positive rate, and
+**registry coverage** (§5.5).
 
 Consuming the stream rather than querying `findings` on every request keeps the
 dashboards off the operational path, which is the reason the rollups exist.
@@ -516,7 +604,7 @@ for free (§1).
 
 | Phase | Deliverable |
 |---|---|
-| 0 | Scaffolding, migrations, wiring to existing PG / Rabbit / Redis; Helm chart skeleton and dev namespace (§13) |
+| 0 | Scaffolding, migrations, wiring to existing PG / Rabbit / Redis (Redis since removed, migration 0007); Helm chart skeleton and dev namespace (§13) |
 | 1 | Repo scan end-to-end → findings in Postgres (vertical slice) |
 | 2 | User scan, discovery worker, checkpoint / pause / resume |
 | 3 | Provider registry: catalog, versioned definitions, hot reload; enricher reads from it |
@@ -533,7 +621,10 @@ definitions, so the catalog does not start empty.
 
 ## 12. Testing
 
-- `testcontainers-go` for integration tests against real Postgres / Rabbit.
+- Integration tests (`-tags=integration`, `make test-integration`) run against
+  real Postgres / RabbitMQ named by env URLs, on a database of their own, and
+  skip when a URL is unset — so a laptop with only part of the stack still runs
+  the rest. `test/README.md` has the setup.
 - Build a **labeled fixture repo early** — known secrets at known commits, plus known
   decoys. False-positive rate is the metric that decides whether anyone trusts the
   tool; it needs to be measurable from Phase 1.
@@ -554,10 +645,13 @@ trigger. Overlays per environment via separate values files.
 ```
 deploy/
   chart/
-    templates/{deployment,service,pdb,scaledobject,servicemonitor,networkpolicy}.yaml
+    templates/{deployment,service,pdb,scaledobject,networkpolicy,external-infra}.yaml
     templates/job-migrate.yaml
-  values/{dev,staging,prod}.yaml
+    values.yaml                  # prod defaults (env: prod)
+  values/dev.yaml                # overrides only the numbers (§14.5)
 ```
+
+A `ServiceMonitor` template and a staging values file are not built yet.
 
 ### 13.2 Existing infrastructure is outside the cluster
 
@@ -616,10 +710,11 @@ spec:
 ```
 
 **Scratch disk.** `emptyDir` with an explicit `sizeLimit`, backed by disk — not
-`medium: Memory`, which would put a mirror clone of a large repo into RAM and take
+`medium: Memory`, which would put a clone of a large repo into RAM and take
 the node down. The limit means an oversized repo evicts its own pod instead of
-filling the node. Pair it with the per-job quota from §4.1 so the application
-fails cleanly before the kubelet intervenes. If scans need more than node ephemeral
+filling the node. A per-job quota (§4.1) would let the application fail cleanly
+before the kubelet intervenes; it is not built yet, so today eviction is what
+stops an oversized repo. If scans need more than node ephemeral
 storage can give, switch to a generic ephemeral volume with a
 `volumeClaimTemplate`.
 
@@ -630,9 +725,11 @@ evicted 8 minutes into a large repo scan wastes all of it.
 must:
 
 1. cancel its RabbitMQ consumer so no new delivery arrives,
-2. flush the current cursor to `scan_jobs` (§8),
-3. finish the in-flight task if time allows, otherwise `nack(requeue=true)`,
-4. exit.
+2. finish the in-flight task if the grace period allows,
+3. exit — a task still unacked is requeued by the broker.
+
+`scan-worker` holds no cursor; the only cursor is discovery's, stored per page
+(§8).
 
 `terminationGracePeriodSeconds` must exceed a typical task, not the longest
 possible one — the requeue path covers the tail. Requeue is safe because findings
@@ -693,9 +790,13 @@ to 10 replicas multiplies the send rate by 10 and the domain gets blocklisted �
 exactly the outcome the cap exists to prevent.
 
 The limiter must be a **shared token bucket** — a locked row in Postgres
-(`rate_buckets`), which every replica serialises on — with the suppression-list
-check inside the same atomic operation as the send claim. Keep `notifier` at a low
-fixed replica count anyway; it is not throughput-bound.
+(`rate_buckets`), which every replica serialises on. The suppression check, the
+token and the notification row are separate steps today. The one-mail-per-repository
+unique index is what prevents a double send, and the token is taken *before* the
+row is written. The other order drops mail permanently (CLAUDE.md). A
+rate-limited delivery goes back as `ErrRetryLater`, so waiting behind the cap
+spends no retry attempt. Keep `notifier` at a low fixed replica count anyway; it
+is not throughput-bound.
 
 ### 13.6 Migrations
 
@@ -716,9 +817,11 @@ Never plain `Secret` manifests in git. Use External Secrets Operator against the
 cluster's secret store, or Sealed Secrets if there is no external store.
 
 Two keys need stricter handling than the infrastructure passwords: the HMAC
-fingerprint key and the envelope-encryption KMS key from §6. Mount them only into
-the workloads that need them — `scan-worker` and `enricher` — never into `api` or
-`analytics`.
+fingerprint key and the sealing key from §6. Mount each only where it is used.
+`FINGERPRINT_KEY` goes to `scan-worker` alone. `SECRET_SEAL_KEY`, if set at all,
+goes to `scan-worker`, which seals, and `api`, which opens only while masking is
+off. Neither key goes to `enricher`, `analytics` or `notifier` — none of them ever
+sees a secret.
 
 ### 13.8 NetworkPolicy
 
@@ -726,7 +829,9 @@ Default-deny egress on every namespace, then open only what each workload needs.
 
 For `scan-worker`, egress is GitHub plus the infrastructure Services. For probe
 execution (Phase 7), the §5.8 dialer controls are the primary defence, and a
-NetworkPolicy blocking RFC1918 and `169.254.169.254` is defence in depth — a single
+NetworkPolicy blocking RFC1918 and `169.254.169.254` is defence in depth. Blocking
+RFC1918 also disables the database-URL probes (§5.8), which reach private hosts
+on purpose, so choose deliberately; the metadata block is never optional — a single
 registry definition pointing at the cloud metadata endpoint would otherwise hand out
 node credentials. Route probe traffic through an egress proxy that enforces the
 `allow_hosts` list independently of application code.
@@ -783,7 +888,7 @@ network, `host.k3d.internal` reaches the Mac host instead.
 ### 14.2 One Dockerfile for every service
 
 ```dockerfile
-FROM golang:1.25 AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download                      # cached across all services
@@ -814,19 +919,15 @@ a single module (§3.1) matters for build times — six images, one dependency f
 
 ```python
 registry = 'localhost:5050'
-services  = ['api', 'discovery-worker', 'enricher', 'notifier', 'analytics']
+services = [...]                 # every cmd/*/main.go, so a new service needs no edit
+git_services = ['scan-worker']
 
 for s in services:
     docker_build(registry + '/' + s, '.',
         dockerfile='build/Dockerfile',
-        target='runtime',
+        target='runtime-git' if s in git_services else 'runtime',
         build_args={'SERVICE': s},
         only=['go.mod', 'go.sum', 'cmd/' + s, 'libs', 'internal'])
-
-docker_build(registry + '/scan-worker', '.',
-    dockerfile='build/Dockerfile', target='runtime-git',
-    build_args={'SERVICE': 'scan-worker'},
-    only=['go.mod', 'go.sum', 'cmd/scan-worker', 'libs', 'internal'])
 
 k8s_yaml(helm('deploy/chart', values=['deploy/values/dev.yaml']))
 ```
@@ -881,10 +982,10 @@ than discovering it during an incident:
 
 ```
 make proto      # buf lint, buf breaking --against main, buf generate
-make sqlc       # sqlc generate
 make lint       # golangci-lint, including the §3.2 depguard rules
-make test       # unit + testcontainers integration
-make images     # buildx all six
+make test       # unit tests with -race; `make check` = vet + lint + test, what CI runs
+make test-integration   # real backends, §12
+make images     # docker build all six (runtime or runtime-git)
 make deploy     # helm upgrade --install gitscanner deploy/chart -f values/dev.yaml
 ```
 
@@ -906,8 +1007,8 @@ a real shared cluster where GitOps reconciliation matters.
 
 ### 14.8 Bootstrap order
 
-1. `k3d cluster create` as in §14.1
-2. `helm install keda kedacore/keda -n keda --create-namespace`
-3. `kubectl create ns gitscanner`, seal or inject secrets (§13.7)
-4. `make proto sqlc` — generated code must exist before the first build
-5. `tilt up`
+1. `make cluster` — `k3d cluster create` as in §14.1, KEDA via Helm, and the
+   `gitscanner` namespace
+2. seal or inject secrets (§13.7)
+3. `make proto` — generated code must exist before the first build
+4. `tilt up` (`make up`)

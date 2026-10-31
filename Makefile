@@ -97,7 +97,7 @@ chart-lint: ## Lint the Helm chart and render it for dev and prod
 	helm template gitscanner deploy/chart --set env=prod >/dev/null
 
 .PHONY: check
-check: vet lint test ## Everything CI runs
+check: vet lint test ## The Go job's vet, lint and unit tests (CI runs more)
 
 ## ---------------------------------------------------------------- build
 

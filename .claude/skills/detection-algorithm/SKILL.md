@@ -17,7 +17,7 @@ The code is `internal/scan/detect.go` (gates) and `bootstrap_rules.go` (rules).
 | Finds | credentials whose **shape** is known (`AKIA…`, `ghp_…`, `sk-ant-…`) | opaque strings no rule describes |
 | Precision | high — the shape *is* the evidence | low by nature — "random-looking" fits a lot of things |
 | Recall | only what it has a rule for | anything long and random enough |
-| Provider | set by the rule | empty; becomes a candidate for a new rule |
+| Provider | set by the rule | empty; becomes a candidate for a new rule (except split DB variables → `db-split-env`) |
 | Tuned by | writing rules (`detection-rule`) | **filters** — almost everything in this skill |
 
 The generic pass is where the junk comes from, so it is where the algorithm is.
@@ -34,11 +34,17 @@ For each blob:
    a rule must list every casing the wild uses (`giphy`, `GIPHY`, `Giphy`).
 2. **Regex** (Go RE2 — linear time, no catastrophic backtracking). The
    `(?P<secret>…)` group marks the credential; context around it stays outside.
-3. **Keywords** (optional) must all appear on the line.
+3. **Keywords** (optional) must all appear, case-insensitively, within ±400
+   bytes of the match (`keywordWindow`) — so `cloudinary.config({...})` and
+   `recaptcha:` blocks spanning several lines still qualify.
 4. **`isPlaceholder`** drops template values (`your-…-key`, `xxxx`, `changeme`,
    `example`, repeated characters).
+5. **`namedSuppressed`** drops published example keys (`isFakeValue`), test
+   fixtures with a sequential run of 8+, a PEM header with no body, placeholder
+   URL passwords and Firebase client keys; host-scoped URL rules also drop URLs
+   whose every host is dev-local (`localURL`).
 
-Only the **first** match per rule per blob is reported.
+Every match is reported, up to 64 per rule per blob (`secretIndexes`).
 
 How a rule earns its precision — pick the strongest anchor available:
 
@@ -65,7 +71,8 @@ Cheap, value-only checks first; context-dependent ones last.
 ```
 for each token t at [lo, hi) in blob:
     if seen(t) or overlapsNamed(t):               skip   # already reported
-    if H(t) < 4.0 or isPlaceholder(t):            skip   # not random enough / template
+    if H(t) < 4.0 or isPlaceholder(t)
+       or isFakeValue(t):                         skip   # not random enough / template
     if text before t ends with "${":              skip   # ${VAR} reference
     if data-URI or image magic (iVBOR…, /9j/):    skip   # embedded image
     if t is a URL host/path segment:              skip   # CDN path, asset hash
@@ -78,6 +85,8 @@ for each token t at [lo, hi) in blob:
         public:  skip                                    # client_id, site-key, …_id
         secret:  keep going                              # api_secret, DB_PWD
         unknown: require secretKeyword in ±160 bytes
+    if hostScopedKey(key) and every host within
+       ±4 lines is dev-local:                     skip   # DB_HOST=localhost nearby
     if exampleLine(window):                       skip   # example =, e.g.
     if part of a JWT, base64-JSON, or a JWT
        signing-secret context:                    skip   # policy, see §3.8
@@ -107,7 +116,9 @@ Two consequences worth remembering:
 
 - **H can never exceed log₂(length) or log₂(alphabet size).** A 20-character
   token tops out at log₂20 = 4.32, so it passes only with ~17 distinct
-  characters. **Hex tops out at log₂16 = 4.0 and never passes** — a 32- or
+  characters. **Hex tops out at log₂16 = 4.0 and essentially never passes** (only a
+  perfectly uniform hex string reaches exactly 4.0, which the strict `<` lets
+  through) — a 32- or
   64-hex secret is invisible to the generic pass. That is a known recall gap
   (§6), not a bug in the arithmetic.
 - **Entropy alone cannot tell identifiers from keys.** A long camelCase name
@@ -124,8 +135,8 @@ strings fragment into runs of one or two characters.
 - rescued when the token is assigned straight to a secret-named setting —
   `app.secret=mySuperSecretSigningKey…` is a hardcoded secret, wordy or not.
 
-`UserAuthenticationFilter` → `User|Authentication|Filter`, average 8, vowels
-0.42 → identifier. `Zx9Kq2Lp7Wm4Rt8Nv3Yb` → average ~1.4 → random.
+`getChangePasswordRequestSchema` (H = 4.00, so it gets past entropy) →
+`get|Change|Password|Request|Schema`, average 6, vowels 0.33 → identifier. `Zx9Kq2Lp7Wm4Rt8Nv3Yb` → average ~1.4 → random.
 
 ### 3.3 Assignment-key classification — the decisive gate
 
@@ -184,8 +195,10 @@ Some credentials are *meant* to be public, so finding them is not a leak:
 
 The generic pass skips test sources and fixture directories (`_test.go`,
 `*Test.java`, `*.spec.*`, `*.test.*`, `test_*.py`, `test/`, `tests/`,
-`__tests__/`, `spec/`, `fixtures/`, `__mocks__/`) and example/template files.
-**Named rules still run there**: a real key with its own shape pasted into a
+`__tests__/`, `spec/`, `specs/`, `fixtures/`, `__fixtures__/`, `__mocks__/`,
+`*Tests.java`, `*Test.kt`) and example/template files.
+**Named rules still run there** (they skip the generic gates but still pass
+`isPlaceholder` and `namedSuppressed`): a real key with its own shape pasted into a
 test is still a leak.
 
 ### 3.7 Encodings that look random
@@ -199,7 +212,7 @@ Any JWT segment, base64url-encoded JSON (`eyJ…` headers quoted in docs), and J
 signing secrets (`jwt` starting a word nearby, a `Jwt*` file, a `jwt:` YAML
 parent ≤ 4 lines up) are skipped. In this corpus every such hit was a tutorial
 default (`mySecretKey…`) or a doc sample. A provider whose API key *is* a JWT
-(Supabase `service_role`) needs a named rule — gates never apply to named rules.
+(Supabase `service_role`) needs a named rule — the generic gates never apply to named rules.
 
 ## 4. Worked traces (from the corpus, values masked)
 
@@ -228,7 +241,9 @@ repositories, after each round of changes:
 Named-rule results were unchanged in every round except where a new rule was
 added on purpose. The 19 generic findings left are DB passwords, reCAPTCHA
 secret keys, a VNPay hash secret and Cloudinary `api_secret` values — real
-secrets that no named rule attributes yet.
+secrets that no named rule attributed at the time of measurement. reCAPTCHA,
+Cloudinary-config and split-DB-variable rules have since been added — re-measure
+before quoting these numbers.
 
 ## 6. Changing a gate safely
 
@@ -259,8 +274,6 @@ Pitfalls that have bitten this code:
 - **Hex secrets are never generic findings** (entropy ceiling 4.0). Fix:
   normalise entropy by the alphabet the token actually uses
   (`H / log₂|alphabet|`), with a matching threshold, and re-measure the junk.
-- **First match per rule per blob** — two keys of one kind in one file give one
-  finding. Fix: `FindAllSubmatchIndex` and dedupe.
 - **Two notions of "secret setting"**: the identifier rescue still uses the
   `secretAssignment` regex while the decisive gate uses `classifyKey`. Unify on
   `classifyKey` and re-measure.

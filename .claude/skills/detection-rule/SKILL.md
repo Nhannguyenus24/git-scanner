@@ -33,7 +33,10 @@ PGPASSWORD=postgres123 psql -h localhost -U postgres -d app_db -c \
   and it is what makes a leak invisible as *that provider's* leak. Writing a
   named rule fixes it.
 - **A `your-...` template value reported as a finding** — a placeholder-filter
-  gap, in `isPlaceholder` in `detect.go`, not a rule problem.
+  gap, in `isPlaceholder` in `detect.go`, not a rule problem. URL-password
+  placeholders (`${DB_PASS}`, user == pass, `changeme`) and published example
+  keys are dropped in `namedSuppressed` / `placeholderURLCredential` /
+  `isFakeValue` — look there too.
 
 ## Learn the real shape without printing the secret
 
@@ -71,8 +74,8 @@ Four things govern whether it works.
 without it, because the engine needs to know which span is the credential as
 opposed to the context around it. Keep the context *outside* the group.
 
-**Literals gate a case-sensitive prefilter.** `ruleset.candidates` runs
-`bytes.Contains` for each literal and only evaluates rules whose literal is
+**Literals gate a case-sensitive prefilter.** `Ruleset.candidates` (via
+`prefilter.matches`) runs `bytes.Contains` for each literal and only evaluates rules whose literal is
 present, so a blob without it never reaches the regex. `bytes.Contains` does not
 fold case, so `"cloudinary"` alone will never see `CLOUDINARY_API_SECRET` —
 list every spelling the wild uses. A rule with no literals runs against every
@@ -85,14 +88,14 @@ timestamp and identifier in a codebase. Requiring the setting name is not an
 optimisation there — it is the entire signal. By contrast `AKIA…` or `ghp_…`
 carry their own prefix and need no context.
 
-**Keywords are a second gate, on the surrounding line.** `keywordsPresent`
-requires *every* keyword to appear in the line holding the match. Use them to
+**Keywords are a second gate, on the surrounding text.** `keywordsPresent`
+requires *every* keyword to appear (case-insensitively) within ±400 bytes of the
+match (`keywordWindow`), which can span several lines. Use them to
 rescue a pattern that is otherwise too generic to enable.
 
-One more constraint worth knowing: `secretIndex` uses `FindSubmatchIndex`, which
-returns only the **first** match per blob per rule. A file with two keys of the
-same kind yields one finding. If that matters, it is an engine change, not a
-rule change.
+Every match is reported, up to `maxMatchesPerRule` (64) per rule per blob
+(`secretIndexes` in `rule.go`); a value an earlier rule already claimed is not
+reported again.
 
 ### Severity
 

@@ -36,7 +36,9 @@ go build ./... && go vet ./... && go test -count=1 ./test/unit/...
 ```
 
 Tests live under `test/`, not beside the code, and are external `_test` packages
-— see `test/README.md`. `make check` is what CI runs.
+— see `test/README.md`. `make check` runs the Go job's vet, lint and unit tests; CI also runs
+integration tests, proto checks, the chart render, the frontend and a security
+job (`.github/workflows/ci.yaml`).
 
 Beyond the unit suite, a change to the scan path deserves a real run: start the
 stack and watch a scan through the logs. Several of the bugs found in this code

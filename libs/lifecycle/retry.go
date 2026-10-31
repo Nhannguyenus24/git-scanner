@@ -28,8 +28,8 @@ func StartupBackoff(budget time.Duration) Backoff {
 // Retry calls fn until it succeeds, ctx is cancelled, or the budget runs out,
 // and returns the last error.
 //
-// Services start in no particular order — compose brings Postgres and the
-// broker up alongside the workers, a node restart brings everything up at
+// Services start in no particular order — a local stack brings Postgres and
+// the broker up alongside the workers, a node restart brings everything up at
 // once — so a backend that is not answering yet is the normal case at startup,
 // not a fault. Failing on the first refusal turns that into a crash loop whose
 // backoff is the orchestrator's, and outside an orchestrator into a service

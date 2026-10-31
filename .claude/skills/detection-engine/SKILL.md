@@ -20,7 +20,7 @@ specific miss, and the reason is easy to undo by accident.
    Blobs are deduplicated by OID: identical content is scanned once.
 3. `ls-tree -r HEAD` gives the blobs still live, for `reachable_from_head`.
 4. Each blob ≤ 10 MB goes through `Detector.Detect(path, blob)`.
-5. After the walk, findings are **held**, then attributed (step 4 below), then
+5. After the walk, findings are **held**, then attributed (§5 below), then
    emitted to the sink. Nothing is emitted mid-walk.
 
 ### 2. Per blob (`Detect`)
@@ -28,7 +28,7 @@ specific miss, and the reason is easy to undo by accident.
 | Gate | Drops | Why |
 |---|---|---|
 | `isBinary` | NUL in first 512 bytes | same heuristic as git |
-| `deniedPath` | `vendor/`, `node_modules/`, `testdata/`, `.git/`, `.idea/`; `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `go.sum`, `*.lock`; `*.min.js`, `*.map`, `*.svg`, `*.drawio` | vendored code, integrity hashes, IDE metadata, diagrams |
+| `deniedPath` | `vendor/`, `node_modules/`, `testdata/`, `.git/`, `.idea/`; `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `go.sum`, any path ending in `lock`; `*.min.js`, `*.map`, `*.svg`, `*.drawio` | vendored code, integrity hashes, IDE metadata, diagrams |
 | named rules | — | see 3 |
 | `exampleFile` | **generic pass only** for `.env.example`, `*.sample.*`, `*.template`, `*.tmpl`, `*.dist`, `example(s)/`, `sample(s)/` | templates hold stand-ins; a *named* rule still runs there because a real key pasted into a template is still a leak |
 | generic pass | — | see 4 |
@@ -36,36 +36,49 @@ specific miss, and the reason is easy to undo by accident.
 ### 3. Named rules (`bootstrap_rules.go`)
 
 For each rule: **literal prefilter** (`bytes.Contains`, case-sensitive — list
-every casing) → regex → the `(?P<secret>…)` span → `keywords` on the line →
-`isPlaceholder`. Only the **first** match per rule per blob is reported.
+every casing) → regex → the `(?P<secret>…)` span → every `keyword` within
+±400 bytes of the match (`keywordWindow`) → `isPlaceholder` → `namedSuppressed`
+(published example keys, test fixtures with a sequential run of 8+, a PEM header
+with no body, placeholder URL passwords, Firebase client keys) → for
+host-scoped URL rules (DB/cache/broker/SMTP), drop if every host is dev-local
+(`localURL`). Every match is reported, up to `maxMatchesPerRule` (64) per rule
+per blob (`secretIndexes`); a value an earlier rule already claimed is not
+reported again.
 
 The maths and reasoning behind each gate — entropy ceilings, identifier
 segmentation, key classification, worked traces and measured effect — are in the
 `detection-algorithm` skill.
 
-Catalogue today, by how it is anchored:
-
-| Anchored on the value's own prefix | Anchored on the setting name (no prefix of their own) |
-|---|---|
-| aws `AKIA/ASIA`, github `ghp_/gho_/ghu_/ghs_/github_pat_`, stripe `sk_live_/sk_test_`, google `AIza` (also Gemini), `GOCSPX-`, slack `xox?-` and webhook URL, sendgrid `SG.`, cloudinary URL, smtp URL, PEM private key block (whole block), openai (`T3BlbkFJ` marker), anthropic `sk-ant-`, openrouter `sk-or-v1-`, groq `gsk_`, huggingface `hf_`, google refresh token `1//0`, resend `re_` (fixed layout), replicate `r8_`, perplexity `pplx-`, xai `xai-`, langsmith `lsv2_`, pinecone `pcsk_`, giphy request URL | cloudinary api key/secret, deepseek, cohere, mistral, azure-openai, giphy (`GIPHY…=` including `… \|\| 'fallback'`) |
+The catalogue is `bootstrap_rules.go` (86 rules at last count) — read it rather
+than a copy here, which went stale. Most rules anchor on the value's own prefix
+(`AKIA`, `ghp_`, `sk-ant-`, `SG.` …) or on a URL scheme (postgres, mysql,
+mongodb, redis, rabbitmq, mssql, smtp, cloudinary, and the `*-jdbc-url` rules).
+A few have no shape of their own and anchor on the setting name: cloudinary
+key/secret/config, deepseek, cohere, mistral, azure-openai, giphy, recaptcha,
+twilio, datadog, cloudflare. Note `private-key-block` has `provider: "generic"`,
+a real slug — not the empty provider of the generic pass.
 
 ### 4. The generic high-entropy pass
 
 Catch-all for opaque secrets no rule names. Its findings have an **empty
-provider**; the enricher clusters them into provider candidates. A token is
+provider** and the enricher clusters them into provider candidates — except a
+DB/cache/broker password split from its host across variables, which
+`assembleDBConn` (`dbenv.go`) attributes as `db-split-env` with the engine as
+provider, high severity and an assembled probe URL. A token is
 `[A-Za-z0-9+/_-]{20,}={0,2}` — it stops at dots, so a JWT arrives as three
 tokens. Gates, in order:
 
 | # | Gate | Drops | Real case it came from |
 |---|---|---|---|
 | 1 | dedupe / `overlapsNamed` | a value a named rule already claimed | — |
-| 2 | Shannon entropy < 4.0, `isPlaceholder` | prose, `your-…-key`, `xxxx`, `changeme`, repeats | config templates |
+| 2 | Shannon entropy < 4.0, `isPlaceholder`, `isFakeValue` | prose, `your-…-key`, `xxxx`, `changeme`, repeats | config templates |
 | 3 | preceded by `${` | variable references | `${GF_SECURITY_ADMIN_PASSWORD}` |
 | 4 | `base64,` before it, or PNG/JPEG/GIF magic | embedded images | notebook output cells |
 | 5 | `inURLPath` | host/path segments of a URL (userinfo and `?key=` still checked) | CDN asset hashes in a SQL dump |
 | 6 | `looksLikeIdentifier` unless directly assigned to a secret setting | camelCase, SCREAMING_SNAKE, package paths | `UserAuthenticationFilter`, test method names |
 | 7 | `isTestPath`, `publicIdentifier` | test sources and fixtures; Stripe `pk_live_/pk_test_`, Google OAuth client ids | `detect_test.go` fixtures, `GOOGLE_OAUTH_CLIENT_ID=` |
 | 8 | **assignment-key class** (`assignmentKey` → `classifyKey`): public key → drop, secret key → keep, unknown → needs a whole secret word (`secretKeyword`) within **±160 bytes** | values assigned to `client_id`, `site-key`, `…_id`, `username`; tokens with no secret word nearby | client ids reported because OAUTH contains "auth" |
+| 8b | `hostScopedKey(key)` and `allHostsDevLocal` (±4 lines) | a DB/cache/broker password whose nearby hosts are all localhost or compose service names | split `DB_HOST=localhost` / `DB_PASSWORD=…` |
 | 9 | `exampleLine` | `example`, `examples`, `e.g.`, `for instance` near it | `@Schema(example = "eyJ…")`, `**Example:**` |
 | 10 | `inJWT`, `isJSONSegment` | any segment of a JWT; base64url JSON quoted alone | sample tokens in API docs and tests |
 | 11 | `jwtSecretContext` | JWT signing secrets: `jwt` starting a word in the window, a file named `Jwt*`, or a `jwt:` YAML parent ≤ 4 lines up | `jwt.secret=mySecretKey…`, `@Value("${jwt.secret:…}")` |
@@ -101,20 +114,22 @@ exists:
   (`aws_account_id`, `stripe_mode`).
 - **Liveness probe** (`PROBE_SECRETS=true`, default false): one identity call per
   *named* finding — GitHub `/user`, Stripe `/v1/account`, Slack `auth.test`,
-  OpenAI `/v1/models`, SendGrid `/v3/scopes`, Giphy trending. Implemented in
+  OpenAI `/v1/models`, SendGrid `/v3/scopes`, Giphy trending — and a database
+login handshake (no queries) for postgres/mysql/mongodb/redis/rabbitmq/mssql
+URLs (`internal/probe/db.go`). Implemented in
   `internal/probe`, injected into the engine via `WithProber`. Result in metadata:
-  `probe_status` (live/dead/unverified/error) and non-secret identity
+  `probe_status` (live/dead/error; absent when no prober covers the provider) and non-secret identity
   (`probe_owner`, `probe_account`, `probe_team`). The UI shows a "LIVE — rotate"
   badge.
 
 **Rules this must keep.** The probe authenticates to third-party providers with a
 found credential, so: it is **off unless explicitly enabled**, and only for
-targets the operator owns (the ownership gate — see plan.md and `entity.go`'s
+targets the operator owns (the ownership gate — see plan.md and `libs/entity/finding.go`'s
 "probe results require the ownership gate"); it is **identity/liveness only** and
 must never enumerate, read or modify account resources; and it runs **only inside
 the engine**, so the secret itself still never travels onward (plan.md §6) — only
-the boolean outcome and non-secret identity do. The generic (provider-less) pass
-is never probed.
+the boolean outcome and non-secret identity do. Provider-less generic findings
+are never probed.
 
 ### 6. Storage and afterwards
 
@@ -156,14 +171,14 @@ part being tested.
 
 ## Known gaps
 
-- **The local-config filter is not wired.** `LocalOnly` and `LocalURLCredential`
-  in `localfilter.go` are implemented and unit-tested, but nothing in the
-  pipeline calls them, so `postgres://u:p@localhost` is still reported.
-- First match per rule per blob: two keys of one provider in a file → one finding.
+- **The local-config filter covers host-scoped credentials only**: URL rules for
+  postgres/mysql/mongodb/redis/rabbitmq/mssql/smtp (`localURL`) and split DB
+  variables (`allHostsDevLocal`). Private-range hosts are kept on purpose. The
+  exported `LocalOnly`/`LocalURLCredential` have no production caller.
 - `envVarIn` takes any word before a colon, so `env_var` and candidate names pick
   up YAML keys and prose (`style`, `description`).
-- Cloudinary's `api_secret: '…'` inside `cloudinary.config({...})` has no
-  `cloudinary` on the same line and is caught only by the generic pass.
+- Cloudinary's positional form `cloudinary.config("…", "…")` carries no key and
+  is caught only by the generic pass (the object form has its own rule).
 - Probe results are written at insert time; an already-stored finding is not
   re-probed unless the row is reclassified or re-inserted, so turning probing on
   and rescanning is how existing findings get a live/dead verdict.

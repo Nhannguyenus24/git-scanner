@@ -44,6 +44,12 @@ do work; an event reports that something already happened. Both ride RabbitMQ
 with the same retry and dead-letter bindings, and the queue name says which it
 is — `*.tasks` against `findings.events`.
 
+A handler's return value is the routing decision (`libs/rabbit/consumer.go`): a
+plain error retries (nack → `gitscanner.retry`, 30s TTL); `rabbit.ErrDrop`, or
+any failure on the final attempt, is published to `<queue>.dead` and then acked;
+`rabbit.ErrRetryLater` is republished to the retry exchange without spending an
+attempt. Dead-lettering is always publish-then-ack, never a nack — see CLAUDE.md.
+
 The finding stream was on Kafka for its retention, so a corrected aggregation
 could be replayed over the log. That is gone: once analytics acks an event, the
 rollups are rebuilt by reading the `findings` table instead, which is the system
@@ -52,7 +58,8 @@ at-least-once, which is why the dedupe tables below are not optional.
 
 ## Every service is the same shape
 
-`cmd/<name>/main.go` is a declaration of about fifteen lines; `internal/app`
+`cmd/<name>/main.go` is a short declaration — a `Spec` plus a `build` function
+wiring the service's parts; `internal/app`
 does the rest in a fixed order: load config → connect backends → `Build` →
 serve probes → ready → run → unready → drain → close.
 
@@ -139,6 +146,10 @@ The mechanical steps are in the README. What to get right beyond them: pick
 `internal/<domain>` with the wiring in a worker package, so the domain code
 stays testable. If it shells out to `git`, it needs the runtime-git image —
 `GIT_SERVICES` in the Makefile and `git_services` in the Tiltfile.
+
+A consumer whose task advances a job must honour `rabbit.Delivery.Final`: on the
+last attempt, record the outcome (count the repository, fail the job) before
+returning the error, or the job waits forever for a task that is gone.
 
 ## Where to read further
 
