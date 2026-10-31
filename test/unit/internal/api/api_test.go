@@ -426,3 +426,85 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Errorf("empty put status = %d, want 400", rec.Code)
 	}
 }
+
+// A finished job has nothing to pause; accepting would leave the flag set on a
+// row no worker reads again.
+func TestPauseRefusedForFinishedOrPausedJob(t *testing.T) {
+	srv, st, _ := newServer(t)
+	tgt, _ := st.CreateTarget(context.Background(), entity.Target{Kind: entity.TargetUser, Value: "octocat"})
+	for _, state := range []entity.ScanState{entity.ScanCompleted, entity.ScanCancelled, entity.ScanFailed, entity.ScanPaused} {
+		job, _ := st.CreateScanJob(context.Background(), tgt.ID)
+		job.State = state
+		st.jobs[job.ID] = job
+		if rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/pause", ""); rec.Code != http.StatusConflict {
+			t.Errorf("pause of %s job = %d, want 409", state, rec.Code)
+		}
+	}
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+id.New().String()+"/pause", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("pause of unknown job = %d, want 404", rec.Code)
+	}
+}
+
+func TestResumeReportsRunning(t *testing.T) {
+	srv, st, _ := newServer(t)
+	tgt, _ := st.CreateTarget(context.Background(), entity.Target{Kind: entity.TargetUser, Value: "octocat"})
+	job, _ := st.CreateScanJob(context.Background(), tgt.ID)
+	job.State = entity.ScanPaused
+	st.jobs[job.ID] = job
+
+	rec := do(srv, http.MethodPost, "/v1/scans/"+job.ID.String()+"/resume", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if resp["state"] != "running" {
+		t.Errorf("state = %v, want running", resp["state"])
+	}
+}
+
+// A rescan that is refused must not leave a queued job behind, since nothing
+// was dispatched that would ever move it.
+func TestRescanRefusedCreatesNoJob(t *testing.T) {
+	srv, st, q := newServer(t)
+	tgt, _ := st.CreateTarget(context.Background(), entity.Target{Kind: entity.TargetRandom, Value: "5"})
+	old, _ := st.CreateScanJob(context.Background(), tgt.ID)
+
+	if rec := do(srv, http.MethodPost, "/v1/scans/"+old.ID.String()+"/rescan", ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if len(st.jobs) != 1 {
+		t.Errorf("jobs = %d, want only the original", len(st.jobs))
+	}
+	if q.scans != 0 || q.discoveries != 0 {
+		t.Errorf("work was queued: scans %d, discoveries %d", q.scans, q.discoveries)
+	}
+}
+
+// The mail goes to this repository's owner, so a finding from another
+// repository must not be folded into it.
+func TestDiscloseRejectsForeignFinding(t *testing.T) {
+	srv, st, q := newServer(t)
+	repoID, otherID := id.New(), id.New()
+	st.repos[repoID] = entity.Repository{Owner: "octocat", Name: "demo"}
+	own := entity.Finding{ID: id.New()}
+	foreign := entity.Finding{ID: id.New()}
+	st.openFindings[repoID] = []entity.Finding{own}
+	st.openFindings[otherID] = []entity.Finding{foreign}
+
+	body := `{"recipient":"owner@example.com","finding_ids":["` + own.ID.String() + `","` + foreign.ID.String() + `"]}`
+	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", body); rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if q.lastNotify.Recipient != "" {
+		t.Error("a disclosure was queued with a foreign finding")
+	}
+
+	body = `{"recipient":"owner@example.com","finding_ids":["` + own.ID.String() + `","` + own.ID.String() + `"]}`
+	if rec := do(srv, http.MethodPost, "/v1/repositories/"+repoID.String()+"/disclose", body); rec.Code != http.StatusAccepted {
+		t.Fatalf("own finding: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if len(q.lastNotify.FindingIDs) != 1 {
+		t.Errorf("finding ids = %v, want the one finding once", q.lastNotify.FindingIDs)
+	}
+}
