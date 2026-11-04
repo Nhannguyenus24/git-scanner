@@ -14,6 +14,7 @@ import ActivityFeed from '../components/ActivityFeed'
 import BarList from '../components/BarList'
 import DashboardWidget from '../components/DashboardWidget'
 import PostureScore from '../components/PostureScore'
+import SecurityCommandCenter from '../components/SecurityCommandCenter'
 import { PageHeader } from '../components/Layout'
 import StatCard from '../components/StatCard'
 import { LiveDot, ScanProgress } from '../components/Instrument'
@@ -41,6 +42,7 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
   // why nothing is generated in the browser.
   const recent  = useResource(() => api.findings({ limit: 8 }), [api], 15000)
   const notices = useResource(() => api.notifications({ limit: 8 }), [api], 30000)
+  const repos = useResource(() => api.repositories({ only_open: true, sort: 'risk', limit: 5 }), [api], 15000)
 
   if (ov.loading) return <Loading />
   if (ov.error && !ov.data) return <LoadError error={ov.error} retry={ov.reload} />
@@ -196,6 +198,9 @@ export default function OverviewPage({ onNewScan }: { onNewScan: () => void }) {
       )}
 
       <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <SecurityCommandCenter overview={o} repositories={repos.data?.repositories ?? []} />
+        </Grid>
         {visible.map(id => {
           const w = widget(id)
           if (!w) return null
