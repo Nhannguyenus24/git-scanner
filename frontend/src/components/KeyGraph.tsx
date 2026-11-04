@@ -39,6 +39,8 @@ interface Props {
   keys:      SharedKey[]
   selected:  string | null
   onSelect:  (keyId: string | null) => void
+  /** Number of leak edges revealed during replay; null shows the full graph. */
+  replayStep?: number | null
   height?:   number
   label:     string
 }
@@ -73,7 +75,7 @@ function build(keys: SharedKey[]): { nodes: Node[]; links: Link[] } {
   return { nodes: [...nodes.values()], links }
 }
 
-export default function KeyGraph({ keys, selected, onSelect, height = 520, label }: Props) {
+export default function KeyGraph({ keys, selected, onSelect, replayStep = null, height = 520, label }: Props) {
   const theme = useTheme()
   const ch = theme.chart
   const { motionOff } = usePrefs()
@@ -130,7 +132,26 @@ export default function KeyGraph({ keys, selected, onSelect, height = 520, label
     return s
   }, [focus, graph])
 
+  const leakLinks = useMemo(() => graph.links.filter(l => l.kind === 'leak'), [graph])
+  const revealed = useMemo(() => {
+    if (replayStep === null) return null
+    const nodes = new Set<string>()
+    const links = new Set<Link>()
+    leakLinks.slice(0, replayStep).forEach(l => {
+      links.add(l)
+      nodes.add((l.source as Node).id)
+      nodes.add((l.target as Node).id)
+    })
+    for (const l of graph.links) {
+      if (l.kind !== 'own' || !nodes.has((l.target as Node).id)) continue
+      links.add(l)
+      nodes.add((l.source as Node).id)
+    }
+    return { links, nodes }
+  }, [graph.links, leakLinks, replayStep])
+
   const dim = (id: string) => (lit && !lit.has(id) ? 0.15 : 1)
+  const nodeOpacity = (id: string) => revealed && !revealed.nodes.has(id) ? 0.12 : 1
   const pos = (n: Node) => ({ x: n.x ?? 0, y: n.y ?? 0 })
 
   // The view is fitted to the graph rather than the graph clamped to the view:
@@ -153,20 +174,22 @@ export default function KeyGraph({ keys, selected, onSelect, height = 520, label
         onClick={() => onSelect(null)}>
         {graph.links.map((l, i) => {
           const a = pos(l.source as Node), b = pos(l.target as Node)
-          const on = !lit || (lit.has((l.source as Node).id) && lit.has((l.target as Node).id))
+          const on = (!revealed || revealed.links.has(l)) &&
+            (!lit || (lit.has((l.source as Node).id) && lit.has((l.target as Node).id)))
           const stroke = l.kind === 'own' ? theme.palette.divider
             : l.atHead ? ch.severity.critical : theme.palette.text.secondary
           return (
             <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={stroke}
               strokeWidth={l.kind === 'leak' ? 1.4 : 1} strokeDasharray={l.kind === 'leak' && !l.open ? '3 3' : undefined}
-              opacity={on ? (l.kind === 'own' ? 0.8 : 0.7) : 0.06} />
+              opacity={on ? (l.kind === 'own' ? 0.8 : 0.7) : 0.035} />
           )
         })}
         {graph.nodes.map(n => {
           const { x, y } = pos(n)
           const o = dim(n.id)
           const common = {
-            opacity: o, style: { cursor: n.kind === 'key' ? 'pointer' : 'default', transition: motionOff ? undefined : 'opacity .15s' },
+            opacity: o * nodeOpacity(n.id),
+            style: { cursor: n.kind === 'key' ? 'pointer' : 'default', transition: motionOff ? undefined : 'opacity .15s' },
             onMouseEnter: () => setHover(n.id), onMouseLeave: () => setHover(null),
             onClick: (e: React.MouseEvent) => { e.stopPropagation(); if (n.key) onSelect(n.key.key_id) },
           }
