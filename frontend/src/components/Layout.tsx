@@ -21,6 +21,7 @@ import HelpIcon from '@mui/icons-material/HelpOutlineOutlined'
 import ShieldIcon from '@mui/icons-material/VerifiedUserOutlined'
 import BookIcon from '@mui/icons-material/MenuBookOutlined'
 import MailIcon from '@mui/icons-material/MailOutline'
+import RemediationIcon from '@mui/icons-material/AssignmentTurnedInOutlined'
 import SettingsIcon from '@mui/icons-material/SettingsOutlined'
 import AddIcon from '@mui/icons-material/Add'
 import MenuIcon from '@mui/icons-material/MenuOutlined'
@@ -37,6 +38,7 @@ const NAV = [
   { page: 'analytics',    icon: <InsightsIcon fontSize="small" /> },
   { page: 'scans',        icon: <RadarIcon fontSize="small" /> },
   { page: 'findings',     icon: <KeyIcon fontSize="small" /> },
+  { page: 'remediation',  icon: <RemediationIcon fontSize="small" /> },
   { page: 'repositories', icon: <FolderIcon fontSize="small" /> },
   { page: 'spread',       icon: <HubIcon fontSize="small" /> },
   { page: 'candidates',   icon: <HelpIcon fontSize="small" /> },
@@ -47,7 +49,7 @@ const NAV = [
 ]
 
 // The five that earn a place on a phone's bottom bar; the rest live behind More.
-const PRIMARY = ['overview', 'findings', 'scans', 'repositories']
+const PRIMARY = ['overview', 'findings', 'remediation', 'scans', 'repositories']
 
 interface Props {
   page: string
@@ -205,4 +207,3 @@ export function PageHeader({ title, subtitle, actions }: { title: React.ReactNod
     </Box>
   )
 }
-

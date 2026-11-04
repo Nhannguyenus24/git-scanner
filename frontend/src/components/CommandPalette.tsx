@@ -49,7 +49,7 @@ interface Props {
   onExport?:  () => void
 }
 
-const NAV_PAGES = ['overview', 'analytics', 'scans', 'findings', 'repositories', 'spread', 'candidates', 'notifications', 'providers', 'settings', 'help']
+const NAV_PAGES = ['overview', 'analytics', 'scans', 'findings', 'remediation', 'repositories', 'spread', 'candidates', 'notifications', 'providers', 'settings', 'help']
 
 export default function CommandPalette({ open, onClose, onNewScan, onExport }: Props) {
   const { t, lang, setLang } = useT()
