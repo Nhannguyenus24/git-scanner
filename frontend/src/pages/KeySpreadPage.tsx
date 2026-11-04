@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Dialog from '@mui/material/Dialog'
@@ -9,6 +9,10 @@ import Card from '@mui/material/Card'
 import Link from '@mui/material/Link'
 import MenuItem from '@mui/material/MenuItem'
 import TextField from '@mui/material/TextField'
+import Slider from '@mui/material/Slider'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import PauseIcon from '@mui/icons-material/Pause'
+import ReplayIcon from '@mui/icons-material/Replay'
 import { useTheme } from '@mui/material/styles'
 import KeyGraph from '../components/KeyGraph'
 import SeverityChip from '../components/SeverityChip'
@@ -39,6 +43,8 @@ export default function KeySpreadPage() {
   const ch = useTheme().chart
   const [minRepos, setMinRepos] = useState(2)
   const [selected, setSelected] = useState<string | null>(null)
+  const [replayStep, setReplayStep] = useState<number | null>(null)
+  const [replaying, setReplaying] = useState(false)
   const res = useResource(() => api.sharedKeys(minRepos), [api, minRepos], 30000)
 
   const keys = res.data?.keys ?? []
@@ -54,6 +60,26 @@ export default function KeySpreadPage() {
   }, [keys])
   const current = keys.find(k => k.key_id === selected) ?? null
   const bulk = useBulkTriage(res.reload)
+  const replayEdges = keys.reduce((n, k) => n + k.repositories.length, 0)
+
+  useEffect(() => {
+    if (!replaying || replayEdges === 0) return
+    if ((replayStep ?? 0) >= replayEdges) {
+      setReplaying(false)
+      return
+    }
+    const timer = window.setTimeout(() => setReplayStep(step => (step ?? 0) + 1), 650)
+    return () => window.clearTimeout(timer)
+  }, [replaying, replayEdges, replayStep])
+
+  const startReplay = () => {
+    setReplayStep(0)
+    setReplaying(true)
+  }
+  const resetReplay = () => {
+    setReplaying(false)
+    setReplayStep(null)
+  }
 
   if (res.loading && !res.data) return <Loading />
   if (res.error && !res.data) return <LoadError error={res.error} retry={res.reload} />
@@ -62,7 +88,7 @@ export default function KeySpreadPage() {
     <>
       <PageHeader title={t('spread.title')} subtitle={t('spread.subtitle')} actions={
         <TextField select size="small" label={t('spread.minRepos')} value={minRepos} sx={{ minWidth: 180 }}
-          onChange={e => { setMinRepos(Number(e.target.value)); setSelected(null) }}>
+          onChange={e => { setMinRepos(Number(e.target.value)); setSelected(null); resetReplay() }}>
           {MIN_REPOS.map(n => <MenuItem key={n} value={n}>{t('spread.atLeast', { n })}</MenuItem>)}
         </TextField>
       } />
@@ -81,7 +107,38 @@ export default function KeySpreadPage() {
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 340px' }, gap: 2, alignItems: 'start' }}>
             <Card sx={{ p: 1, overflow: 'hidden' }}>
-              <KeyGraph keys={keys} selected={selected} onSelect={setSelected} label={t('spread.graphLabel', { n: keys.length })} />
+              <KeyGraph keys={keys} selected={selected} replayStep={replayStep}
+                onSelect={setSelected} label={t('spread.graphLabel', { n: keys.length })} />
+              <Box sx={{ px: 1.5, pt: 1.5, pb: .5, borderTop: 1, borderColor: 'divider' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Button size="small" variant={replaying ? 'outlined' : 'contained'}
+                    startIcon={replaying ? <PauseIcon /> : <PlayArrowIcon />}
+                    onClick={() => {
+                      if (replaying) setReplaying(false)
+                      else if (replayStep === null || replayStep >= replayEdges) startReplay()
+                      else setReplaying(true)
+                    }}
+                    disabled={replayEdges === 0}>
+                    {t(replaying ? 'spread.replay.pause' : 'spread.replay.play')}
+                  </Button>
+                  <Button size="small" color="inherit" startIcon={<ReplayIcon />} onClick={resetReplay}
+                    disabled={replayStep === null}>
+                    {t('spread.replay.reset')}
+                  </Button>
+                  <Box sx={{ flex: '1 1 220px', minWidth: 180, px: 1 }}>
+                    <Slider size="small" min={0} max={replayEdges} step={1}
+                      value={replayStep ?? replayEdges}
+                      onChange={(_, value) => { setReplaying(false); setReplayStep(value as number) }}
+                      aria-label={t('spread.replay.slider')} />
+                  </Box>
+                  <Box sx={{ minWidth: 64, textAlign: 'right', color: 'text.secondary', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
+                    {replayStep === null ? t('spread.replay.full') : `${replayStep}/${replayEdges}`}
+                  </Box>
+                </Box>
+                <Box sx={{ color: 'text.secondary', fontSize: 11.5, mt: .25 }}>
+                  {t('spread.replay.help')}
+                </Box>
+              </Box>
               <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', px: 1.5, py: 1, fontSize: 12, color: 'text.secondary' }}>
                 <Legend shape="square" text={t('spread.legend.owner')} />
                 <Legend shape="circle" text={t('spread.legend.repo')} />
