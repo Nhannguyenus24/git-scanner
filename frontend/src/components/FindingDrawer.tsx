@@ -14,6 +14,9 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import OpenInNewIcon from '@mui/icons-material/OpenInNew'
 import VisibilityIcon from '@mui/icons-material/VisibilityOutlined'
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOffOutlined'
+import CommitIcon from '@mui/icons-material/Commit'
+import RadarIcon from '@mui/icons-material/RadarOutlined'
+import TaskAltIcon from '@mui/icons-material/TaskAltOutlined'
 import SeverityChip from './SeverityChip'
 import { commitLink, fileLink, timeAgo } from '../format'
 import { href } from '../hooks/useRoute'
@@ -60,33 +63,75 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 const copy = (s: string) => navigator.clipboard?.writeText(s)
 
-/** One dot on the finding's life so far, newest last. */
+interface IncidentEvent {
+  at?: string
+  label: string
+  note?: string
+  icon: React.ReactNode
+  color: string
+  href?: string
+  linkLabel?: string
+}
+
+/** One event in the finding's life so far, newest last. */
 function Timeline({ f }: { f: Finding }) {
   const { t } = useT()
-  const events: { at?: string; label: string; note?: string }[] = [
-    f.committed_at ? { at: f.committed_at, label: t('timeline.committed'), note: f.author_name || undefined } : null,
-    { at: f.detected_at, label: t('timeline.detected'), note: f.rule_id },
-    f.metadata?.probe_status ? { at: undefined, label: t('timeline.probed'), note: t(`probe.${f.metadata.probe_status}`) } : null,
-    f.status !== 'open' ? { at: undefined, label: t(`status.${f.status}`), note: t('timeline.triaged') } : null,
-  ].filter(Boolean) as { at?: string; label: string; note?: string }[]
+  const events: IncidentEvent[] = [
+    f.committed_at ? {
+      at: f.committed_at, label: t('timeline.committed'), note: f.author_name || undefined,
+      icon: <CommitIcon fontSize="small" />, color: 'text.secondary',
+      href: commitLink(f.repository.url, f.commit_sha), linkLabel: f.commit_sha.slice(0, 12),
+    } : null,
+    {
+      at: f.detected_at, label: t('timeline.detected'), note: f.rule_id,
+      icon: <RadarIcon fontSize="small" />, color: 'primary.main',
+      href: fileLink(f.repository.url, f.file_path, f.line_number, f.commit_sha, f.reachable_from_head),
+      linkLabel: f.file_path,
+    },
+    f.reachable_from_head ? {
+      label: t('timeline.exposed'), note: t('timeline.exposedNote'),
+      icon: <VisibilityIcon fontSize="small" />, color: 'error.main',
+    } : null,
+    f.metadata?.probe_status ? {
+      label: t('timeline.probed'), note: t(`probe.${f.metadata.probe_status}`),
+      icon: <RadarIcon fontSize="small" />, color: f.metadata.probe_status === 'live' ? 'error.main' : 'text.secondary',
+    } : null,
+    f.status !== 'open' ? {
+      label: t(`status.${f.status}`), note: t('timeline.triaged'),
+      icon: <TaskAltIcon fontSize="small" />, color: 'success.main',
+    } : null,
+  ].filter(Boolean) as IncidentEvent[]
 
   return (
-    <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0 }}>
+    <Box>
+      <Box sx={{ display: 'flex', gap: .75, flexWrap: 'wrap', mb: 2 }}>
+        <Chip size="small" variant="outlined" label={t(`status.${f.status}`)} />
+        <Chip size="small" variant="outlined" color={f.reachable_from_head ? 'error' : 'default'}
+          label={f.reachable_from_head ? t('findings.atHead') : t('findings.history')} />
+        {f.metadata?.probe_status && <Chip size="small" variant="outlined"
+          color={f.metadata.probe_status === 'live' ? 'error' : 'default'}
+          label={t(`probe.${f.metadata.probe_status}`)} />}
+      </Box>
+      <Box component="ol" sx={{ listStyle: 'none', m: 0, p: 0 }}>
       {events.map((e, i) => (
         <Box component="li" key={`${e.label}-${i}`} sx={{ display: 'flex', gap: 1.5, position: 'relative', pb: i === events.length - 1 ? 0 : 1.5 }}>
           {i < events.length - 1 && (
-            <Box sx={{ position: 'absolute', left: 3.5, top: 12, bottom: 0, width: '1px', bgcolor: 'divider' }} />
+            <Box sx={{ position: 'absolute', left: 11, top: 27, bottom: 0, width: '1px', bgcolor: 'divider' }} />
           )}
-          <Box sx={{ width: 8, height: 8, mt: .7, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0, zIndex: 1 }} />
+          <Box sx={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', bgcolor: 'action.hover', color: e.color, flexShrink: 0, zIndex: 1 }}>
+            {e.icon}
+          </Box>
           <Box sx={{ fontSize: 13 }}>
             <Box sx={{ fontWeight: 600 }}>{e.label}</Box>
             <Box sx={{ color: 'text.secondary', fontSize: 12 }}>
               {e.at ? `${new Date(e.at).toLocaleString()} · ${timeAgo(e.at)}` : t('timeline.noTime')}
               {e.note && ` · ${e.note}`}
             </Box>
+            {e.href && <Link href={e.href} target="_blank" rel="noreferrer" sx={{ fontSize: 12 }}>{e.linkLabel}</Link>}
           </Box>
         </Box>
       ))}
+      </Box>
     </Box>
   )
 }
@@ -283,7 +328,7 @@ export default function FindingDrawer({ finding: f, onClose, onStatus }: {
           </Section>
 
           <Divider />
-          <Section title={t('detail.timeline')}><Timeline f={f} /></Section>
+          <Section title={t('detail.incidentTimeline')}><Timeline f={f} /></Section>
 
           <Divider />
           <Section title={t('detail.remediation')}><Remediation f={f} /></Section>
