@@ -16,10 +16,15 @@ import FormControlLabel from '@mui/material/FormControlLabel'
 import Switch from '@mui/material/Switch'
 import Tooltip from '@mui/material/Tooltip'
 import IconButton from '@mui/material/IconButton'
+import ToggleButton from '@mui/material/ToggleButton'
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import MailOutlineIcon from '@mui/icons-material/MailOutline'
 import HistoryIcon from '@mui/icons-material/History'
 import ShareIcon from '@mui/icons-material/IosShare'
+import GridViewIcon from '@mui/icons-material/GridView'
+import ViewListIcon from '@mui/icons-material/ViewList'
 import ShareDialog from '../components/ShareDialog'
+import RepositoryHeatmap from '../components/RepositoryHeatmap'
 import SearchIcon from '@mui/icons-material/Search'
 import { PageHeader } from '../components/Layout'
 import Pager from '../components/Pager'
@@ -98,6 +103,7 @@ export default function RepositoriesPage() {
   const [page, setPage] = useState(0)
   const [size, setSize] = useState(50)
   const [sharing, setSharing] = useState<Repository>()
+  const [view, setView] = useState<'table' | 'heatmap'>('table')
 
   // Debounce the search box, and go back to the first page on any change: the
   // filter and the order are applied on the server, so a new filter is a new
@@ -141,6 +147,11 @@ export default function RepositoriesPage() {
           <MenuItem value="name">{t('repos.sortName')}</MenuItem>
         </TextField>
         <FormControlLabel control={<Switch checked={exposedOnly} onChange={e => { setExposedOnly(e.target.checked); setPage(0) }} />} label={t('repos.onlyOpen')} />
+        <ToggleButtonGroup size="small" exclusive value={view} onChange={(_, next: 'table' | 'heatmap' | null) => next && setView(next)}
+          aria-label={t('repos.view')}>
+          <ToggleButton value="table" aria-label={t('repos.viewTable')}><ViewListIcon fontSize="small" /></ToggleButton>
+          <ToggleButton value="heatmap" aria-label={t('repos.viewHeatmap')}><GridViewIcon fontSize="small" /></ToggleButton>
+        </ToggleButtonGroup>
         <Chip clickable component="a" href={href('settings')} variant="outlined" color={mailOn ? 'warning' : 'default'}
           icon={<MailOutlineIcon fontSize="small" />} label={`${t('repos.notify.switch')}: ${t(mailOn ? 'settings.on' : 'settings.off')}`} />
       </Card>
@@ -148,6 +159,10 @@ export default function RepositoriesPage() {
         {!repos.length ? (
           <Empty art="repositories" size={200} title={t('repos.empty')} body={t('repos.emptyBody')}
             action={exposedOnly ? <Button onClick={() => setExposedOnly(false)}>{t('common.showAll')}</Button> : undefined} />
+        ) : view === 'heatmap' ? (
+          <Box sx={{ p: { xs: 1.5, md: 2.5 } }}>
+            <RepositoryHeatmap repos={repos} onOpen={repo => navigate(href('findings', undefined, { repository_id: repo.id }))} />
+          </Box>
         ) : (
           <TableContainer>
             <Table size="small" stickyHeader>
