@@ -43,6 +43,18 @@ export const DICT_UI: Record<string, Entry> = {
 
   'nav.primary': e('Primary navigation', 'Điều hướng chính', 'Navigazione principale', '主导航', 'Navegación principal', 'Hauptnavigation', 'Navigation principale'),
   'nav.more':    e('More', 'Thêm', 'Altro', '更多', 'Más', 'Mehr', 'Plus'),
+  'nav.remediation': e('Remediation', 'Xử lý', 'Risoluzione', '修复', 'Remediación', 'Behebung', 'Remédiation'),
+  'remediation.title': e('Remediation inbox', 'Hộp thư xử lý', 'Inbox remediation', '修复收件箱', 'Bandeja de remediación', 'Remediation-Posteingang', 'Boîte de remédiation'),
+  'remediation.subtitle': e('{n} open findings prioritized by impact and age', '{n} phát hiện đang mở, xếp theo tác động và tuổi', '{n} rilevamenti aperti ordinati per impatto ed età', '{n} 个未处理发现项按影响和时间排序', '{n} hallazgos abiertos ordenados por impacto y antigüedad', '{n} offene Funde nach Auswirkung und Alter priorisiert', '{n} résultats ouverts classés par impact et ancienneté'),
+  'remediation.openFullList': e('Open full findings', 'Mở toàn bộ phát hiện', 'Apri tutti i rilevamenti', '打开全部发现项', 'Abrir todos los hallazgos', 'Alle Funde öffnen', 'Ouvrir tous les résultats'),
+  'remediation.all': e('All open', 'Tất cả đang mở', 'Tutti aperti', '全部未处理', 'Todos abiertos', 'Alle offenen', 'Tous ouverts'),
+  'remediation.urgent': e('Urgent', 'Khẩn cấp', 'Urgente', '紧急', 'Urgente', 'Dringend', 'Urgent'),
+  'remediation.stale': e('Stale 30d+', 'Quá hạn 30 ngày+', 'Obsoleti 30g+', '超过 30 天', 'Antiguos 30d+', 'Veraltet 30T+', 'Anciens 30j+'),
+  'remediation.history': e('History only', 'Chỉ trong lịch sử', 'Solo cronologia', '仅历史记录', 'Solo historial', 'Nur Verlauf', 'Historique uniquement'),
+  'remediation.queue': e('Queue', 'Hàng đợi', 'Coda', '队列', 'Cola', 'Warteschlange', 'File'),
+  'remediation.order': e('Sorted: live · HEAD · severity · age', 'Sắp xếp: live · HEAD · mức độ · tuổi', 'Ordinati: live · HEAD · gravità · età', '排序：实时 · HEAD · 严重性 · 时间', 'Orden: live · HEAD · gravedad · antigüedad', 'Sortierung: live · HEAD · Schweregrad · Alter', 'Tri : live · HEAD · gravité · ancienneté'),
+  'remediation.sla': e('Start with urgent findings before history-only copies.', 'Xử lý phát hiện khẩn cấp trước các bản chỉ còn trong lịch sử.', 'Inizia dai rilevamenti urgenti prima delle copie solo nella cronologia.', '先处理紧急发现项，再处理仅存在于历史的副本。', 'Empieza por los hallazgos urgentes antes de las copias históricas.', 'Beginne mit dringenden Funden vor historischen Kopien.', 'Commencez par les résultats urgents avant les copies historiques.'),
+  'remediation.empty': e('Nothing is waiting for remediation in this queue.', 'Không có gì đang chờ xử lý trong hàng đợi này.', 'Niente da risolvere in questa coda.', '此队列中没有待修复项。', 'No hay nada pendiente de remediación en esta cola.', 'In dieser Warteschlange wartet nichts auf Behebung.', 'Rien à remédier dans cette file.'),
 
   // ---- appearance ------------------------------------------------------
   'appearance.title': e('Appearance', 'Giao diện', 'Aspetto', '外观', 'Apariencia', 'Darstellung', 'Apparence'),

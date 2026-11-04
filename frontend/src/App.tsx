@@ -18,6 +18,7 @@ import ProvidersPage from './pages/ProvidersPage'
 import RepoHistoryPage from './pages/RepoHistoryPage'
 import RepositoriesPage from './pages/RepositoriesPage'
 import ScanDetailPage from './pages/ScanDetailPage'
+import RemediationPage from './pages/RemediationPage'
 import ScansPage from './pages/ScansPage'
 import { Loading } from './components/States'
 
@@ -80,6 +81,7 @@ function Dashboard({ route }: { route: Route }) {
     case 'scans':        body = route.id ? <ScanDetailPage key={route.id} id={route.id} /> : <ScansPage onNewScan={open} />; break
     case 'findings':     body = <FindingsPage route={route.id && route.page === 'repositories'
                             ? { ...route, params: new URLSearchParams({ repository_id: route.id }) } : route} />; break
+    case 'remediation':  body = <RemediationPage />; break
     case 'analytics':    body = <AnalyticsPage />; break
     case 'repositories': body = <RepositoriesPage />; break
     case 'history':      body = route.id ? <RepoHistoryPage key={route.id} id={route.id} /> : <RepositoriesPage />; break
